@@ -25,6 +25,10 @@ import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import ShiftReportTodo from '../components/ShiftReportTodo';
+import type { TodoItem } from '../lib/shiftReportTodo';
+import { ABSENCE_LABEL } from '../lib/attendanceTypes';
+import { useAuth } from '../hooks/useAuth';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -347,8 +351,10 @@ const ShiftReportForm: React.FC<{
   workplaces: string[];
   leaderAssignments: LeaderAssignment[];
   inline?: boolean;
+  /** カレンダーの予定から開いたとき、入れておく中身（2026-10-05） */
+  prefill?: (TodoItem & { applicantId?: string }) | null;
   onClose: () => void; onSaved: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, onClose, onSaved }) => {
+}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, onClose, onSaved }) => {
   // 代理報告＝承認者（役職名では判定しない）。🚨 Hook は || の右に置かない（条件付き呼び出しになる）
   const rolesForProxy = useRoles();
   const canProxy = isAdmin || attrsFor(rolesForProxy, roleTitle).is_approver;
@@ -372,17 +378,19 @@ const ShiftReportForm: React.FC<{
     origSegs: Seg[]; actSegs: Seg[];
     reviewerId: string; actNotes: string;
   }
-  const [sd] = useState(() => (editTarget ? null : loadDraft<ShiftDraft>(DRAFT_KEYS.shiftReport)));
+  // 🚨 カレンダーの予定から開いたときは下書きを読まない（別の日の下書きが混ざるため）
+  const [sd] = useState(() => (editTarget || prefill ? null : loadDraft<ShiftDraft>(DRAFT_KEYS.shiftReport)));
 
   // 勤務変更を申請できるいちばん先の日（1年先の前月末）。休暇と同じ上限にそろえている
   // （2026-09-09 ユーザー確定）。判定は breakCalc の leaveRequestMaxDate に集約
   const shiftMaxDate = leaveRequestMaxDate(todayStr());
 
-  const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? sd?.applicantId ?? user.id);
-  const [date, setDate]               = useState(editTarget?.work_date ?? sd?.date ?? todayStr());
+  const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? prefill?.applicantId ?? sd?.applicantId ?? user.id);
+  const [date, setDate]               = useState(editTarget?.work_date ?? prefill?.date ?? sd?.date ?? todayStr());
   const [types, setTypes]             = useState<ApplicationType[]>(
     editTarget?.application_types?.length ? editTarget.application_types
     : editTarget?.application_type        ? [editTarget.application_type]
+    : prefill ? (prefill.reportTypes as ApplicationType[])
     : sd?.types ?? []
   );
   const [blockMsg, setBlockMsg]       = useState('');
@@ -435,11 +443,14 @@ const ShiftReportForm: React.FC<{
   const [origSegs, setOrigSegs] = useState<Seg[]>(
     editTarget
       ? parseSegments(editTarget.original_segments, editTarget.original_start, editTarget.original_end, editTarget.original_outing_start, editTarget.original_outing_end, editTarget.original_location)
+      : prefill?.reportTypes.includes('absence') ? [{ start: '', end: '', location: prefill.location ?? '' }]
       : (sd?.origSegs ?? [{ start: '', end: '' }])
   );
   const [actSegs, setActSegs] = useState<Seg[]>(
     editTarget
       ? parseSegments(editTarget.actual_segments, editTarget.actual_start, editTarget.actual_end, editTarget.actual_outing_start, editTarget.actual_outing_end, editTarget.actual_location)
+      : prefill && prefill.segments.length > 0 ? prefill.segments.map(x => ({ start: x.start, end: x.end, location: x.location }))
+      : prefill && prefill.location && !prefill.reportTypes.includes('absence') ? [{ start: '', end: '', location: prefill.location }]
       : (sd?.actSegs ?? [{ start: '', end: '' }])
   );
   // 勤務地は時間帯ごとに選ぶ（午前は四条本校・午後は西陣校 のように校をまたぐ日があるため）。
@@ -1158,6 +1169,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
   const [formKey, setFormKey]           = useState(0);
+  // カレンダーの予定から開いた中身（2026-10-05）。一覧の件数は送ったあとの「残り◯件」に使う
+  const [prefill, setPrefill]           = useState<(TodoItem & { applicantId: string }) | null>(null);
+  const [todoCount, setTodoCount]       = useState(0);
+  const formAnchorRef                   = useRef<HTMLDivElement>(null);
+  const { canShiftReportTodo }          = useAuth();
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
   const [hardDeleteTargetId, setHardDeleteTargetId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -1320,9 +1336,23 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const handleSaved = () => {
     setShowForm(false); setEditTarget(null);
     setFormKey(k => k + 1);
-    setSuccessMsg('報告を送信しました ✓');
     fetchMyReports(); fetchPending(); fetchReviewedReports(); fetchProxyReports(); fetchAllReports();
+    if (prefill) {
+      // カレンダーの予定から出したときは、報告タブに残って次の分も出せるようにする
+      const md = `${Number(prefill.date.slice(5, 7))}/${Number(prefill.date.slice(8, 10))}`;
+      const rest = Math.max(0, todoCount - 1);
+      setSuccessMsg(rest > 0 ? `${md} の${ABSENCE_LABEL[prefill.calendarType] ?? '勤務変更'}を出しました（残り ${rest}件）` : 'カレンダーの予定はすべて出しました ✓');
+      setPrefill(null);
+      return;
+    }
+    setSuccessMsg('報告を送信しました ✓');
     setTab('history');
+  };
+  const reportedDates = useMemo(() => new Set(myReports.map(r => r.work_date)), [myReports]);
+  const pickTodo = (it: TodoItem, applicantId: string) => {
+    setPrefill({ ...it, applicantId });
+    setFormKey(k => k + 1);
+    setTimeout(() => formAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
   const handleConfirm = async (report: ShiftReport) => {
@@ -1705,6 +1735,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         {/* ─ 申請タブ ─ */}
         {tab === 'apply' && (
           <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: cardShadow, boxSizing: 'border-box' }}>
+            {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
+            {canShiftReportTodo && (
+              <ShiftReportTodo userId={user.id} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount} />
+            )}
             {/* 注意事項（常時表示） */}
             <div style={{ background: noteBg, border: `1px solid ${noteBorder}`, borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left' }}>
               <p style={{ fontSize: 13, fontWeight: 'bold', color: noteTitleColor, marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
@@ -1780,8 +1814,16 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             </div>
 
             {/* インライン申請フォーム（key で申請後リセット） */}
+            <div ref={formAnchorRef} />
+            {prefill && (
+              <div style={{ background: isDark ? '#1f2d3d' : '#eef6ff', border: '1px solid #90caf9', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13, color: text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>📋 カレンダーの予定（{Number(prefill.date.slice(5, 7))}/{Number(prefill.date.slice(8, 10))} {ABSENCE_LABEL[prefill.calendarType] ?? ''}）から入れています。理由などを確かめて送ってください</span>
+                <button type="button" onClick={() => { setPrefill(null); setFormKey(k => k + 1); }} style={{ ...backBtn(isDark), marginLeft: 'auto', padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>やめる</button>
+              </div>
+            )}
             <ShiftReportForm
               key={formKey}
+              prefill={prefill}
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               editTarget={null}
               reviewers={reviewers}

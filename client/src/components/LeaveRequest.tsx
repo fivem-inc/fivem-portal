@@ -453,6 +453,21 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   useEffect(() => {
     saveDraft(DRAFT_KEYS.leave, { leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId });
   }, [leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId]);
+
+  // 確認画面を開いたら、選んだ日に「欠勤」がすでに登録されていないかを見る（2026-10-05 ユーザー指示・カレンダーの欠勤の登録と両方で確かめる）。
+  // 🚨 10/7 清水さんで、調整休の休暇と同じ日に欠勤も登録され、カレンダーに2つ並んだ。休暇は受理の流れがあるので止めずに知らせるだけ
+  const [absentOnDates, setAbsentOnDates] = useState<string[]>([]);
+  useEffect(() => {
+    if (!showConfirm || selectedDates.length === 0) { setAbsentOnDates([]); return; }
+    let alive = true;
+    supabase.from('attendance_exceptions').select('date').eq('user_id', user.id).eq('type', 'absent').in('date', selectedDates)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { console.error('[leave] 欠勤との重なりの確認に失敗:', error.message); setAbsentOnDates([]); return; }
+        setAbsentOnDates([...new Set(((data ?? []) as { date: string }[]).map(r => r.date))].sort());
+      });
+    return () => { alive = false; };
+  }, [showConfirm, selectedDates, user.id]);
   // 時間調整フォームの下書きを自動保存
   useEffect(() => {
     saveDraft(DRAFT_KEYS.leaveAdjustment, { adjLateStart, adjEarlyEnd, adjDate, adjLateTime, adjEarlyTime, adjReason, adjLocation, adjApproverMode, adjApproverSelectedId, adjApproverFree });
@@ -2199,6 +2214,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {notes && <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>備考</td><td style={{ padding: '8px 0', color: text }}>{notes}</td></tr>}
               </tbody>
             </table>
+            {absentOnDates.length > 0 && (
+              <div style={{ background: isDark ? '#3d3420' : '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, padding: '10px 12px', marginBottom: 16, fontSize: 13, color: isDark ? '#ffe08a' : '#856404', lineHeight: 1.7 }}>
+                <div style={{ fontWeight: 'bold' }}>⚠️ {absentOnDates.map(shortDateLabel).join('・')}には、すでに「欠勤」が登録されています</div>
+                休暇として申請する場合は、カレンダーの欠勤を取り消してください（このまま申請することもできます）
+              </div>
+            )}
             {submitError && (
               <div style={{ marginBottom: 12, fontSize: 13, color: '#dc3545', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6, padding: '8px 12px' }}>⚠️ {submitError}</div>
             )}

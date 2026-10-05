@@ -821,6 +821,31 @@ const AbsenceInputSheet: React.FC<{
           if (hit) found.push({ userId: uid, name: nameOf(uid), date: d, label: absenceLabel(hit.type) });
         }
       }
+      // 欠勤を登録する日に、すでに休暇（申請中・受理済み）が入っていないか（2026-10-05 ユーザー指示）。
+      // 🚨 10/7 清水さんで、調整休の休暇と同じ日に「欠勤」も登録され、カレンダーに2つ並んだ（欠勤としても数えられてしまう）。
+      //    入っていれば、すでに登録がある分と同じく、その日を外して登録する（黙って二重にしない）
+      if (isAbsent) {
+        const { data: leaves, error: leaveErr } = await supabase
+          .from('leave_requests')
+          .select('user_id, leave_type, status, start_date, end_date, leave_dates')
+          .in('user_id', ids)
+          .neq('status', 'rejected')
+          .lte('start_date', dates[dates.length - 1])
+          .gte('end_date', dates[0]);
+        if (leaveErr) console.error('[attendance] 休暇との重なりの確認に失敗:', leaveErr);
+        type LeaveRow = { user_id: string; leave_type: string | null; status: string; start_date: string; end_date: string; leave_dates: string | null };
+        const daysOf = (l: LeaveRow): string[] => {
+          try { const v = JSON.parse(l.leave_dates ?? '[]'); if (Array.isArray(v) && v.length > 0) return v.map(String); } catch { /* 形が違えば期間で見る */ }
+          return dates.filter(d => d >= l.start_date && d <= l.end_date);
+        };
+        for (const l of (leaves ?? []) as LeaveRow[]) {
+          for (const d of daysOf(l)) {
+            if (!dates.includes(d) || found.some(f => f.userId === l.user_id && f.date === d)) continue;
+            const state = l.status === 'approved' ? '受理済み' : '申請中';
+            found.push({ userId: l.user_id, name: nameOf(l.user_id), date: d, label: `休暇（${l.leave_type ?? '休暇'}・${state}）` });
+          }
+        }
+      }
       setConflicts(found);
     }
     confirmingRef.current = true;

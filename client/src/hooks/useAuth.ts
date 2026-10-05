@@ -49,6 +49,8 @@ interface UseAuthReturn {
   /** 残業申請のメモ（申請の前に書いておく・本人だけが見る）。2026-09-18 は マネージャー以上だけ ON */
   canOvertimeMemo: boolean;
   canOvertimeGrid: boolean;
+  /** 勤務変更の「カレンダーの予定の一覧」（2026-10-05・最初はマネージャー以上だけ） */
+  canShiftReportTodo: boolean;
   /**
    * シフト調整の作業場（勤怠カレンダーの中のタブ）の5つの権限。
    * 🚨 1つのまとまりで渡す。ばらばらに5つ足すと App.tsx（2人共通ファイル）の
@@ -404,6 +406,8 @@ export const useAuth = (): UseAuthReturn => {
   const canOvertimeMemo = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_memo ?? false);
   // 残業の「表でまとめて入力」（2026-09-24・最初はマネージャーだけ。PCだけに出すのは画面側で判定）
   const canOvertimeGrid = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_grid ?? false);
+  // 勤務変更の「カレンダーの予定の一覧」（2026-10-05）。既定は OFF＝権限行が読めなかったときは出さない
+  const canShiftReportTodo = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_todo ?? false);
   // シフト調整の作業場（2026-09-13）。既定はすべて OFF ＝ 権限行が読めなかったときは出さない。
   // 🚨 テスト中は社長・管理者だけ ON にしてある（DB側・migration 20260912222515）
   // 🚨 useMemo で包む。5つをまとめた「もの」を毎回作り直すと、受け取った側が
@@ -513,6 +517,7 @@ export const useAuth = (): UseAuthReturn => {
     canShiftPatternDirectory,
     canOvertimeMemo,
     canOvertimeGrid,
+    canShiftReportTodo,
     shiftAdjust,
     canFaq,
     canFaqNav,
