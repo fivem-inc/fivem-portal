@@ -111,7 +111,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending: '未調整',
   working: '調整中',
   decided: '調整済み',
-  no_change: '確認済み（変更なし）',
+  no_change: '変更なし',   // 2026-10-05：一覧で名前が切れるので短くした（ユーザー確定 案E。一覧と開いた画面で同じ言葉）
   closed_past: '過ぎた日',
   cause_cancelled: '休みが取り消されました',
 };
@@ -119,7 +119,7 @@ const STATUS_LABEL: Record<string, string> = {
 /** 「調整済み」に「アプリ外」の印が付いていれば「調整済み（アプリ外）」（2026-10-05） */
 const slotStatusLabel = (status: string, notNeeded?: boolean, outside?: boolean): string =>
   status === 'no_change' && notNeeded ? '調整不要'
-    : status === 'decided' && outside ? '調整済み（アプリ外）'
+    : status === 'decided' && outside ? '調整済み(外)'   // 2026-10-05：短く（ボタンの名前は「調整済み（アプリ外）」のまま）
     : (STATUS_LABEL[status] ?? status);
 
 const ShiftAdjustTab: React.FC<{
