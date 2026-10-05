@@ -55,8 +55,23 @@ function chip(areas: WorkArea[], areaId: string | null | undefined, text: string
   return `<span class="chip" style="background:${c.bg};color:${c.fg}">${esc(text)}</span>`;
 }
 
+/**
+ * 紙に刷る校・部門の区切り。🚨 同じ校・同じ部門が時間をあけて続くとき（例：テレワーク 6:30～7:15 と 9:30～17:30 がどちらも四条本校）は
+ * 1つにまとめる。まとめないと「四条本校 6:30～7:15 → 四条本校 9:30～17:30」の札が2つ並んで折り返し、
+ * その人のブロックだけ縦に伸びていた（2026-10-05 太田 恭子さん）。短いほうの時間帯は出勤・退勤の下に小さく添える
+ */
+function printSteps(day: RosterDay, areas: WorkArea[], mainAreaId: string | null) {
+  const out: ReturnType<typeof placeSteps> = [];
+  for (const x of placeSteps(day, areas, mainAreaId)) {
+    const last = out[out.length - 1];
+    if (last && last.school === x.school && (last.area?.id ?? null) === (x.area?.id ?? null)) last.end = x.end;
+    else out.push({ ...x });
+  }
+  return out;
+}
+
 function placeLine(day: RosterDay, areas: WorkArea[], mainAreaId: string | null): string {
-  const steps = placeSteps(day, areas, mainAreaId);
+  const steps = printSteps(day, areas, mainAreaId);
   if (steps.length === 0) return '';
   const multi = steps.length > 1;
   return steps.map(s => {
@@ -81,7 +96,7 @@ function blockA(p: PrintPerson, o: PrintOptions): string {
     const main = mainBand(f.bands)!;
     const other = f.bands.find(b => b !== main);
     // 校の区切りが2つ以上なら、区切りの側に時刻が出るので重ねて書かない
-    const band2 = other && placeSteps(day, o.areas, p.mainAreaId).length < 2 ? `<div class="sub">${minText(other.s)}～${minText(other.e)}</div>` : '';
+    const band2 = other && printSteps(day, o.areas, p.mainAreaId).length < 2 ? `<div class="sub">${minText(other.s)}～${minText(other.e)}</div>` : '';
     return `<tr><td class="dk">${ROSTER_DAY_LABEL[k]}</td>`
       + `<td class="t${red}">${minText(main.s)}</td>`
       + `<td class="t${red}">${minText(main.e)}</td>`
@@ -121,7 +136,7 @@ function layoutB(o: PrintOptions): string {
         if (!day || !f || f.bands.length === 0) return `<td class="off${red}">休${day?.note ? `<div class="note">${esc(day.note)}</div>` : ''}${cleaningLines(p, k)}${studyLines(p, k, o)}</td>`;
         total += f.laborMinutes;
         const times = f.bands.map(b => `${minText(b.s)}-${minText(b.e)}`).join('<br>');
-        const places = placeSteps(day, o.areas, p.mainAreaId)
+        const places = printSteps(day, o.areas, p.mainAreaId)
           .map(s => chip(o.areas, s.area?.id, `${shortSchool(s.school)}${s.area ? `(${s.area.short_name})` : ''}`)).join('→');
         return `<td class="${red.trim()}"><div class="t">${times}</div>${places}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}${cleaningLines(p, k)}${studyLines(p, k, o)}</td>`;
       }).join('');

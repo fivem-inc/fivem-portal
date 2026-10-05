@@ -90,9 +90,9 @@ const ShiftReportTodo: React.FC<{
   if (items.length === 0) {
     return (
       <div style={{ border: `1px dashed ${isDark ? '#6b5a2a' : '#f5c26b'}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16, textAlign: 'left', fontSize: 13, color: isDark ? '#adb5bd' : '#666' }}>
-        <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 4 }}>📋 まだ報告していない勤務変更</div>
+        <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 4 }}>📋 未報告の勤務変更</div>
         {picker}
-        {targetId === userId ? '自分の予定はありません。パートの方を選ぶと、その人の画面と同じ一覧が見られます。' : 'この方のまだ報告していない勤務変更はありません。'}
+        {targetId === userId ? '自分の予定はありません。パートの方を選ぶと、その人の画面と同じ一覧が見られます。' : 'この方の未報告の勤務変更はありません。'}
       </div>
     );
   }
@@ -105,9 +105,9 @@ const ShiftReportTodo: React.FC<{
 
   return (
     <div style={{ border: `2px solid ${border}`, background: isDark ? '#3d3420' : '#fffaf0', borderRadius: 10, padding: '12px 14px', marginBottom: 16, textAlign: 'left', color: text }}>
-      <div style={{ fontWeight: 'bold', fontSize: 14 }}>📋 まだ報告していない勤務変更（{items.length}件）</div>
+      <div style={{ fontWeight: 'bold', fontSize: 14 }}>📋 未報告の勤務変更（{items.length}件）</div>
       {picker}
-      <div style={{ fontSize: 12.5, color: sub, margin: '2px 0 8px' }}>締め切り {mdw(deadline)}{targetId !== userId ? '（［内容を確認］から送ると代理報告になります）' : ''}</div>
+      <div style={{ fontSize: 12.5, color: sub, margin: '2px 0 8px' }}>予定として登録済み｜締め切り {mdw(deadline)}{targetId !== userId ? '（［内容を確認］から送ると代理報告になります）' : ''}</div>
       {shown.map(it => {
         const segs = it.segments.filter(s => s.start && s.end);
         const time = segs.length ? `${segs[0].start}〜${segs[segs.length - 1].end}` : '';
