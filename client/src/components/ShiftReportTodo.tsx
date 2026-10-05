@@ -1,6 +1,6 @@
 // 勤務変更：カレンダーに入っている予定（まだ出していない分）の一覧（2026-10-05・第1段階）
 //
-// ・上長が勤怠カレンダーに入れた自分の予定のうち、まだ勤務変更を出していない日を並べる。［出す］でフォームが入力済みで開く
+// ・上長が勤怠カレンダーに入れた自分の予定のうち、まだ勤務変更を出していない日を並べる。［内容を確認］でフォームが入力済みで開く（2026-10-05：［出す］から改名＝送信と間違えないように）
 // ・判定は lib/shiftReportTodo.ts（buildTodo）の1か所
 // ・0件のときは何も出さない（パートの方の多くは、ふだん0件）。4件以上は3件だけ出して［ほかに◯件］
 // ・予定が違うときの出口の一文を常に出す（本人はカレンダーを消せないため・UX レビュー）
@@ -90,9 +90,9 @@ const ShiftReportTodo: React.FC<{
   if (items.length === 0) {
     return (
       <div style={{ border: `1px dashed ${isDark ? '#6b5a2a' : '#f5c26b'}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16, textAlign: 'left', fontSize: 13, color: isDark ? '#adb5bd' : '#666' }}>
-        <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 4 }}>📋 出していない勤務変更（カレンダーの予定から）</div>
+        <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 4 }}>📋 まだ報告していない勤務変更</div>
         {picker}
-        {targetId === userId ? '自分の予定はありません。パートの方を選ぶと、その人の画面と同じ一覧が見られます。' : 'この方の出していない勤務変更はありません。'}
+        {targetId === userId ? '自分の予定はありません。パートの方を選ぶと、その人の画面と同じ一覧が見られます。' : 'この方のまだ報告していない勤務変更はありません。'}
       </div>
     );
   }
@@ -105,9 +105,9 @@ const ShiftReportTodo: React.FC<{
 
   return (
     <div style={{ border: `2px solid ${border}`, background: isDark ? '#3d3420' : '#fffaf0', borderRadius: 10, padding: '12px 14px', marginBottom: 16, textAlign: 'left', color: text }}>
-      <div style={{ fontWeight: 'bold', fontSize: 14 }}>📋 出していない勤務変更（カレンダーの予定から）</div>
+      <div style={{ fontWeight: 'bold', fontSize: 14 }}>📋 まだ報告していない勤務変更（{items.length}件）</div>
       {picker}
-      <div style={{ fontSize: 12.5, color: sub, margin: '2px 0 8px' }}>締め切り {mdw(deadline)}{targetId !== userId ? '（［出す］は代理報告になります）' : ''}</div>
+      <div style={{ fontSize: 12.5, color: sub, margin: '2px 0 8px' }}>締め切り {mdw(deadline)}{targetId !== userId ? '（［内容を確認］から送ると代理報告になります）' : ''}</div>
       {shown.map(it => {
         const segs = it.segments.filter(s => s.start && s.end);
         const time = segs.length ? `${segs[0].start}〜${segs[segs.length - 1].end}` : '';
@@ -119,7 +119,7 @@ const ShiftReportTodo: React.FC<{
             <span style={{ fontSize: 13, color: sub }}>{[time, loc].filter(Boolean).join(' ')}</span>
             <button type="button" onClick={() => onPick(it, targetId)}
               style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}>
-              出す ›
+              内容を確認 ›
             </button>
           </div>
         );
@@ -131,7 +131,7 @@ const ShiftReportTodo: React.FC<{
         </button>
       )}
       <div style={{ fontSize: 12, color: sub, marginTop: 6, lineHeight: 1.6 }}>
-        予定が違うときは、担当のリーダー・マネージャーにカレンダーを直してもらってください（直すとここから消えます）。
+        内容が違うときは、送信せずに担当のリーダー・マネージャーにお知らせください。
       </div>
     </div>
   );

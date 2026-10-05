@@ -30,7 +30,9 @@ import type { TodoItem } from '../lib/shiftReportTodo';
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { useAuth } from '../hooks/useAuth';
 
-// 「カレンダーの予定から出せるようになりました」の案内（2026-10-05 ユーザー確定・2行・✕で閉じたらその端末ではもう出さない）。
+// 新機能の案内（2026-10-05 ユーザー確定・専門家2人の意見をまとめた最終案・✕で閉じたらその端末ではもう出さない）。
+// 🚨 パートには勤怠カレンダーが見えないので「カレンダー」「予定」と書かない。「押すだけ」と書かない（送信まで済んだと誤解させない）
+// 🚨 一覧が1件以上あるときだけ出す（0件の人には押すところが無いため）
 // 出す期間は給与期間2回ぶん（10/16〜11/15・11/16〜12/15）。過ぎたら自動で出なくなる＝この定数と下の表示はそのまま消してよい
 const TODO_INTRO_UNTIL = '2026-12-15';
 const TODO_INTRO_KEY = 'fivem_shiftReportTodoIntro_closed';
@@ -1762,14 +1764,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         {tab === 'apply' && (
           <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: cardShadow, boxSizing: 'border-box' }}>
             {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
-            {canShiftReportTodo && todoIntroOpen && todayJstStr() <= TODO_INTRO_UNTIL && (
+            {canShiftReportTodo && todoIntroOpen && todoCount > 0 && todayJstStr() <= TODO_INTRO_UNTIL && (
               <div style={{ background: isDark ? '#1f2d3d' : '#eef6ff', border: '1px solid #90caf9', borderRadius: 8, padding: '10px 12px', marginBottom: 12, textAlign: 'left', color: isDark ? '#e9ecef' : '#1a1a2e' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 'bold' }}>カレンダーの予定から出せるようになりました</span>
+                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 'bold' }}>リーダー・マネージャーが登録した欠勤・休日出勤などは、下から報告できます</span>
                   <button type="button" onClick={closeTodoIntro} aria-label="案内を閉じる"
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px', color: isDark ? '#adb5bd' : '#666' }}>✕</button>
                 </div>
-                <div style={{ fontSize: 12.5, marginTop: 4 }}>［出す］を押すと、日付と内容が入った状態で開きます</div>
+                <div style={{ fontSize: 12.5, marginTop: 4 }}>［内容を確認］を押すと内容が入ります。確かめて送信してください</div>
               </div>
             )}
             {canShiftReportTodo && (
