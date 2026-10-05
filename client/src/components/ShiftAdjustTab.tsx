@@ -1149,7 +1149,7 @@ const SlotDetail: React.FC<{
     setOutsideIds(outsidePick.filter(id => id !== slot.target_user_id));
     setOutsideBy({ by: userId, at: new Date().toISOString() });
     setOutsidePick(null); setPlans([]); closeEditor();
-    setOkMsg('調整済み（アプリ外）として記録しました。');
+    setOkMsg('調整済み（アプリ外）にしました。');
   };
 
   const undecide = async () => {
@@ -1517,11 +1517,11 @@ const SlotDetail: React.FC<{
                   選んだ人：{outsidePick.length > 0 ? outsidePick.map(id => nameOf(id) || '（名前なし）').join('、') : 'なし（調整済みとだけ記録します）'}
                 </p>
                 {plans.length > 0 && (
-                  <p style={{ margin: '6px 0 0', fontSize: 12.5, color: warnFg }}>案が{plans.length}件あります。記録すると、案は消えます。</p>
+                  <p style={{ margin: '6px 0 0', fontSize: 12.5, color: warnFg }}>案が{plans.length}件あります。調整済みにすると、案は消えます。</p>
                 )}
                 <p style={note}>アプリからは、勤怠カレンダー・Google カレンダーへの書き込みも、出勤する方への知らせもしません。</p>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <button type="button" onClick={() => void recordOutside()} disabled={busyBtn} style={subBtn}>記録する</button>
+                  <button type="button" onClick={() => void recordOutside()} disabled={busyBtn} style={mainBtn}>調整済みにする</button>
                   <button type="button" onClick={() => setOutsidePick(null)} style={quietBtn}>やめる</button>
                 </div>
               </div>
