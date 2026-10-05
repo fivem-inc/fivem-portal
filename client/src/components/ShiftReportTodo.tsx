@@ -29,7 +29,9 @@ const ShiftReportTodo: React.FC<{
   canPickOthers: boolean;
   onPick: (item: TodoItem, applicantId: string) => void;
   onCount?: (n: number) => void;
-}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount }) => {
+  /** 「だれの予定を見るか」を変えたとき（下のフォームと食い違わないように、入れていた中身を消すため） */
+  onTargetChange?: (applicantId: string) => void;
+}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange }) => {
   const [entries, setEntries] = useState<CalendarEntry[] | null>(null);
   const [showAll, setShowAll] = useState(false);
   const today = todayJstStr();
@@ -73,7 +75,7 @@ const ShiftReportTodo: React.FC<{
   const picker = canPickOthers && (
     <div style={{ fontSize: 13, margin: '0 0 6px' }}>
       だれの予定を見るか{' '}
-      <select value={targetId} onChange={e => { setTargetId(e.target.value); setShowAll(false); }}
+      <select value={targetId} onChange={e => { setTargetId(e.target.value); setShowAll(false); onTargetChange?.(e.target.value); }}
         style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#000' }}>
         <option value={userId}>自分</option>
         {partList.filter(p => p.id !== userId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}

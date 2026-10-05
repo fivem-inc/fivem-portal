@@ -737,12 +737,14 @@ const ShiftReportForm: React.FC<{
             {canProxy && (
               <div style={{ marginBottom: 14 }}>
                 <label style={L}>対象スタッフ</label>
-                <select value={applicantId} onChange={e => setApplicantId(e.target.value)} style={f}>
+                {/* 🚨 カレンダーの予定から入れているあいだは変えられない（上の「だれの予定を見るか」と食い違わないように・2026-10-05） */}
+                <select value={applicantId} onChange={e => setApplicantId(e.target.value)} disabled={!!prefill} style={{ ...f, ...(prefill ? { opacity: 0.75, cursor: 'not-allowed' } : {}) }}>
                   <option value={user.id}>{profileName}（自分）</option>
                   {staffList.filter(s => s.id !== user.id).map(s => (
                     <option key={s.id} value={s.id}>{s.name}（パート）</option>
                   ))}
                 </select>
+                {prefill && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>カレンダーの予定から入れているため変えられません。別の人にするときは、上の［やめる］を押してください。</div>}
               </div>
             )}
             {/* 日付 */}
@@ -1737,7 +1739,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: cardShadow, boxSizing: 'border-box' }}>
             {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
             {canShiftReportTodo && (
-              <ShiftReportTodo userId={user.id} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount} />
+              <ShiftReportTodo userId={user.id} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount}
+                onTargetChange={id => { if (prefill && prefill.applicantId !== id) { setPrefill(null); setFormKey(k => k + 1); } }} />
             )}
             {/* 注意事項（常時表示） */}
             <div style={{ background: noteBg, border: `1px solid ${noteBorder}`, borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left' }}>
