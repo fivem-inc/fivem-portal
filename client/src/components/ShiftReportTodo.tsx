@@ -31,12 +31,15 @@ const ShiftReportTodo: React.FC<{
   onCount?: (n: number) => void;
   /** 「だれの予定を見るか」を変えたとき（下のフォームと食い違わないように、入れていた中身を消すため） */
   onTargetChange?: (applicantId: string) => void;
-}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange }) => {
+  /** だれの予定を見るか（ページが持つ値・下のフォームの「対象スタッフ」と同じ） */
+  targetId?: string;
+}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange, targetId: targetIdProp }) => {
   const [entries, setEntries] = useState<CalendarEntry[] | null>(null);
   const [showAll, setShowAll] = useState(false);
   const today = todayJstStr();
   // だれの予定を見るか（承認者だけ）。既定は自分
-  const [targetId, setTargetId] = useState(userId);
+  const [innerTarget, setTargetId] = useState(userId);
+  const targetId = targetIdProp ?? innerTarget;
   const [partList, setPartList] = useState<{ id: string; name: string }[]>([]);
   const [otherReported, setOtherReported] = useState<Set<string> | null>(null);
   useEffect(() => {

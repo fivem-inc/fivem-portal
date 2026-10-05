@@ -353,8 +353,12 @@ const ShiftReportForm: React.FC<{
   inline?: boolean;
   /** カレンダーの予定から開いたとき、入れておく中身（2026-10-05） */
   prefill?: (TodoItem & { applicantId?: string }) | null;
+  /** 上の「だれの予定を見るか」で選んでいる人（一覧が出ているときだけ）。下の「対象スタッフ」をこれに合わせる（2026-10-05） */
+  initialApplicantId?: string;
+  /** 下の「対象スタッフ」を変えたとき（上の「だれの予定を見るか」も合わせるため） */
+  onApplicantChange?: (id: string) => void;
   onClose: () => void; onSaved: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, onClose, onSaved }) => {
+}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, initialApplicantId, onApplicantChange, onClose, onSaved }) => {
   // 代理報告＝承認者（役職名では判定しない）。🚨 Hook は || の右に置かない（条件付き呼び出しになる）
   const rolesForProxy = useRoles();
   const canProxy = isAdmin || attrsFor(rolesForProxy, roleTitle).is_approver;
@@ -379,13 +383,19 @@ const ShiftReportForm: React.FC<{
     reviewerId: string; actNotes: string;
   }
   // 🚨 カレンダーの予定から開いたときは下書きを読まない（別の日の下書きが混ざるため）
-  const [sd] = useState(() => (editTarget || prefill ? null : loadDraft<ShiftDraft>(DRAFT_KEYS.shiftReport)));
+  // 🚨 上の「だれの予定を見るか」で選んでいる人と違う人の下書きも読まない（上と下が食い違うため・2026-10-05）
+  const [sd] = useState(() => {
+    if (editTarget || prefill) return null;
+    const d = loadDraft<ShiftDraft>(DRAFT_KEYS.shiftReport);
+    if (d && initialApplicantId && (d.applicantId ?? user.id) !== initialApplicantId) return null;
+    return d;
+  });
 
   // 勤務変更を申請できるいちばん先の日（1年先の前月末）。休暇と同じ上限にそろえている
   // （2026-09-09 ユーザー確定）。判定は breakCalc の leaveRequestMaxDate に集約
   const shiftMaxDate = leaveRequestMaxDate(todayStr());
 
-  const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? prefill?.applicantId ?? sd?.applicantId ?? user.id);
+  const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? prefill?.applicantId ?? initialApplicantId ?? sd?.applicantId ?? user.id);
   const [date, setDate]               = useState(editTarget?.work_date ?? prefill?.date ?? sd?.date ?? todayStr());
   const [types, setTypes]             = useState<ApplicationType[]>(
     editTarget?.application_types?.length ? editTarget.application_types
@@ -709,7 +719,7 @@ const ShiftReportForm: React.FC<{
 
   // 入力内容クリア（新規報告のみ。入力欄を初期状態に戻して下書きも消す）
   const clearShiftForm = () => {
-    setApplicantId(user.id); setDate(todayStr()); setTypes([]); setReason(''); setOrigDayOff(false);
+    setApplicantId(user.id); onApplicantChange?.(user.id); setDate(todayStr()); setTypes([]); setReason(''); setOrigDayOff(false);
     setOrigLocOther([]); setActLocOther([]);
     setOrigSegs([{ start: '', end: '' }]); setActSegs([{ start: '', end: '' }]);
     setReviewerId(''); setActNotes(''); setError('');
@@ -738,13 +748,13 @@ const ShiftReportForm: React.FC<{
               <div style={{ marginBottom: 14 }}>
                 <label style={L}>対象スタッフ</label>
                 {/* 🚨 カレンダーの予定から入れているあいだは変えられない（上の「だれの予定を見るか」と食い違わないように・2026-10-05） */}
-                <select value={applicantId} onChange={e => setApplicantId(e.target.value)} disabled={!!prefill} style={{ ...f, ...(prefill ? { opacity: 0.75, cursor: 'not-allowed' } : {}) }}>
+                <select value={applicantId} onChange={e => { setApplicantId(e.target.value); onApplicantChange?.(e.target.value); }} disabled={!!prefill} style={{ ...f, ...(prefill ? { opacity: 0.75, cursor: 'not-allowed' } : {}) }}>
                   <option value={user.id}>{profileName}（自分）</option>
                   {staffList.filter(s => s.id !== user.id).map(s => (
                     <option key={s.id} value={s.id}>{s.name}（パート）</option>
                   ))}
                 </select>
-                {prefill && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>カレンダーの予定から入れているため変えられません。別の人にするときは、上の［やめる］を押してください。</div>}
+                {prefill && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>カレンダーの予定から入れているため変えられません。別の人にするときは、上の「だれの予定を見るか」で選び直してください。</div>}
               </div>
             )}
             {/* 日付 */}
@@ -1174,6 +1184,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   // カレンダーの予定から開いた中身（2026-10-05）。一覧の件数は送ったあとの「残り◯件」に使う
   const [prefill, setPrefill]           = useState<(TodoItem & { applicantId: string }) | null>(null);
   const [todoCount, setTodoCount]       = useState(0);
+  // 上の「だれの予定を見るか」と下の「対象スタッフ」は同じ値（2026-10-05・食い違わないようにページで1つだけ持つ）
+  const [todoTarget, setTodoTarget]     = useState<string>(() => loadDraft<{ applicantId?: string }>(DRAFT_KEYS.shiftReport)?.applicantId ?? user.id);
   const formAnchorRef                   = useRef<HTMLDivElement>(null);
   const { canShiftReportTodo }          = useAuth();
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
@@ -1740,7 +1752,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
             {canShiftReportTodo && (
               <ShiftReportTodo userId={user.id} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount}
-                onTargetChange={id => { if (prefill && prefill.applicantId !== id) { setPrefill(null); setFormKey(k => k + 1); } }} />
+                targetId={isApprover ? todoTarget : undefined}
+                onTargetChange={id => { setTodoTarget(id); setPrefill(null); setFormKey(k => k + 1); }} />
             )}
             {/* 注意事項（常時表示） */}
             <div style={{ background: noteBg, border: `1px solid ${noteBorder}`, borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left' }}>
@@ -1827,6 +1840,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             <ShiftReportForm
               key={formKey}
               prefill={prefill}
+              initialApplicantId={canShiftReportTodo && isApprover ? todoTarget : undefined}
+              onApplicantChange={canShiftReportTodo && isApprover ? setTodoTarget : undefined}
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               editTarget={null}
               reviewers={reviewers}
