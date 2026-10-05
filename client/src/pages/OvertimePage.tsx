@@ -170,8 +170,12 @@ const SELF_REVIEW_VALUE = '__self__';
 const MODIFIED_BADGE = { color: '#0d6efd', darkBg: '#1b2a4a' };
 
 /** 修正前の申請の中身を1行にする。元が消えていれば null */
-function modifiedFromLine(mf: OvertimeReport["modified_from"]): string | null {
-  if (!mf) return null;
+function modifiedFromLine(raw: OvertimeReport["modified_from"]): string | null {
+  // 🚨 2026-10-05：`overtime_reports!modified_from_id` と書くと逆向き（この申請を元にした申請の一覧＝配列）が返り、
+  //    mf.work_date が無くて画面ごと落ちた（確認ページが真っ黒）。読み方は `modified_from:modified_from_id(...)` に直した。
+  //    念のため配列で来ても落ちないようにしておく
+  const mf = (Array.isArray(raw) ? raw[0] : raw) as OvertimeReport["modified_from"] | undefined;
+  if (!mf || !mf.work_date) return null;
   const types = (mf.application_types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・');
   const parts = [
     `${mf.work_date.slice(5).replace('-', '/')}`,
@@ -2516,7 +2520,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 20260727 マイグレーションで追加した profiles 向き named FK を使う。
   const fetchOwn = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_reports')
-      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('applicant_id', user.id)
       .order('work_date', { ascending: false })
       .limit(100);
@@ -2527,9 +2531,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   const fetchPendingForMe = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_reports')
-      // 🚨 overtime_reports から overtime_reports への外部キーなので、必ず列名（!modified_from_id）を書く。
+      // 🚨 overtime_reports から overtime_reports への外部キー。必ず「modified_from:modified_from_id(...)」と列名で書く。
+      //    「overtime_reports!modified_from_id」は逆向き（配列）が返り、確認ページが真っ黒になった（2026-10-05）。
       //    書かないと関係を決められずエラーになる（過去に PGRST201 で踏んでいる型）
-      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), segments:overtime_report_segments(*), modified_from:modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('reviewer_id', user.id)
       .eq('entry_type', 'manual')
       .in('status', ['requested', 'reported'])
