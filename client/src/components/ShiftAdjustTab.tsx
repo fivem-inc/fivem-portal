@@ -17,6 +17,7 @@ import { dateTimeProblem } from '../lib/dateTimeValue';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { toDbTime } from '../lib/timeInput';
 import { tintBtn } from '../lib/buttonStyles';
+import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 
 // ───────────────────────────────────────────────────────────────
 // シフト調整の作業場（勤怠カレンダーの中のタブ）
@@ -50,6 +51,9 @@ interface SlotRow {
   decided_at: string | null;
   /** 調整不要の印（2026-09-28）。status='no_change' のときだけ意味がある（ほかの状態では DB が false に戻す） */
   not_needed?: boolean;
+  /** 調整済み（アプリ外）の印と出勤する人（2026-10-05）。status='decided' のときだけ意味がある（ほかの状態では DB が外す） */
+  adjusted_outside?: boolean;
+  outside_user_ids?: string[];
 }
 
 interface CommentRow { id: string; user_id: string; body: string; created_at: string }
@@ -112,8 +116,11 @@ const STATUS_LABEL: Record<string, string> = {
   cause_cancelled: '休みが取り消されました',
 };
 /** 状態の表示。「変更なし」に調整不要の印が付いていれば「調整不要」（2026-09-28）。🚨 一覧と見出しで同じものを使う */
-const slotStatusLabel = (status: string, notNeeded?: boolean): string =>
-  status === 'no_change' && notNeeded ? '調整不要' : (STATUS_LABEL[status] ?? status);
+/** 「調整済み」に「アプリ外」の印が付いていれば「調整済み（アプリ外）」（2026-10-05） */
+const slotStatusLabel = (status: string, notNeeded?: boolean, outside?: boolean): string =>
+  status === 'no_change' && notNeeded ? '調整不要'
+    : status === 'decided' && outside ? '調整済み（アプリ外）'
+    : (STATUS_LABEL[status] ?? status);
 
 const ShiftAdjustTab: React.FC<{
   userId: string;
@@ -178,7 +185,7 @@ const ShiftAdjustTab: React.FC<{
     // 🚨 error を必ず見る。読めないまま「0件」と出すと、画面が嘘をつく
     const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }, { data: tData }, { data: planData }] = await Promise.all([
       supabase.from('shift_adjust_slots')
-        .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at, not_needed')
+        .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at, not_needed, adjusted_outside, outside_user_ids')
         .gte('target_date', todayJstStr())
         .order('target_date', { ascending: true }),
       supabase.from('profiles').select('id, name, employment_type, role_title, group_names').eq('is_active', true),
@@ -328,7 +335,7 @@ const ShiftAdjustTab: React.FC<{
                   background: s.status === 'pending' ? warnBg : 'transparent',
                   border: `1px solid ${undone ? warnBd : border}`,
                 }}>
-                  {slotStatusLabel(s.status, s.not_needed)}
+                  {slotStatusLabel(s.status, s.not_needed, s.adjusted_outside)}
                 </span>
                 <span style={{ color: subText, fontSize: 14 }}>›</span>
               </button>
@@ -397,6 +404,18 @@ const SlotDetail: React.FC<{
   // 調整不要の印（2026-09-28）。🚨 status が 'no_change' のときだけ見る（ほかの状態に移ると DB が外すので、ここで外さなくてよい）
   const [notNeeded, setNotNeeded] = useState(!!slot.not_needed);
   const isNotNeeded = status === 'no_change' && notNeeded;
+  // 調整済み（アプリ外）（2026-10-05 ユーザー確定）。DB では「調整済み」＋印。取り消す（調整中に戻す）と DB が印と人を外す
+  // 🚨 勤怠カレンダー・Google カレンダー・通知には触れない（外で調整したときは、人がカレンダーに入れている）
+  const [outside, setOutside] = useState(!!slot.adjusted_outside);
+  const [outsideIds, setOutsideIds] = useState<string[]>(slot.outside_user_ids ?? []);
+  const [outsideBy, setOutsideBy] = useState<{ by: string | null; at: string | null }>({ by: slot.decided_by, at: slot.decided_at });
+  const isOutside = status === 'decided' && outside;
+  /** 押したあとの「誰が出勤しますか？」（null＝閉じている） */
+  const [outsidePick, setOutsidePick] = useState<string[] | null>(null);
+  const [outsideQuery, setOutsideQuery] = useState('');
+  /** この日の勤怠カレンダーに予定がある人（null＝まだ読んでいない） */
+  const [calPeople, setCalPeople] = useState<{ user_id: string; label: string }[] | null>(null);
+  const [confirmOutsideUndo, setConfirmOutsideUndo] = useState(false);
   const [assigns, setAssigns] = useState<AssignRow[]>([]);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [body, setBody] = useState('');
@@ -1101,6 +1120,38 @@ const SlotDetail: React.FC<{
     void loadPartReqs();
   };
 
+  // ［調整済み（アプリ外）］を押したとき：この日の勤怠カレンダーに予定がある人を読んで、選ぶ欄を開く
+  const openOutside = async () => {
+    setErr(''); setOkMsg(''); setOutsidePick([]); setOutsideQuery('');
+    if (calPeople !== null) return;
+    const { data, error } = await supabase.from('attendance_exceptions')
+      .select('user_id, type, work_segments').eq('date', slot.target_date).neq('type', 'absent');
+    // 🚨 読めなかったときも黙らない（名前で探せば選べる）
+    if (error) { setCalPeople([]); setErr('この日の勤怠カレンダーを読み込めませんでした：' + error.message + '（名前で探して選べます）'); return; }
+    const m = new Map<string, string[]>();
+    for (const r of ((data ?? []) as { user_id: string; type: string; work_segments: SegmentLike[] | null }[])) {
+      if (r.user_id === slot.target_user_id) continue;
+      const band = segmentsText(Array.isArray(r.work_segments) ? r.work_segments : []);
+      m.set(r.user_id, [...(m.get(r.user_id) ?? []), `${ABSENCE_LABEL[r.type] ?? r.type}${band ? ' ' + band : ''}`]);
+    }
+    setCalPeople([...m].map(([user_id, ls]) => ({ user_id, label: ls.join('／') })));
+  };
+  const recordOutside = async () => {
+    if (!outsidePick) return;
+    setErr(''); setOkMsg(''); setBusyBtn(true);
+    const { data, error } = await supabase.rpc('shift_adjust_mark_outside', { p_slot_id: slot.id, p_user_ids: outsidePick });
+    setBusyBtn(false);
+    // 🚨 rpc は 4xx でも throw しない。error と ok の両方を見る
+    if (error) { setErr('記録できませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok) { setErr(row?.reason || '記録できませんでした'); return; }
+    setStatus('decided'); setOutside(true);
+    setOutsideIds(outsidePick.filter(id => id !== slot.target_user_id));
+    setOutsideBy({ by: userId, at: new Date().toISOString() });
+    setOutsidePick(null); setPlans([]); closeEditor();
+    setOkMsg('調整済み（アプリ外）として記録しました。');
+  };
+
   const undecide = async () => {
     setErr(''); setOkMsg(''); setBusyBtn(true);
     // 取り消す前に、決まっていた人を控える（取り消すと割り当ての行が消える）
@@ -1285,7 +1336,7 @@ const SlotDetail: React.FC<{
   //    DB の shift_adjust_set_status も同じ条件で断る
   const forkLocked = partReqs.length > 0;
   // 出勤する人・候補・出勤のお願いを出すか（未調整のうちは、決められる人にはまず選択だけを見せる）
-  const showWork = status !== 'no_change' && !(perms.decide && status === 'pending' && assigns.length === 0);
+  const showWork = status !== 'no_change' && !isOutside && !(perms.decide && status === 'pending' && assigns.length === 0);
 
   // 「＋ 入れる」のボタン（すでに入っている人は印だけ）
   const addBtn = (uid: string) => !canAdd ? null : inDrafts(uid) ? (
@@ -1337,7 +1388,7 @@ const SlotDetail: React.FC<{
           </div>
         )}
         <div style={{ fontSize: 12, color: ['pending', 'working'].includes(status) ? warnFg : subText, marginTop: 6 }}>
-          状態：{slotStatusLabel(status, notNeeded)}
+          状態：{slotStatusLabel(status, notNeeded, outside)}
           {slot.decided_at && status === 'no_change' && (
             <span style={{ color: subText, marginLeft: 10 }}>
               {nameOf(slot.decided_by) ? `${nameOf(slot.decided_by)}・` : ''}
@@ -1346,6 +1397,35 @@ const SlotDetail: React.FC<{
           )}
         </div>
       </div>
+
+      {/* 調整済み（アプリ外）の記録（2026-10-05）。アプリでは勤怠・Google カレンダー・通知に何もしていないことを書いておく */}
+      {isOutside && (
+        <div style={{ ...box, textAlign: 'left' }}>
+          <div style={head}>調整済み（アプリ外）</div>
+          <div style={{ fontSize: 13.5, color: text }}>
+            出勤：{outsideIds.length > 0 ? outsideIds.map(id => nameOf(id) || '（名前なし）').join('、') : '（記録なし）'}
+          </div>
+          <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>
+            （アプリを通さずに記録）{nameOf(outsideBy.by) ? `${nameOf(outsideBy.by)}・` : ''}{outsideBy.at ? actedAtLabel(outsideBy.at) : ''}
+          </div>
+          <p style={note}>アプリからは、勤怠カレンダー・Google カレンダーへの書き込みも、出勤する方への知らせもしていません。</p>
+          {perms.decide && (
+            <div style={{ marginTop: 10 }}>
+              {confirmOutsideUndo ? (
+                <div style={{ padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: isDark ? '#3a3f44' : '#f8f9fa' }}>
+                  <p style={{ margin: '0 0 8px', fontSize: 12.5, color: text, lineHeight: 1.8 }}>「調整済み（アプリ外）」を取り消して、調整中に戻します。</p>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => { setConfirmOutsideUndo(false); void undecide(); }} disabled={busyBtn} style={subBtn}>取り消す</button>
+                    <button onClick={() => setConfirmOutsideUndo(false)} style={quietBtn}>やめる</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmOutsideUndo(true)} style={subBtn}>取り消す</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 対応の選択（まず決めることを最初に出す。出勤する人が決まるまでは何度でも選び直せる） */}
       {canFork && (
@@ -1378,6 +1458,12 @@ const SlotDetail: React.FC<{
               style={toggleBtn(isNotNeeded, true, forkLocked)}>
               調整不要
             </button>
+            {/* 調整済み（アプリ外）（2026-10-05 ユーザー確定）：電話などアプリを使わずに調整を済ませたとき */}
+            <button onClick={() => { if (outsidePick === null) void openOutside(); }}
+              disabled={busyBtn || forkLocked}
+              style={toggleBtn(outsidePick !== null, true, forkLocked)}>
+              調整済み（アプリ外）
+            </button>
             {/* 🚨 どれも同じ見た目（2026-09-14 ユーザー確定）。押すと未調整に戻して一覧へ帰る */}
             <button onClick={() => void decideLater()} disabled={busyBtn || forkLocked}
               style={toggleBtn(false, true, forkLocked)}>
@@ -1397,6 +1483,50 @@ const SlotDetail: React.FC<{
               </div>
             </div>
           )}
+          {outsidePick !== null && (() => {
+            const toggle = (id: string) => setOutsidePick(p => (p ?? []).includes(id) ? (p ?? []).filter(x => x !== id) : [...(p ?? []), id]);
+            const row = (id: string, sub: string) => (
+              <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13.5, color: text, cursor: 'pointer' }}>
+                <input type="checkbox" checked={outsidePick.includes(id)} onChange={() => toggle(id)} />
+                <span style={{ fontWeight: 'bold' }}>{nameOf(id) || '（名前なし）'}</span>
+                {sub && <span style={{ fontSize: 12, color: subText }}>{sub}</span>}
+              </label>
+            );
+            const norm = (s: string) => s.replace(/[\s\u3000]/g, '');
+            const q = norm(outsideQuery);
+            const calIds = new Set((calPeople ?? []).map(c => c.user_id));
+            const found = q ? profiles.filter(p => p.id !== slot.target_user_id && !calIds.has(p.id) && norm(p.name ?? '').includes(q)).slice(0, 8) : [];
+            return (
+              <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: isDark ? '#3a3f44' : '#f8f9fa', textAlign: 'left' }}>
+                <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: text }}>
+                  誰が出勤しますか？<span style={{ fontWeight: 'normal', fontSize: 12, color: subText }}>（選ばなくても記録できます・何人でも選べます）</span>
+                </p>
+                <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>この日の勤怠カレンダーに予定がある人</div>
+                {calPeople === null ? (
+                  <p style={{ margin: '4px 0', fontSize: 12.5, color: subText }}>読み込んでいます…</p>
+                ) : calPeople.length === 0 ? (
+                  <p style={{ margin: '4px 0', fontSize: 12.5, color: subText }}>予定が入っている人はいません。</p>
+                ) : calPeople.map(c => row(c.user_id, c.label))}
+                <div style={{ fontSize: 12, color: subText, marginTop: 8 }}>ほかの人から選ぶ</div>
+                <input value={outsideQuery} onChange={e => setOutsideQuery(e.target.value)} placeholder="名前で探す"
+                  style={{ width: '100%', boxSizing: 'border-box', marginTop: 4, padding: '7px 10px', borderRadius: 8, fontSize: 16,
+                    border: `1px solid ${border}`, background: inputBg, color: text }} />
+                {found.map(p => row(p.id, p.role_title ?? ''))}
+                {q && found.length === 0 && <p style={{ margin: '4px 0', fontSize: 12.5, color: subText }}>見つかりません。</p>}
+                <p style={{ margin: '10px 0 0', fontSize: 12.5, color: text }}>
+                  選んだ人：{outsidePick.length > 0 ? outsidePick.map(id => nameOf(id) || '（名前なし）').join('、') : 'なし（調整済みとだけ記録します）'}
+                </p>
+                {plans.length > 0 && (
+                  <p style={{ margin: '6px 0 0', fontSize: 12.5, color: warnFg }}>案が{plans.length}件あります。記録すると、案は消えます。</p>
+                )}
+                <p style={note}>アプリからは、勤怠カレンダー・Google カレンダーへの書き込みも、出勤する方への知らせもしません。</p>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button type="button" onClick={() => void recordOutside()} disabled={busyBtn} style={subBtn}>記録する</button>
+                  <button type="button" onClick={() => setOutsidePick(null)} style={quietBtn}>やめる</button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
