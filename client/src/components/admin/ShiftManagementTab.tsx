@@ -18,7 +18,7 @@ import { buildRosterPrintHtml, openRosterPrint, type PrintPerson } from '../../l
 import ShiftExcelLoader, { type LoadedPerson } from './ShiftExcelLoader';
 import StudySessionsPanel from './StudySessionsPanel';
 import { shortNameMap } from '../../lib/staffName';
-import { dayIssue, studyLabel, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
+import { dayIssue, studyCellText, studyLabel, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
 import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
 import CleaningRosterPanel from './CleaningRosterPanel';
 import KidsShiftPanel from './KidsShiftPanel';
@@ -339,7 +339,7 @@ const ShiftManagementTab: React.FC = () => {
       for (const k of ROSTER_WEEK) days[k] = shownDay(s.id, k);
       const mainId = mainAreaOf(s.id);
       const studies: PrintPerson['studies'] = {};
-      for (const k of ROSTER_WEEK) studies[k] = studiesFor(s.id, k, applyFrom).map(v => ({ text: studyLabel(v, shortNames), warn: !!dayIssue(v, days[k]!) }));
+      for (const k of ROSTER_WEEK) studies[k] = studiesFor(s.id, k, applyFrom).map(v => ({ text: studyCellText(v, shortNames), warn: !!dayIssue(v, days[k]!) }));
       const cleaningLines: PrintPerson['cleaning'] = {};
       for (const k of ROSTER_WEEK) cleaningLines[k] = cleaningFor(s.id, k, applyFrom);
       return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id), studies, cleaning: cleaningLines };
@@ -397,7 +397,7 @@ const ShiftManagementTab: React.FC = () => {
           return (
             <div key={v.id} style={{ fontSize: 10.5, color: warn ? red : (isDarkMode ? '#8fd19e' : '#1b5e20'), whiteSpace: 'nowrap' }}
               title={warn ? '勉強会の時間に勤務していない・校が違うなど（勉強会のタブで確かめられます）' : '勉強会'}>
-              {warn ? '⚠️' : ''}{studyLabel(v, shortNames)}
+              {warn ? '⚠️' : ''}{studyCellText(v, shortNames)}
             </div>
           );
         })}

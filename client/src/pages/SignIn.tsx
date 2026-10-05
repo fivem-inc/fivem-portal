@@ -1,7 +1,7 @@
 import { useState, useContext, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { BTN_BLUE } from '../lib/buttonStyles';
+import { BTN_BLUE, backBtn, tintBtn } from '../lib/buttonStyles';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -255,9 +255,9 @@ export default function SignIn() {
             style={{ 
               width: '100%', 
               padding: 8,
-              background: '#ffc107',
-              color: '#212529',
-              border: '1px solid #ffc107',
+              background: BTN_BLUE,
+              color: 'white',
+              border: `1px solid ${BTN_BLUE}`,
               borderRadius: '4px',
               cursor: 'pointer'
             }} 
@@ -272,15 +272,8 @@ export default function SignIn() {
       {!isResettingPassword && (
         <button
           onClick={() => { setResetMode('first'); setError(null); setInfo(null); }}
-          style={{
-            background: '#007bff',
-            border: '1px solid #007bff',
-            color: 'white',
-            cursor: 'pointer',
-            marginTop: '10px',
-            padding: '8px 16px',
-            borderRadius: '4px'
-          }}
+          // 2026-10-06（ユーザー確定 案A）：青の塗りは［ログイン］だけ。［はじめての方］は薄い青、「忘れた場合」は下線の文字
+          style={{ ...tintBtn(false), marginTop: '12px', padding: '8px 16px', borderRadius: '4px' }}
         >
           はじめての方（パスワードを決める）
         </button>
@@ -288,15 +281,7 @@ export default function SignIn() {
       {!isResettingPassword && (
         <button
           onClick={() => { setResetMode('forgot'); setError(null); setInfo(null); }}
-          style={{ 
-            background: '#17a2b8', 
-            border: '1px solid #17a2b8', 
-            color: 'white', 
-            cursor: 'pointer', 
-            marginTop: '10px',
-            padding: '8px 16px',
-            borderRadius: '4px'
-          }}
+          style={{ display: 'block', margin: '12px auto 0', background: 'none', border: 'none', padding: '4px 8px', color: '#1565c0', textDecoration: 'underline', cursor: 'pointer', fontSize: 14 }}
         >
           パスワードを忘れた場合
         </button>
@@ -309,15 +294,7 @@ export default function SignIn() {
       {isResettingPassword && (
         <button
           onClick={() => setResetMode(null)}
-          style={{ 
-            background: '#007bff', 
-            border: '1px solid #007bff', 
-            color: 'white', 
-            cursor: 'pointer', 
-            marginTop: '10px',
-            padding: '8px 16px',
-            borderRadius: '4px'
-          }}
+          style={{ ...backBtn(false), marginTop: '10px', padding: '8px 16px', borderRadius: '4px' }}
         >
           ログイン画面に戻る
         </button>

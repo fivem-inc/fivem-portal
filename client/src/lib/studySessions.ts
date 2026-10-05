@@ -26,7 +26,11 @@ export interface StudyVersion {
   memo: string | null;
   valid_from: string;
   valid_to: string | null;
-  members: string[];         // user_id（並び順）
+  members: string[];         // user_id（並び順・講師が先）
+  /** 講師（members のうちの何人か・2026-10-06）。勤務表の欄も講師が先に出る */
+  teachers: string[];
+  /** 部門（shift_work_areas の id・任意・2026-10-06） */
+  area_id: string | null;
 }
 
 export const STUDY_DURATIONS = [10, 15, 25, 30, 45];
@@ -41,6 +45,11 @@ export function studyEndMin(v: Pick<StudyVersion, 'start_time' | 'duration_minut
 /** 勤務表の欄の文：「12:30(30)濱口・馬場」 */
 export function studyLabel(v: Pick<StudyVersion, 'start_time' | 'duration_minutes' | 'members'>, names: Map<string, string>): string {
   return `${minText(studyStartMin(v))}(${v.duration_minutes})${v.members.map(id => names.get(id) ?? '（不明）').join('・')}`;
+}
+
+/** 勤務表のマス・PDF の文：「12:30(30)濱口・馬場 ※授業がないときは30分」（備考があれば添える・2026-10-06） */
+export function studyCellText(v: Pick<StudyVersion, 'start_time' | 'duration_minutes' | 'members' | 'memo'>, names: Map<string, string>): string {
+  return studyLabel(v, names) + (v.memo ? ` ※${v.memo}` : '');
 }
 
 /** その日に効いている版 */

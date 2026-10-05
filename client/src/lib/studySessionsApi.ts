@@ -30,15 +30,15 @@ export interface StudyData {
   showSelf: boolean;
 }
 
-interface VersionRow extends Omit<StudyVersion, 'members'> {
-  study_session_members: { user_id: string; sort_order: number }[] | null;
+interface VersionRow extends Omit<StudyVersion, 'members' | 'teachers'> {
+  study_session_members: { user_id: string; sort_order: number; role: string }[] | null;
 }
 
 /** sinceDate に効いている版と、それより先の版 */
 export async function loadStudyData(sinceDate: string): Promise<{ data: StudyData | null; error: string | null }> {
   const [verRes, ackRes, staffRes, floorRes, setRes] = await Promise.all([
     supabase.from('study_session_versions')
-      .select('id, session_id, day_kind, start_time, duration_minutes, location, floor, memo, valid_from, valid_to, study_session_members(user_id, sort_order)')
+      .select('id, session_id, day_kind, start_time, duration_minutes, location, floor, memo, area_id, valid_from, valid_to, study_session_members(user_id, sort_order, role)')
       .or(`valid_to.is.null,valid_to.gte.${sinceDate}`)
       .order('valid_from'),
     supabase.from('study_session_acks').select('version_id, issue_key, acked_by, acked_at'),
@@ -55,8 +55,9 @@ export async function loadStudyData(sinceDate: string): Promise<{ data: StudyDat
   const versions: StudyVersion[] = ((verRes.data ?? []) as VersionRow[]).map(r => ({
     id: r.id, session_id: r.session_id, day_kind: r.day_kind as RosterDayKind, start_time: r.start_time,
     duration_minutes: r.duration_minutes, location: r.location, floor: r.floor, memo: r.memo,
-    valid_from: r.valid_from, valid_to: r.valid_to,
+    valid_from: r.valid_from, valid_to: r.valid_to, area_id: r.area_id ?? null,
     members: [...(r.study_session_members ?? [])].sort((a, b) => a.sort_order - b.sort_order).map(m => m.user_id),
+    teachers: [...(r.study_session_members ?? [])].filter(m => m.role === 'teacher').sort((a, b) => a.sort_order - b.sort_order).map(m => m.user_id),
   }));
   const floors: Record<string, string[]> = {};
   for (const f of (floorRes.data ?? []) as { category: string; value: string }[]) {
@@ -96,6 +97,10 @@ export interface StudySavePayload {
   floor?: string | null;
   memo?: string | null;
   members?: string[];
+  /** 講師（members のうちの何人か・2026-10-06） */
+  teachers?: string[];
+  /** 部門（2026-10-06）。null＝決めない */
+  area_id?: string | null;
 }
 
 export interface StudySaveResult {

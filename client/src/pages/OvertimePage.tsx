@@ -4247,7 +4247,7 @@ const MyStudyList: React.FC<{ isDark: boolean }> = ({ isDark }) => {
             {r.location ? `\u3000${r.location}${r.floor ? ` ${r.floor}` : ''}` : ''}
             <span style={{ display: 'block', fontSize: 11.5, color: subText }}>
               {r.member_names.join('・')}{r.valid_to ? `（${Number(r.valid_to.slice(5, 7))}/${Number(r.valid_to.slice(8, 10))}まで）` : ''}
-              {r.memo ? `\u3000内容：${r.memo}` : ''}
+              {r.memo ? `\u3000備考：${r.memo}` : ''}
             </span>
           </div>
         );

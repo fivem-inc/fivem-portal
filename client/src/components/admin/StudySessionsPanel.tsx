@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { todayJstStr } from '../../lib/breakCalc';
 import {
-  ROSTER_DAY_LABEL, ROSTER_WEEK, minText, rowOnDate, rowToDay, sortSegments, toMin, type RosterDayKind,
+  AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_WEEK, minText, rowOnDate, rowToDay, sortSegments, toMin,
+  type RosterDayKind, type WorkArea,
 } from '../../lib/shiftRoster';
 import { loadRosterData, type RosterPatternRow } from '../../lib/shiftRosterApi';
 import { fullName, shortNameMap } from '../../lib/staffName';
 import {
-  STUDY_DURATIONS, dayIssue, mdText, studyEndMin, studyIssues, studyLabel, studyStartMin, versionsOnDate,
+  STUDY_DURATIONS, dayIssue, mdText, studyCellText, studyEndMin, studyIssues, studyLabel, studyStartMin, versionsOnDate,
   type StudyVersion,
 } from '../../lib/studySessions';
 import {
@@ -31,6 +32,12 @@ interface Editor {
   floor: string;
   memo: string;
   members: string[];
+  /** 講師（members のうちの何人か・2026-10-06） */
+  teachers: string[];
+  /** 部門（shift_work_areas の id・''＝決めない・2026-10-06） */
+  areaId: string;
+  /** いつまで（入れたいときだけ・''＝決めない・2026-10-06）。入れると保存のあとその日で終わらせる */
+  until: string;
 }
 
 const TL_START = 8 * 60;
@@ -70,6 +77,13 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
   const [stale, setStale] = useState(false);
   const [showSelfConfirm, setShowSelfConfirm] = useState(false);
   const [labels, setLabels] = useState<Map<string, string>>(new Map());
+  // 2026-10-06：部門（こども・大人・管理部…）と、メインの部門（講師を選んだときの初期値）
+  const [areas, setAreas] = useState<WorkArea[]>([]);
+  const [mainAreas, setMainAreas] = useState<Record<string, string>>({});
+  /** 一覧の絞り込み：'all'／部門の id／'none'（部門なし） */
+  const [areaFilter, setAreaFilter] = useState<string>('all');
+  /** 一覧で開いている勉強会（版の id） */
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const earliest = [baseDate, editor?.applyFrom ?? baseDate, ending?.date ?? baseDate].sort()[0];
 
@@ -79,7 +93,8 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
     if (s.error || !s.data) { setLoadErr(s.error ?? '読み込めませんでした'); setLoading(false); return; }
     if (r.error || !r.data) { setLoadErr(r.error ?? '週のシフトを読み込めませんでした'); setLoading(false); return; }
     if (t.error || t.token == null) { setLoadErr(`保存の準備ができませんでした：${t.error ?? ''}`); setLoading(false); return; }
-    setLabels(dn.labels); setData(s.data); setRosterRows(r.data.patterns); setWorkplaces(r.data.workplaces); setToken(t.token); setRosterSince(since); setStale(false);
+    setLabels(dn.labels); setData(s.data); setRosterRows(r.data.patterns); setWorkplaces(r.data.workplaces);
+    setAreas(r.data.areas.filter(a => a.active)); setMainAreas(r.data.mainAreas); setToken(t.token); setRosterSince(since); setStale(false);
     setLoading(false);
   }, []);
 
@@ -124,7 +139,7 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
   // ─── 保存 ───
   const startNew = () => {
     setMsg(''); setErr(''); setEnding(null); setConfirmPast(false);
-    setEditor({ sessionId: null, applyFrom: baseDate, day: 'mon', start: '12:30', duration: 30, location: workplaces[0] ?? '', floor: '', memo: '', members: [] });
+    setEditor({ sessionId: null, applyFrom: baseDate, day: 'mon', start: '12:30', duration: 30, location: workplaces[0] ?? '', floor: '', memo: '', members: [], teachers: [], areaId: '', until: '' });
   };
   const startEdit = (v: StudyVersion) => {
     setMsg(''); setErr(''); setEnding(null); setConfirmPast(false);
@@ -132,6 +147,7 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
       sessionId: v.session_id, applyFrom: baseDate > v.valid_from ? baseDate : v.valid_from, day: v.day_kind,
       start: minText(studyStartMin(v)).padStart(5, '0'), duration: v.duration_minutes, location: v.location ?? '',
       floor: v.floor ?? '', memo: v.memo ?? '', members: [...v.members],
+      teachers: [...v.teachers], areaId: v.area_id ?? '', until: '',
     });
   };
 
@@ -156,8 +172,20 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
     const r = await saveStudy({
       action: 'upsert', session_id: editor.sessionId, apply_from: editor.applyFrom, confirm_past: editor.applyFrom < today,
       base_token: token, day_kind: editor.day, start: editor.start, duration_minutes: editor.duration,
-      location: editor.location || null, floor: editor.floor || null, memo: editor.memo || null, members: editor.members,
+      location: editor.location || null, floor: editor.floor || null, memo: editor.memo || null,
+      // 講師が先（勤務表の欄も講師が先に出る）
+      members: [...editor.teachers, ...editor.members.filter(id => !editor.teachers.includes(id))],
+      teachers: editor.teachers, area_id: editor.areaId || null,
     });
+    // いつまで（入れたときだけ）：保存のあと、その日で終わらせる。🚨 保存で目印が変わるので、新しい目印を読み直してから送る
+    if (editor.until && !r.error && r.result?.ok && r.result.session_id) {
+      const t = await loadStudyToken();
+      if (t.error || t.token == null) { setSaving(false); setErr(`保存はしましたが、終わりの日を入れられませんでした：${t.error ?? ''}（一覧の［終わらせる］から入れてください）`); await load(earliest); return; }
+      const r2 = await saveStudy({ action: 'end', session_id: r.result.session_id, apply_from: editor.until, confirm_past: editor.until < today, base_token: t.token });
+      if (r2.error || !r2.result?.ok) { setSaving(false); setErr(`保存はしましたが、終わりの日を入れられませんでした：${r2.error ?? ''}（一覧の［終わらせる］から入れてください）`); await load(earliest); return; }
+      if (await handleResult(r2, `${mdText(editor.applyFrom)} から ${mdText(editor.until)} まで保存しました`)) { setEditor(null); setConfirmPast(false); }
+      return;
+    }
     if (await handleResult(r, `${mdText(editor.applyFrom)} から保存しました`)) { setEditor(null); setConfirmPast(false); }
   };
 
@@ -202,7 +230,7 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
     if (selected.length < 2) common = [];
     const dup = versionsOnDate(versions, editor.applyFrom).filter(v => v.session_id !== editor.sessionId && v.day_kind === editor.day
       && [...v.members].sort().join(',') === [...editor.members].sort().join(',') && studyStartMin(v) !== s);
-    const label = studyLabel({ start_time: editor.start, duration_minutes: editor.duration, members: editor.members }, shortNames);
+    const label = studyLabel({ start_time: editor.start, duration_minutes: editor.duration, members: [...editor.teachers, ...editor.members.filter(id => !editor.teachers.includes(id))] }, shortNames);
     const memberNotes = editor.members.map(id => {
       const p = people.find(x => x.st.id === id);
       const issue = dayIssue({ start_time: editor.start, duration_minutes: editor.duration, location: editor.location || null }, p?.day ?? null);
@@ -211,18 +239,30 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
     return { s, e, present, common, dup, label, memberNotes };
   })();
 
-  const addMember = (id: string) => setEditor(ed => ed && !ed.members.includes(id) ? { ...ed, members: [...ed.members, id] } : ed);
-  const removeMember = (id: string) => setEditor(ed => ed ? { ...ed, members: ed.members.filter(x => x !== id) } : ed);
+  // 2026-10-06：講師と参加を分けた。帯の名前を押したときは、講師がまだいなければ講師、いれば参加に入る
+  const addMember = (id: string, asTeacher?: boolean) => setEditor(ed => {
+    if (!ed || ed.members.includes(id)) return ed;
+    const teacher = asTeacher ?? ed.teachers.length === 0;
+    return {
+      ...ed, members: [...ed.members, id],
+      teachers: teacher ? [...ed.teachers, id] : ed.teachers,
+      // 部門が空なら、最初の講師のメインの部門を入れておく（あとで選び直せる）
+      areaId: teacher && !ed.areaId ? (mainAreas[id] ?? '') : ed.areaId,
+    };
+  });
+  const removeMember = (id: string) => setEditor(ed => ed ? { ...ed, members: ed.members.filter(x => x !== id), teachers: ed.teachers.filter(x => x !== id) } : ed);
 
   if (loading && !data) return <p style={{ color: subText }}>読み込んでいます...</p>;
   if (loadErr && !data) return <p style={{ color: red }}>{loadErr}</p>;
   if (!data) return null;
 
   const editorErrors = editor ? [
-    editor.members.length < 2 ? '参加者を2人以上選んでください' : null,
+    editor.teachers.length < 1 ? '講師を選んでください' : null,
+    editor.members.length - editor.teachers.length < 1 ? '参加する人を選んでください' : null,
     !/^\d{1,2}:\d{2}$/.test(editor.start) ? '開始の時刻を入れてください' : null,
     editor.duration < 5 || editor.duration > 240 ? '長さは5〜240分です' : null,
     (toMin(editor.start) ?? 0) + editor.duration > 1440 ? '日をまたぐ勉強会は入れられません' : null,
+    editor.until && editor.until < editor.applyFrom ? '「いつまで」は「いつから」より後の日にしてください' : null,
   ].filter((x): x is string => !!x) : [];
   const floorOptions = editor ? (data.floors[editor.location] ?? []) : [];
 
@@ -242,9 +282,10 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
           )}
           {!isAdminUser && <span style={{ fontSize: 12, color: subText }}>（切り替えは管理者）</span>}
         </div>
+        <div style={{ fontSize: 11.5, color: subText, marginTop: 4 }}>オンにすると、正社員の参加者の「残業・時間管理」のページに、自分の勉強会が出ます（パートには出ません）</div>
         {showSelfConfirm && (
           <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', lineHeight: 1.7 }}>
-            オンにすると、正社員の参加者{fullTimeCount}人の「残業・時間管理」のページに、自分の勉強会（内容のメモも）が出ます。<br />
+            オンにすると、正社員の参加者{fullTimeCount}人の「残業・時間管理」のページに、自分の勉強会（備考も）が出ます。<br />
             {partNames.length > 0 ? `パートの${partNames.length}人（${partNames.join('・')}）はこのページに入れないため、見えません。` : ''}
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
               <button type="button" onClick={() => void toggleShowSelf(true)} style={primaryBtn}>オンにする</button>
@@ -280,6 +321,8 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
           <b>{editor.sessionId ? '勉強会を直す' : '勉強会を追加'}</b>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
             <label style={{ color: subText }}>いつから <input type="date" value={editor.applyFrom} style={inputStyle} onChange={e => { if (e.target.value) { setEditor({ ...editor, applyFrom: e.target.value }); setConfirmPast(false); } }} /></label>
+            <label style={{ color: subText }}>いつまで <input type="date" value={editor.until} style={inputStyle} onChange={e => setEditor({ ...editor, until: e.target.value })} /></label>
+            <span style={{ color: subText, fontSize: 11.5 }}>（決まっていれば）</span>
             <span style={{ color: subText }}>曜日</span>
             {ROSTER_WEEK.map(k => <button key={k} type="button" onClick={() => setEditor({ ...editor, day: k })} style={toggle(editor.day === k)}>{ROSTER_DAY_LABEL[k]}</button>)}
           </div>
@@ -299,30 +342,40 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
                 {floorOptions.map(f => <option key={f} value={f}>{f}</option>)}
               </select>
             )}
-          </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-            <span style={{ color: subText }}>参加者</span>
-            {editor.members.length === 0 && <span style={{ color: subText, fontSize: 12 }}>下の帯の名前を押すと入ります</span>}
-            {editor.members.map(id => (
-              <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: isDarkMode ? '#1a3a5c' : '#e8f4fd', color: isDarkMode ? '#90caf9' : '#1565c0' }}>
-                {fullNames.get(id)}
-                <button type="button" aria-label="参加者から外す" onClick={() => removeMember(id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 12 }}>✕</button>
-              </span>
-            ))}
-            <select value="" style={inputStyle} onChange={e => { if (e.target.value) addMember(e.target.value); }}>
-              <option value="">名前から選ぶ</option>
-              {data.staff.filter(s => s.is_active && !editor.members.includes(s.id)).map(s => <option key={s.id} value={s.id}>{fullName(s.name)}</option>)}
+            <span style={{ color: subText }}>部門</span>
+            <select value={editor.areaId} style={inputStyle} onChange={e => setEditor({ ...editor, areaId: e.target.value })}>
+              <option value="">決めない</option>
+              {areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
+          {([['講師', true], ['参加', false]] as const).map(([label, asTeacher]) => {
+            const ids = asTeacher ? editor.teachers : editor.members.filter(id => !editor.teachers.includes(id));
+            return (
+              <div key={label} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                <span style={{ color: subText, width: 30 }}>{label}</span>
+                {ids.length === 0 && <span style={{ color: subText, fontSize: 12 }}>{asTeacher ? '名前から選ぶか、下の帯の名前を押すと入ります' : '名前から選ぶか、下の帯の名前を押すと入ります'}</span>}
+                {ids.map(id => (
+                  <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: isDarkMode ? '#1a3a5c' : '#e8f4fd', color: isDarkMode ? '#90caf9' : '#1565c0', fontWeight: asTeacher ? 'bold' : 'normal' }}>
+                    {fullNames.get(id)}
+                    <button type="button" aria-label={`${label}から外す`} onClick={() => removeMember(id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 12 }}>✕</button>
+                  </span>
+                ))}
+                <select value="" style={inputStyle} onChange={e => { if (e.target.value) addMember(e.target.value, asTeacher); }}>
+                  <option value="">名前から選ぶ</option>
+                  {data.staff.filter(s => s.is_active && !editor.members.includes(s.id)).map(s => <option key={s.id} value={s.id}>{fullName(s.name)}</option>)}
+                </select>
+              </div>
+            );
+          })}
           <div style={{ marginTop: 8 }}>
-            <input type="text" value={editor.memo} maxLength={200} placeholder="内容のメモ（任意）" style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }} onChange={e => setEditor({ ...editor, memo: e.target.value })} />
-            {data.showSelf && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>本人に見せる設定がオンなので、このメモも参加者本人に見えます</div>}
+            <input type="text" value={editor.memo} maxLength={200} placeholder="備考（任意）例：授業がないときは30分" style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }} onChange={e => setEditor({ ...editor, memo: e.target.value })} />
+            {data.showSelf && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>本人に見せる設定がオンなので、この備考も参加者本人に見えます。勤務表と PDF にも「※」で出ます</div>}
           </div>
 
           {/* プレビュー */}
           <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, background: innerBg }}>
             <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
-              {mdText(editor.applyFrom)}（{ROSTER_DAY_LABEL[editor.day]}）に{editor.location || 'いずれかの校'}にいる人（保存済みの週のシフト・パートも含む）。名前を押すと参加者に入ります。
+              {mdText(editor.applyFrom)}（{ROSTER_DAY_LABEL[editor.day]}）に{editor.location || 'いずれかの校'}にいる人（保存済みの週のシフト・パートも含む）。名前を押すと入ります（講師がまだいなければ講師、いれば参加）。
               <span style={{ color: '#1565c0' }}> 青</span>＝選んだ全員がそろう時間／<span style={{ color: red }}>赤い枠</span>＝勉強会の時間
             </div>
             <div style={{ position: 'relative', marginLeft: 130, height: 14, fontSize: 11, color: subText }}>
@@ -335,7 +388,7 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
                 <div key={p.st.id} style={{ display: 'flex', alignItems: 'center', height: 24 }}>
                   <button type="button" onClick={() => (on ? removeMember(p.st.id) : addMember(p.st.id))}
                     style={{ width: 130, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: on ? '#1565c0' : text, fontWeight: on ? 'bold' : 'normal', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-                    {on ? '✓ ' : ''}{fullName(p.st.name)}{p.st.employment_type === 'パート' ? '（パ）' : ''}
+                    {on ? (editor.teachers.includes(p.st.id) ? '講 ' : '✓ ') : ''}{fullName(p.st.name)}{p.st.employment_type === 'パート' ? '（パ）' : ''}
                   </button>
                   <div style={{ position: 'relative', flex: 1, height: 14, background: isDarkMode ? '#1f2327' : '#eef0f2', borderRadius: 3 }}>
                     {on && preview.common.map(([a, b], i) => <div key={i} style={{ position: 'absolute', left: pct(a), width: `calc(${pct(b)} - ${pct(a)})`, top: -3, bottom: -3, background: '#bbdefb', opacity: 0.7, borderRadius: 3 }} />)}
@@ -382,61 +435,119 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
         </div>
       )}
 
-      {/* 一覧（曜日ごと） */}
-      {shown.length === 0 && <p style={{ color: subText, fontSize: 13 }}>{mdText(baseDate)} に効いている勉強会はありません。</p>}
-      {ROSTER_WEEK.map(k => {
-        const list = shown.filter(v => v.day_kind === k).sort((a, b) => studyStartMin(a) - studyStartMin(b));
-        if (list.length === 0) return null;
+      {/* 一覧（2026-10-06 作り直し・ユーザー確定）：1件1行の表。部門で絞る。行を押すと中身・⚠️・［修正］［終わらせる］が開く */}
+      {(() => {
+        const areaOf = (id: string | null) => areas.find(a => a.id === id) ?? null;
+        const usedAreaIds = new Set(shown.map(v => v.area_id ?? 'none'));
+        const list0 = shown.filter(v => areaFilter === 'all' || (areaFilter === 'none' ? !v.area_id : v.area_id === areaFilter));
+        // 始まる日がみんな同じなら、上に1回だけ書く（行ごとには出さない）
+        const startsAll = [...new Set(list0.map(v => (v.valid_from > baseDate ? v.valid_from : '')))];
+        const commonStart = startsAll.length === 1 && startsAll[0] ? startsAll[0] : null;
+        const names = (ids: string[]) => ids.map(id => fullNames.get(id) ?? '（不明）').join('・');
+        const th: React.CSSProperties = { textAlign: 'left', fontSize: 11.5, fontWeight: 'normal', color: subText, padding: '4px 8px', whiteSpace: 'nowrap' };
+        const td: React.CSSProperties = { padding: '7px 8px', fontSize: 13, color: text, borderTop: `1px solid ${borderColor}`, verticalAlign: 'top' };
         return (
-          <div key={k} style={{ marginBottom: 8 }}>
-            <div style={{ fontWeight: 'bold', color: subText, fontSize: 13, marginBottom: 2 }}>{ROSTER_DAY_LABEL[k]}曜</div>
-            {list.map(v => {
-              const issues = issuesOf(v);
-              const next = nextChange(v);
-              const future = v.valid_from > baseDate;
-              const futureVersions = ending?.sessionId === v.session_id ? versions.filter(x => x.session_id === v.session_id && x.valid_from > ending.date) : [];
-              return (
-                <div key={v.id} style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, marginBottom: 4, fontSize: 13, color: text }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <b>{minText(studyStartMin(v))}〜{minText(studyEndMin(v))}（{v.duration_minutes}分）</b>
-                    <span>{v.location ?? '校は決めていない'}{v.floor ? ` ${v.floor}` : ''}</span>
-                    <span>{v.members.map(id => fullNames.get(id) ?? '（不明）').join('・')}</span>
-                    {future && <span style={{ fontSize: 11.5, padding: '0 6px', borderRadius: 8, background: '#e8f4fd', color: '#1565c0' }}>{mdText(v.valid_from)}から始まる</span>}
-                    {next && <span style={{ fontSize: 11.5, padding: '0 6px', borderRadius: 8, background: '#fff3cd', color: '#856404' }}>{mdText(next)}から変わる</span>}
-                    {v.valid_to && !next && <span style={{ fontSize: 11.5, color: subText }}>{mdText(v.valid_to)}まで</span>}
-                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                      <button type="button" onClick={() => startEdit(v)} style={{ ...inputStyle, cursor: 'pointer' }}>修正</button>
-                      <button type="button" onClick={() => { setEditor(null); setMsg(''); setErr(''); setEnding({ sessionId: v.session_id, date: baseDate > v.valid_from ? baseDate : v.valid_from }); }} style={{ ...inputStyle, cursor: 'pointer' }}>終わらせる</button>
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 12, color: green }}>勤務表：{studyLabel(v, shortNames)}{v.memo ? `\u3000内容：${v.memo}` : ''}</div>
-                  {issues.map(i => {
-                    const acked = isAcked(v, i.key);
-                    return (
-                      <div key={i.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 2 }}>
-                        <span>{acked ? '✓' : '⚠️'} {i.since > baseDate ? `${mdText(i.since)}から ` : ''}{i.text}{acked ? '（確認済み）' : ''}</span>
-                        {!acked && <button type="button" onClick={() => void ack(v, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>}
-                      </div>
-                    );
-                  })}
-                  {ending?.sessionId === v.session_id && (
-                    <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404' }}>
-                      <label>この日まで <input type="date" value={ending.date} style={inputStyle} onChange={e => { if (e.target.value) setEnding({ ...ending, date: e.target.value }); }} /></label>
-                      <span> で終わらせます。</span>
-                      {futureVersions.map(f => <div key={f.id}>・{mdText(f.valid_from)}からの変更（{minText(studyStartMin(f))}）も取り消します</div>)}
-                      {ending.date < today && <div>⚠️ 今日より前の日付です。</div>}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                        <button type="button" disabled={saving} onClick={() => void doEnd()} style={primaryBtn}>{saving ? '保存中…' : '終わらせる'}</button>
-                        <button type="button" disabled={saving} onClick={() => setEnding(null)} style={{ ...inputStyle, cursor: 'pointer' }}>やめる</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+              <button type="button" onClick={() => setAreaFilter('all')} style={toggle(areaFilter === 'all')}>すべて</button>
+              {areas.filter(a => usedAreaIds.has(a.id)).map(a => (
+                <button key={a.id} type="button" onClick={() => setAreaFilter(a.id)} style={toggle(areaFilter === a.id)}>{a.name}</button>
+              ))}
+              {usedAreaIds.has('none') && <button type="button" onClick={() => setAreaFilter('none')} style={toggle(areaFilter === 'none')}>部門なし</button>}
+              {commonStart && <span style={{ fontSize: 12.5, color: subText, marginLeft: 6 }}>{mdText(commonStart)} から始まる勉強会です（{list0.length}件）</span>}
+            </div>
+            {list0.length === 0 && <p style={{ color: subText, fontSize: 13 }}>{mdText(baseDate)} に効いている勉強会はありません。</p>}
+            {list0.length > 0 && (
+              <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8, background: cardBg }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620, fontVariantNumeric: 'tabular-nums', textAlign: 'left' }}>
+                  <thead>
+                    <tr><th style={th}>時刻</th><th style={th}>長さ</th><th style={th}>部門</th><th style={th}>校</th><th style={th}>講師</th><th style={th}>参加</th><th style={th} /></tr>
+                  </thead>
+                  <tbody>
+                    {ROSTER_WEEK.map(k => {
+                      const list = list0.filter(v => v.day_kind === k).sort((a, b) => studyStartMin(a) - studyStartMin(b));
+                      if (list.length === 0) return null;
+                      return (
+                        <React.Fragment key={k}>
+                          <tr><td colSpan={7} style={{ padding: '6px 8px', fontSize: 12.5, fontWeight: 'bold', color: subText, background: innerBg, borderTop: `1px solid ${borderColor}` }}>{ROSTER_DAY_LABEL[k]}曜</td></tr>
+                          {list.map(v => {
+                            const issues = issuesOf(v);
+                            const open = openId === v.id;
+                            const unackedHere = issues.filter(i => !isAcked(v, i.key)).length;
+                            const next = nextChange(v);
+                            const ownStart = !commonStart && v.valid_from > baseDate;
+                            const area = areaOf(v.area_id);
+                            const c = area ? (AREA_COLORS[area.color] ?? AREA_COLORS.gray) : null;
+                            const futureVersions = ending?.sessionId === v.session_id ? versions.filter(x => x.session_id === v.session_id && x.valid_from > ending.date) : [];
+                            const others = v.members.filter(id => !v.teachers.includes(id));
+                            return (
+                              <React.Fragment key={v.id}>
+                                <tr onClick={() => setOpenId(open ? null : v.id)} style={{ cursor: 'pointer', background: open ? innerBg : undefined }}>
+                                  <td style={{ ...td, whiteSpace: 'nowrap', fontWeight: 'bold' }}>{minText(studyStartMin(v))}〜{minText(studyEndMin(v))}</td>
+                                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{v.duration_minutes}分</td>
+                                  <td style={td}>{area && c ? <span style={{ fontSize: 11.5, padding: '1px 6px', borderRadius: 4, background: c.bg, color: c.fg, whiteSpace: 'nowrap' }}>{area.name}</span> : <span style={{ color: subText }}>—</span>}</td>
+                                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{v.location ?? '—'}{v.floor ? ` ${v.floor}` : ''}</td>
+                                  <td style={{ ...td, fontWeight: 'bold' }}>{names(v.teachers)}</td>
+                                  <td style={td}>
+                                    {names(others)}
+                                    {v.memo && <div style={{ fontSize: 11.5, color: subText, marginTop: 1 }}>備考：{v.memo}</div>}
+                                    {ownStart && <span style={{ marginLeft: 6, fontSize: 11, padding: '0 6px', borderRadius: 8, background: '#e8f4fd', color: '#1565c0', whiteSpace: 'nowrap' }}>{mdText(v.valid_from)}から</span>}
+                                    {next && <span style={{ marginLeft: 6, fontSize: 11, padding: '0 6px', borderRadius: 8, background: '#fff3cd', color: '#856404', whiteSpace: 'nowrap' }}>{mdText(next)}から変わる</span>}
+                                    {v.valid_to && !next && <span style={{ marginLeft: 6, fontSize: 11, color: subText, whiteSpace: 'nowrap' }}>{mdText(v.valid_to)}まで</span>}
+                                  </td>
+                                  <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right', color: subText }}>
+                                    {unackedHere > 0 && <span style={{ color: red, marginRight: 6 }}>⚠️</span>}{open ? '▲' : '›'}
+                                  </td>
+                                </tr>
+                                {open && (
+                                  <tr><td colSpan={7} style={{ padding: '8px 10px 10px', background: innerBg, fontSize: 13, color: text }}>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 12, color: subText }}>勤務表の欄：<span style={{ color: green }}>{studyCellText(v, shortNames)}</span></div>
+                                        {v.memo && <div style={{ fontSize: 12.5, marginTop: 2 }}>備考：{v.memo}</div>}
+                                        {issues.length === 0 && <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>勤務時間・校との食い違いはありません</div>}
+                                        {issues.map(i => {
+                                          const acked = isAcked(v, i.key);
+                                          return (
+                                            <div key={i.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
+                                              <span>{acked ? '✓' : '⚠️'} {i.since > baseDate ? `${mdText(i.since)}から ` : ''}{i.text}{acked ? '（確認済み）' : ''}</span>
+                                              {!acked && <button type="button" onClick={() => void ack(v, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                      <span style={{ display: 'flex', gap: 6 }}>
+                                        <button type="button" onClick={() => startEdit(v)} style={{ ...inputStyle, cursor: 'pointer' }}>修正</button>
+                                        <button type="button" onClick={() => { setEditor(null); setMsg(''); setErr(''); setEnding({ sessionId: v.session_id, date: baseDate > v.valid_from ? baseDate : v.valid_from }); }} style={{ ...inputStyle, cursor: 'pointer' }}>終わらせる</button>
+                                      </span>
+                                    </div>
+                                    {ending?.sessionId === v.session_id && (
+                                      <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404' }}>
+                                        <label>この日まで <input type="date" value={ending.date} style={inputStyle} onChange={e => { if (e.target.value) setEnding({ ...ending, date: e.target.value }); }} /></label>
+                                        <span> で終わらせます。</span>
+                                        {futureVersions.map(f => <div key={f.id}>・{mdText(f.valid_from)}からの変更（{minText(studyStartMin(f))}）も取り消します</div>)}
+                                        {ending.date < today && <div>⚠️ 今日より前の日付です。</div>}
+                                        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                                          <button type="button" disabled={saving} onClick={() => void doEnd()} style={primaryBtn}>{saving ? '保存中…' : '終わらせる'}</button>
+                                          <button type="button" disabled={saving} onClick={() => setEnding(null)} style={{ ...inputStyle, cursor: 'pointer' }}>やめる</button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </td></tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         );
-      })}
+      })()}
       {loading && <p style={{ color: subText, fontSize: 12 }}>読み込んでいます...</p>}
       <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
         ⚠️ は保存済みの週のシフト（{mdText(rosterSince)} 以降）から計算しています。休憩の時刻は持っていないので、休憩と重なるかは分かりません。
