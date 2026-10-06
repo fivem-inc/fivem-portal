@@ -13,7 +13,7 @@ import { BELL_REFRESH_EVENT } from './lib/notifications';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
 const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
-const RetireChecklistPanel = React.lazy(() => import('./components/RetireChecklistPanel'));
+const StaffChecklistTabs = React.lazy(() => import('./components/StaffChecklistTabs'));
 const ChangePassword = React.lazy(() => import('./pages/ChangePassword'));
 const AccountSettings = React.lazy(() => import('./pages/AccountSettings'));
 const NotificationSettings = React.lazy(() => import('./pages/NotificationSettings'));
@@ -1327,10 +1327,12 @@ const classifyNotif = (n: NotifLike) => {
     //    回答はホームのバナー（EncouragementBanner）からなので、ホームへ返して、バナーまで移動させる
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
     // 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19）。済むまで残す
-    if (n.source_type === 'retire:checklist') return { path: '/retire', closeOnTap: false };
+    if (n.source_type === 'retire:checklist') return { path: '/retire?kind=retire', closeOnTap: false };
+    // 入社の準備（2026-10-06）：登録したとき・◯日前・今日入社。入社のチェック表へ。済むまで残す
+    if (n.source_type === 'hire:registered' || n.source_type === 'hire:remind' || n.source_type === 'staff:hired') return { path: '/retire?kind=hire', closeOnTap: false };
     // シフト・入社予定のスタッフ（2026-10-05）。勤務表はシフト管理、入社予定はユーザー管理へ
     if (n.source_type === 'shift_roster:saved') return { path: '/admin?tab=shift_patterns', closeOnTap: true };
-    if (n.source_type === 'staff:hired' || n.source_type === 'staff:invite_failed' || n.source_type === 'staff:first_login') return { path: '/admin?tab=users', closeOnTap: true };
+    if (n.source_type === 'staff:invite_failed' || n.source_type === 'staff:first_login') return { path: '/admin?tab=users', closeOnTap: true };
     // パスワード変更の依頼（2026-10-04・staff-onboard の request_password_change）
     if (n.source_type === 'account:password_change') return { path: '/change-password', closeOnTap: true };
     // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false
@@ -2563,8 +2565,8 @@ const LeaveApprovalsPage: React.FC = () => {
   );
 };
 
-// 退職の手続き（/retire）。マネージャー以上と管理者。スマホでも開ける（管理画面はパソコンだけのため別に置く・2026-09-19）
-// 🚨 中身は RetireChecklistPanel 1つ（管理画面の「退職の手続き」タブと共用）
+// 入社・退職の手続き（/retire）。マネージャー以上と管理者。スマホでも開ける（管理画面はパソコンだけのため別に置く・2026-09-19）
+// 🚨 中身は StaffChecklistTabs 1つ（管理画面の「入社・退職の手続き」タブと共用）。?kind=hire|retire で開くほうを決める（2026-10-06）
 const RetirePage: React.FC = () => {
   const { user, isAdmin, isManagerPlus, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const isDarkMode = useDarkMode();
@@ -2573,9 +2575,9 @@ const RetirePage: React.FC = () => {
   return (
     <div style={{ padding: '110px 16px 0', maxWidth: 760, margin: '0 auto' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
-      <h2 style={{ fontSize: 18, margin: '0 0 12px', color: isDarkMode ? '#fff' : '#212529' }}>📋 退職の手続き</h2>
+      <h2 style={{ fontSize: 18, margin: '0 0 12px', color: isDarkMode ? '#fff' : '#212529' }}>📋 入社・退職の手続き</h2>
       <Suspense fallback={<PageLoader />}>
-        <RetireChecklistPanel isDark={isDarkMode} isAdmin={isAdmin} />
+        <StaffChecklistTabs isDark={isDarkMode} isAdmin={isAdmin} syncUrl />
       </Suspense>
     </div>
   );

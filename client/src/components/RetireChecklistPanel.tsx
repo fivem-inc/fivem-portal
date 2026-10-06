@@ -1,4 +1,6 @@
 // 退職の手続きのチェック表（2026-09-19・1段目）。設計は docs/計画-退職者の申請期間.md §6・§7-5
+// 🚨 2026-10-06：入社の手続き（kind='hire'）も同じ部品で出す。表は別（hire_*）、どの表を読むかは lib/staffChecklist.ts の CHECKLIST 1か所。
+//    退職だけのもの（付け替えた申請・購入申請の承認者・切り替えの失敗）は kind='retire' のときだけ出す
 //
 // 🚨 この部品1つを「管理画面のタブ」と「/retire（マネージャー以上・スマホ可）」の両方が使う（2か所に書かない）
 // 🚨 見る・済みにする＝マネージャー以上＋管理者（RLS も is_manager_plus()）。項目の編集は管理者だけ
@@ -11,15 +13,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient';
 import { todayJstStr, toJstDateStr } from '../lib/breakCalc';
 import { retireState, retireStateLabel, mdLabel, retireRemaining, REASSIGN_TABLE_LABEL } from '../lib/retire';
+import { CHECKLIST, peopleQuery, type ChecklistKind } from '../lib/staffChecklist';
 
 interface Item {
   /** 択一で答える項目の選択肢（null＝ふつうのチェック）。🚨 自由記述にはしない（パスワードを書かれないため） */
   choices?: string[] | null;
   id: string; label: string; required: boolean; sort_order: number; active: boolean;
+  /** 入社だけ：自動で済みになる項目（first_login＝初めてのログイン）。退職の項目には無い */
+  auto_key?: string | null;
 }
 interface Person {
   id: string; name: string | null; is_active: boolean | null; approval_status: string | null;
-  retire_date: string; retiree_access_until: string | null;
+  retire_date: string | null; retiree_access_until: string | null;
+  /** 入社だけ（kind='hire'）で読む */
+  hire_date?: string | null;
 }
 interface Check {
   /** 択一の項目で選んだ答え */
@@ -47,9 +54,13 @@ interface Props {
   isDark: boolean;
   /** 管理者なら項目の編集ができる */
   isAdmin: boolean;
+  /** 入社か退職か（既定は退職＝今までどおり） */
+  kind?: ChecklistKind;
 }
 
-const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
+const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire' }) => {
+  const isHire = kind === 'hire';
+  const T = CHECKLIST[kind];
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const border = isDark ? '#495057' : '#dee2e6';
@@ -100,27 +111,29 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
     const [it, pp] = await Promise.all([
-      supabase.from('retire_checklist_items').select('id, label, required, sort_order, active, choices').order('sort_order'),
-      supabase.from('profiles').select('id, name, is_active, approval_status, retire_date, retiree_access_until')
-        .not('retire_date', 'is', null).order('retire_date', { ascending: false }),
+      supabase.from(T.items).select(isHire ? 'id, label, required, sort_order, active, choices, auto_key' : 'id, label, required, sort_order, active, choices').order('sort_order'),
+      peopleQuery(kind, isHire
+        ? 'id, name, is_active, approval_status, retire_date, retiree_access_until, hire_date'
+        : 'id, name, is_active, approval_status, retire_date, retiree_access_until'),
     ]);
     if (it.error || pp.error) {
       setLoadErr('読み込めませんでした：' + (it.error?.message ?? pp.error?.message ?? ''));
       setLoading(false);
       return;
     }
-    const ps = (pp.data ?? []) as Person[];
-    setItems((it.data ?? []) as Item[]);
+    const ps = (pp.data ?? []) as unknown as Person[];
+    setItems((it.data ?? []) as unknown as Item[]);
     setPeople(ps);
     const ids = ps.map(p => p.id);
     if (ids.length === 0) { setChecks([]); setReassigns([]); setNotes([]); setPurchaseLeft({}); setLoading(false); return; }
     const [ck, ra, nt, nm, ...pcs] = await Promise.all([
-      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice, na, item_label').in('user_id', ids),
-      supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
-      supabase.from('retire_notes').select('id, user_id, item_id, item_label, memo, updated_by, updated_at').in('user_id', ids),
+      supabase.from(T.checks).select('id, user_id, item_id, done_by, done_at, choice, na, item_label').in('user_id', ids),
+      // 🚨 付け替えた申請・購入申請の承認者は退職だけの話（入社では読まない）
+      isHire ? Promise.resolve({ data: [], error: null }) : supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
+      supabase.from(T.notes).select('id, user_id, item_id, item_label, memo, updated_by, updated_at').in('user_id', ids),
       // 「済みにした人」の名前は最初に1回だけ読む（押すたびに全員分を読み直さない）
       namesLoaded.current ? Promise.resolve(null) : supabase.from('profiles').select('id, name'),
-      ...ids.map(id => supabase.rpc('retire_purchase_pending', { p_user: id })),
+      ...(isHire ? [] : ids.map(id => supabase.rpc('retire_purchase_pending', { p_user: id }))),
     ]);
     if (ck.error || ra.error || nt.error) {
       setLoadErr('読み込めませんでした：' + (ck.error?.message ?? ra.error?.message ?? nt.error?.message ?? ''));
@@ -132,7 +145,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     setNotes((nt.data ?? []) as Note[]);
     // 数えられなかったときは null（「0件」と言わない）
     const pl: Record<string, number | null> = {};
-    ids.forEach((id, i) => { const r = pcs[i] as { data: unknown; error: unknown }; pl[id] = r.error || typeof r.data !== 'number' ? null : r.data; });
+    if (!isHire) ids.forEach((id, i) => { const r = pcs[i] as { data: unknown; error: unknown }; pl[id] = r.error || typeof r.data !== 'number' ? null : r.data; });
     setPurchaseLeft(pl);
     if (nm && !nm.error) {
       const m: Record<string, string> = {};
@@ -141,7 +154,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
       namesLoaded.current = true;
     }
     setLoading(false);
-  }, []);
+  }, [isHire, kind, T]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -151,11 +164,17 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     checks.find(c => c.user_id === userId && c.item_id === itemId), [checks]);
   const remainingOf = useCallback((userId: string) => retireRemaining(items, checks, userId), [items, checks]);
 
+  // 入社日・退職日（どちらの表かで読む列が変わる）
+  const dateOf = useCallback((p: Person) => (isHire ? p.hire_date : p.retire_date) ?? '', [isHire]);
   const shownPeople = useMemo(() => {
     const list = people.filter(p => showDone || remainingOf(p.id) > 0);
-    // 必須が残っている人を先に、その中は退職日の近い順
-    return [...list].sort((a, b) => (remainingOf(b.id) > 0 ? 1 : 0) - (remainingOf(a.id) > 0 ? 1 : 0) || a.retire_date.localeCompare(b.retire_date));
-  }, [people, showDone, remainingOf]);
+    // 必須が残っている人を先に、その中は入社日・退職日の近い順
+    return [...list].sort((a, b) => (remainingOf(b.id) > 0 ? 1 : 0) - (remainingOf(a.id) > 0 ? 1 : 0) || dateOf(a).localeCompare(dateOf(b)));
+  }, [people, showDone, remainingOf, dateOf]);
+  // 誰が済みにしたか。🚨 入社の自動の項目（初めてのログイン）は done_by が空＝「自動」
+  const whoDid = (c: { done_by: string | null; item_id: string | null }) =>
+    c.done_by ? (names[c.done_by] || '（不明）')
+      : (isHire && items.some(i => i.id === c.item_id && i.auto_key) ? '自動' : '（不明）');
   const doneCount = people.filter(p => remainingOf(p.id) === 0).length;
 
   // 済み・対象外にする／戻す。🚨 na=true が「対象外」。どちらも行を作るので、残り件数の数え方は同じ
@@ -164,14 +183,14 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const cur = checkOf(userId, item.id);
     setBusyKey(key); setRowErr(e => ({ ...e, [userId]: '' })); setUndoFor(null); setNaFor(null);
     if (cur) {
-      const { data, error } = await supabase.from('retire_checklist_checks').delete().eq('id', cur.id).select('id');
+      const { data, error } = await supabase.from(T.checks).delete().eq('id', cur.id).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: '戻せませんでした' + (error ? '：' + error.message : '（権限がないか、すでに戻されています）') }));
       }
     } else {
       // 🚨 item_label＝いま画面に出ている文字を写す。これがあるので、あとで項目を直しても消しても
       //    この記録の読まれ方は変わらない（チェック表は「手続きをやった証拠」なので書き換わってはいけない）
-      const { data, error } = await supabase.from('retire_checklist_checks')
+      const { data, error } = await supabase.from(T.checks)
         .insert({ user_id: userId, item_id: item.id, choice: choice ?? null, na, item_label: item.label }).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: (na ? '対象外にできませんでした' : '済みにできませんでした') + (error ? '：' + error.message : '') }));
@@ -186,13 +205,13 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const label = newLabel.trim();
     if (!label) { setItemErr('項目の名前を入れてください'); return; }
     const maxOrder = items.reduce((m, i) => Math.max(m, i.sort_order), 0);
-    const { error } = await supabase.from('retire_checklist_items').insert({ label, required: true, sort_order: maxOrder + 10 });
+    const { error } = await supabase.from(T.items).insert({ label, required: true, sort_order: maxOrder + 10 });
     if (error) { setItemErr('追加できませんでした：' + error.message); return; }
     setNewLabel(''); setItemErr('');
     await load();
   };
   const updateItem = async (id: string, patch: Partial<Item>) => {
-    const { data, error } = await supabase.from('retire_checklist_items').update(patch).eq('id', id).select('id');
+    const { data, error } = await supabase.from(T.items).update(patch).eq('id', id).select('id');
     if (error || !data || data.length === 0) { setItemErr('保存できませんでした' + (error ? '：' + error.message : '')); return; }
     setItemErr('');
     await load();
@@ -214,20 +233,20 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const me = session?.user.id ?? null;
     if (!body) {
       if (cur) {
-        const { data, error } = await supabase.from('retire_notes').delete().eq('id', cur.id).select('id');
+        const { data, error } = await supabase.from(T.notes).delete().eq('id', cur.id).select('id');
         if (error || !data || data.length === 0) {
           setRowErr(e => ({ ...e, [userId]: 'メモを消せませんでした' + (error ? '：' + error.message : '（権限がないか、すでに消えています）') }));
         }
       }
     } else if (cur) {
-      const { data, error } = await supabase.from('retire_notes')
+      const { data, error } = await supabase.from(T.notes)
         .update({ memo: body, item_label: itemLabel, updated_by: me, updated_at: new Date().toISOString() })
         .eq('id', cur.id).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: 'メモを保存できませんでした' + (error ? '：' + error.message : '') }));
       }
     } else {
-      const { data, error } = await supabase.from('retire_notes')
+      const { data, error } = await supabase.from(T.notes)
         .insert({ user_id: userId, item_id: itemId, item_label: itemLabel, memo: body, updated_by: me }).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: 'メモを保存できませんでした' + (error ? '：' + error.message : '') }));
@@ -240,7 +259,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   // 項目を消す。🚨 済み・対象外の記録は消えない（DB の外部キーが on delete set null。
   //    記録は写した文字で「削除された項目」として残る）
   const deleteItem = async (id: string) => {
-    const { data, error } = await supabase.from('retire_checklist_items').delete().eq('id', id).select('id');
+    const { data, error } = await supabase.from(T.items).delete().eq('id', id).select('id');
     if (error || !data || data.length === 0) {
       setItemErr('削除できませんでした' + (error ? '：' + error.message : '（権限がないか、すでに消えています）'));
       return;
@@ -290,7 +309,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '0 0 8px', flexWrap: 'wrap' }}>
           <span style={{ flex: 1, minWidth: 160, fontSize: 12.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: inputBg, border: `1px solid ${border}`, borderRadius: 6, padding: '6px 8px' }}>{cur.memo}</span>
           <span style={{ fontSize: 11.5, color: subText }}>
-            {names[cur.updated_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(cur.updated_at)))}
+            {whoDid({ done_by: cur.updated_by, item_id: null })}・{mdLabel(toJstDateStr(new Date(cur.updated_at)))}
           </span>
           <button type="button" style={btn(false)} onClick={() => { setNoteFor(key); setNoteText(cur.memo); }}>メモを直す</button>
         </div>
@@ -311,9 +330,15 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   return (
     <div style={{ color: text }}>
       <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.8, marginBottom: 14 }}>
+        {isHire ? (<>
+          入社が決まった方の準備を、漏れなく済ませるための表です。マネージャー以上と管理者が「済み」にできます（誰がいつ済みにしたかが残ります）。<br />
+          入社予定の方は管理画面の「ユーザー」で登録します。登録したとき、入社日の1週間前・3日前・前日・当日の朝9時に、マネージャー以上と管理者へお知らせが届きます（前日までは、残っている項目があるときだけ）。<br />
+          「アプリに初めてログインした」は、本人がログインすると自動で済みになります。その方にもともと無い項目（制服など）は、行の右の［対象外］で片付けられます。
+        </>) : (<>
         退職日が決まった方の手続きを、漏れなく済ませるための表です。マネージャー以上と管理者が「済み」にできます（誰がいつ済みにしたかが残ります）。<br />
         退職日は管理画面の「ユーザー」で管理者が入れます。退職日の朝9時に必須の項目が残っていると、マネージャー以上と管理者にお知らせが届きます。<br />
         その方にもともと無い項目（鍵・制服・名刺など）は、行の右の［対象外］で片付けられます。
+        </>)}
       </div>
 
       {loadErr && <div style={{ padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', marginBottom: 10 }}>{loadErr}</div>}
@@ -395,7 +420,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
 
       {shownPeople.length === 0 && !loadErr && (
         <p style={{ fontSize: 13, color: subText, textAlign: 'center', margin: '20px 0' }}>
-          {people.length === 0 ? '退職日が入っている方はいません' : '残っている手続きはありません'}
+          {people.length === 0 ? (isHire ? '入社予定の方はいません' : '退職日が入っている方はいません') : '残っている手続きはありません'}
         </p>
       )}
 
@@ -405,12 +430,18 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
         const moved = reassigns.filter(r => r.retired_user_id === p.id);
         const movedByTable = Object.entries(moved.reduce<Record<string, number>>((acc, r) => { acc[r.table_name] = (acc[r.table_name] ?? 0) + 1; return acc; }, {}));
         const pLeft = purchaseLeft[p.id];
-        const failed = retireState(p, today) === 'switch_failed';
+        const failed = !isHire && retireState(p, today) === 'switch_failed';
+        const hd = dateOf(p);
+        const daysLeft = isHire && hd ? Math.round((Date.parse(hd) - Date.parse(today)) / 86400000) : null;
         return (
           <div key={p.id} style={{ background: cardBg, border: `1px solid ${remaining > 0 ? '#f59e0b' : border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
               <span style={{ fontSize: 15, fontWeight: 'bold' }}>{p.name}さん</span>
-              <span style={{ fontSize: 12, color: subText }}>退職日 {mdLabel(p.retire_date)}・{retireStateLabel(p, today)}</span>
+              <span style={{ fontSize: 12, color: subText }}>
+                {T.dateLabel} {mdLabel(hd)}・{isHire
+                  ? (daysLeft !== null && daysLeft > 0 ? `入社予定（あと${daysLeft}日）` : daysLeft === 0 ? '今日入社' : '入社済み')
+                  : retireStateLabel(p, today)}
+              </span>
               <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 'bold', color: remaining > 0 ? (isDark ? '#ffc107' : '#b35900') : (isDark ? '#5cb85c' : '#1e7e34') }}>
                 {remaining > 0
                   ? `必須が残り ${remaining} 件`
@@ -426,7 +457,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
             {/* その方ぜんたいのメモ（項目に紐づかない申し送り）。🚨 項目ごとのメモと同じ部品を使う */}
             <div style={{ marginBottom: 6 }}>
               <div style={{ fontSize: 11.5, color: subText, marginBottom: 3 }}>この方ぜんたいのメモ</div>
-              {renderNote(p.id, null, null, '例：9/30 に本人と最終面談')}
+              {renderNote(p.id, null, null, isHire ? '例：制服はMサイズ・初日は 15:00 に来社' : '例：9/30 に本人と最終面談')}
             </div>
 
             {activeItems.map(it => {
@@ -451,7 +482,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                       </span>
                       {c && (
                         <span style={{ fontSize: 11.5, color: subText }}>
-                          {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                          {whoDid(c)}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
                         </span>
                       )}
                     </button>
@@ -486,14 +517,14 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                   )}
                   {undoFor === key && c && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '6px 10px 10px', fontSize: 12.5 }}>
-                      <span>{names[c.done_by ?? ''] || '（不明）'}さんの{c.na ? '「対象外」の' : ''}記録（{mdLabel(toJstDateStr(new Date(c.done_at)))}）を消して、未済に戻しますか？</span>
+                      <span>{whoDid(c)}{c.done_by ? 'さん' : ''}の{c.na ? '「対象外」の' : ''}記録（{mdLabel(toJstDateStr(new Date(c.done_at)))}）を消して、未済に戻しますか？</span>
                       <button type="button" style={btn(false)} onClick={() => setUndoFor(null)}>やめる</button>
                       <button type="button" style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }} onClick={() => toggle(p.id, it)}>戻す</button>
                     </div>
                   )}
                   {/* 項目ごとのメモ。🚨 未済でも書ける（「離職票は9月分が必要」など、やる前に書くことがあるため）。
                       🚨 チェックの記録とは別の表なので、メモを書いても「必須の残り」は減らない */}
-                  {renderNote(p.id, it.id, it.label, '例：南草津校の鍵1本を 9/30 に返却')}
+                  {renderNote(p.id, it.id, it.label, isHire ? '例：契約書は 10/9 に手渡し' : '例：南草津校の鍵1本を 9/30 に返却')}
                 </div>
               );
             })}
@@ -516,7 +547,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                         {c.item_label || '（名前が分かりません）'}{c.choice && `：${c.choice}`}{c.na && '（対象外）'}
                       </span>
                       <span style={{ fontSize: 11.5 }}>
-                        {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                        {whoDid(c)}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
                       </span>
                     </div>
                   ))}
@@ -527,7 +558,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                         {n.item_label}：{n.memo}
                       </span>
                       <span style={{ fontSize: 11.5 }}>
-                        {names[n.updated_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(n.updated_at)))}
+                        {whoDid({ done_by: n.updated_by, item_id: null })}・{mdLabel(toJstDateStr(new Date(n.updated_at)))}
                       </span>
                     </div>
                   ))}
@@ -535,7 +566,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
               );
             })()}
 
-            {(movedByTable.length > 0 || (pLeft ?? 0) > 0 || pLeft === null) && (
+            {!isHire && (movedByTable.length > 0 || (pLeft ?? 0) > 0 || pLeft === null) && (
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${border}`, fontSize: 12.5, lineHeight: 1.8 }}>
                 {movedByTable.length > 0 && (
                   <div>確認者を「管理者」に付け替えた申請：{movedByTable.map(([t, n]) => `${REASSIGN_TABLE_LABEL[t] ?? t} ${n}件`).join('・')}</div>

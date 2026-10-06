@@ -98,6 +98,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 🚨 2つは設定が別（先頭2区切りが別）。文面もほかの通知と重ねない（重なると1通にまとめられる）
   "shift_adjust:plan_created": { app: "シフト調整", word: "案", text: "シフト調整案のご確認をお願いします", url: "/calendar?tab=adjust", bell: true },
   "shift_adjust:plan_due": { app: "シフト調整", word: "期限", text: "意見の期限を過ぎた案があります", url: "/calendar?tab=adjust", bell: true },
+  // 入社の準備（2026-10-06・マネージャー以上と管理者）。🚨 ロック画面に出るので名前は書かない（名前はベルの本文にだけある）。
+  //    送るかどうかは管理画面の通知設定（channel='push'）で決める。最初は 登録＝オフ／◯日前・当日＝オン
+  "hire:registered":       { app: "入社", word: "準備", text: "入社予定の方が登録されました", url: "/retire?kind=hire" },
+  "hire:remind":           { app: "入社", word: "準備", text: "入社の準備で、まだ済んでいない確認があります", url: "/retire?kind=hire" },
+  "staff:hired":           { app: "入社", word: "今日", text: "今日入社の方がいます", url: "/retire?kind=hire" },
   // 申請依頼の「期限」リマインド（本人あて・朝9時の日次）。2026-09-11 追加。
   // 🚨 個人名・依頼の中身は書かない（プッシュはロック画面に出る）。件数はベル側で読む。
   // 🚨 bell: true。押すとベルが開いて該当の通知が光り、そこから残業ページへ進む

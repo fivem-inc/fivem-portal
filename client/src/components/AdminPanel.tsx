@@ -5,7 +5,7 @@ import { useAdminSetupAlerts } from '../hooks/useAdminSetupAlerts';
 import ApprovalsTab from './admin/ApprovalsTab';
 import GroupsTab from './admin/GroupsTab';
 import UsersTab from './admin/UsersTab';
-import RetireChecklistPanel from './RetireChecklistPanel';
+import StaffChecklistTabs from './StaffChecklistTabs';
 import TripReportsTab from './admin/TripReportsTab';
 import ReportsTab from './admin/ReportsTab';
 import LeaveRequestsTab from './admin/LeaveRequestsTab';
@@ -609,7 +609,7 @@ const AdminPanelContent: React.FC = () => {
               { key: 'leader_assignments',  label: 'リーダー',      icon: '📋' },
               { key: 'feature_permissions', label: '権限管理',      icon: '🔐' },
               // 退職の手続き（2026-09-19）。管理画面では管理者だけ。マネージャー以上は /retire（スマホ可）から同じ部品を開く
-              { key: 'retire',              label: '退職の手続き',  icon: '📋' },
+              { key: 'retire',              label: '入社・退職の手続き',  icon: '📋' },
               { key: 'reports',             label: 'レポート',      icon: '📊' },
             ],
           },
@@ -721,7 +721,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'groups' && <GroupsTab />}
         {activeTab === 'shift_patterns' && <ShiftManagementTab />}
         {activeTab === 'users' && <UsersTab />}
-        {activeTab === 'retire' && <RetireChecklistPanel isDark={isDarkMode} isAdmin={isAdminUser} />}
+        {activeTab === 'retire' && <StaffChecklistTabs isDark={isDarkMode} isAdmin={isAdminUser} />}
         {activeTab === 'trip_reports' && <TripReportsTab />}
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
