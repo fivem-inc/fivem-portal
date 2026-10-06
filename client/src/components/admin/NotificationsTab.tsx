@@ -150,7 +150,7 @@ const EVENT_GROUPS = [
     icon: '⏰',
     headerBg: '#FFF9C4', headerBorder: '#F57F17', headerText: '#E65100',
     events: [
-      { key: 'reminder:encouragement', label: '有給奨励日 未回答リマインド' },
+      { key: 'reminder:encouragement', label: '有休奨励日 未回答リマインド' },
       { key: 'reminder:scheduled',     label: '定期リマインド' },
       { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
       { key: 'overtime:unreported',    label: '残業 実績未報告リマインド（本人）' },
@@ -229,7 +229,7 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'overtime:pending_review': '受理がまだの申請の、申請先の担当者',
   'overtime:pending_review_advance': '受理がまだの申請の、申請先の担当者',
   'reminder:scheduled':     'リマインドの送信対象者',
-  'reminder:encouragement': '有給奨励日に未回答の対象者',
+  'reminder:encouragement': '有休奨励日に未回答の対象者',
   'overtime:new_request':       '申請の確認をお願いされた人',
   'overtime:request_confirmed': '申請した本人',
   'overtime:confirmed':         '報告した本人',
@@ -2220,7 +2220,7 @@ interface ReminderDaysSetting {
 }
 
 const REMINDER_DAYS_EVENTS = [
-  { key: 'encouragement_notify', label: '🌿 有給奨励日の未回答リマインド', help: '有給奨励日の回答期限の何日前に、未回答者へ知らせるか（0=当日）', hasDays: true },
+  { key: 'encouragement_notify', label: '🌿 有休奨励日の未回答リマインド', help: '有休奨励日の回答期限の何日前に、未回答者へ知らせるか（0=当日）', hasDays: true },
   { key: 'remind_unread',        label: '📝 連絡板の締切未読リマインド',   help: '連絡板の投稿の締切の何日前に、未読者へ知らせるか（0=当日）', hasDays: true },
 ];
 

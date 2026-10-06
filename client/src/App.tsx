@@ -76,6 +76,7 @@ import { formatSnapshotAge } from './lib/safetyStorage';
 import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
+import { isEncouragementText } from './lib/encouragementDay';
 
 // ページ遷移のたびにスクロールをトップへ戻す
 const ScrollToTop: React.FC = () => {
@@ -1248,7 +1249,7 @@ const PreviewBodyOffset: React.FC = () => {
 type NotifLike = { id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null; event_key?: string | null };
 
 const classifyNotif = (n: NotifLike) => {
-  const isEnc = n.message.includes('有給奨励日');
+  const isEnc = isEncouragementText(n.message);
   const isUnconfirmedReminder = n.message.includes('への対応がまだ完了していません');
   // 安否確認：isBoardの文言判定より先に見る
   const isSafetyUrgent = n.source_type === 'safety_check_urgent'; // 「助けが必要」の知らせ
@@ -1321,7 +1322,7 @@ const classifyNotif = (n: NotifLike) => {
   //   バナー側 … タップで閉じる／ベル側 … 既読にするだけ（一覧には履歴として残す）
   // 要対応（承認待ち・打刻の確認など）は closeOnTap: false。対応が終わるまで残す
   const target: { path: string | null; closeOnTap: boolean } = (() => {
-    // 有給奨励日（2026-09-19 修正）。🚨 以前は /leave（休暇申請）に飛ばしていたため、回答ではなく
+    // 有休奨励日（2026-09-19 修正）。🚨 以前は /leave（休暇申請）に飛ばしていたため、回答ではなく
     //    ふつうの休暇申請から出してしまう人がいた（奨励日の印が付かず、シフト調整の扱いもずれる）。
     //    回答はホームのバナー（EncouragementBanner）からなので、ホームへ返して、バナーまで移動させる
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
@@ -1537,7 +1538,8 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       // ホームに残るバナーは申請テーブルを直接数えている専用バナーだけになり、対応すれば自動で消える。
       // ここに新しく足すときは「専用バナーが無い」「読むだけでは済まない」の両方を満たすか確認すること。
       .in('source_type', BANNER_ONLY_SOURCE_TYPES)
-      .not('message', 'like', '%有給奨励日%')
+      .not('message', 'like', '%有休奨励日%')
+      .not('message', 'like', '%有給奨励日%')  // 🚨 2026-10-06 より前の通知は昔の書き方
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
       // 安否確認も専用の赤バナー(SafetyCheckBanner)が別途出るため、ここでは重複表示しない
       // 残業の超過は専用のオレンジのバナー（OvertimeThresholdBanner）が出すので、
@@ -1706,7 +1708,7 @@ const fmtDow = (dateStr: string) => {
   return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日(${DOW[d.getUTCDay()]})`;
 };
 
-// 有給奨励日バナー（消せない固定バナー）
+// 有休奨励日バナー（消せない固定バナー）
 type EncDay = { id: string; target_date: string; deadline: string };
 const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnswer: (day: EncDay) => void }> = ({ userId, refreshKey, onAnswer }) => {
   const [pending, setPending] = useState<EncDay[]>([]);
@@ -1748,12 +1750,12 @@ const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnsw
         const diff = Math.round((new Date(d.deadline + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86400000);
         const dateLabel = `${Number(d.deadline.slice(5,7))}月${Number(d.deadline.slice(8,10))}日`;
         let msg: string;
-        if (diff > 3) msg = `📅 有給奨励日の回答をお願いします（期限：${dateLabel}）`;
-        else if (diff === 3) msg = `⚠️ 有給奨励日の回答期限まで3日です`;
-        else if (diff === 2) msg = `⚠️ 有給奨励日の回答期限まで2日です`;
-        else if (diff === 1) msg = `⚠️ 有給奨励日の回答期限まで1日です`;
+        if (diff > 3) msg = `📅 有休奨励日の回答をお願いします（期限：${dateLabel}）`;
+        else if (diff === 3) msg = `⚠️ 有休奨励日の回答期限まで3日です`;
+        else if (diff === 2) msg = `⚠️ 有休奨励日の回答期限まで2日です`;
+        else if (diff === 1) msg = `⚠️ 有休奨励日の回答期限まで1日です`;
         else if (diff === 0) msg = `🔴 本日が回答期限です！`;
-        else msg = `❗ 有給奨励日の回答が未完了です`;
+        else msg = `❗ 有休奨励日の回答が未完了です`;
         const bg = diff <= 0 ? '#dc3545' : diff <= 1 ? '#fd7e14' : diff <= 3 ? '#ffc107' : '#007bff';
         return (
           <div key={d.id} onClick={() => onAnswer(d)}
@@ -2251,7 +2253,7 @@ const Dashboard: React.FC = () => {
   const encAnswerModal = encAnsweringDay ? (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ background: '#343a40', borderRadius: 16, padding: 24, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-        <h3 style={{ margin: '0 0 4px', color: '#fff', fontSize: 16 }}>📅 有給奨励日への回答</h3>
+        <h3 style={{ margin: '0 0 4px', color: '#fff', fontSize: 16 }}>📅 有休奨励日への回答</h3>
         <p style={{ margin: '0 0 16px', fontSize: 13, color: '#adb5bd' }}>対象日: {fmtDow(encAnsweringDay.target_date)}　期限: {fmtDow(encAnsweringDay.deadline)}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
           {([1, 2, 3, 4] as const).map(n => {
@@ -2401,7 +2403,7 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ③ 有給奨励日バナー（消せない） */}
+      {/* ③ 有休奨励日バナー（消せない） */}
       <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => { setEncAnsweringDay(d); setEncAnswerChoice(null); setEncAnswerNote(''); }} />
 
       {/* ④ 休暇申請承認バナー（承認者のみ） */}

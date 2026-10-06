@@ -13,6 +13,7 @@ import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { actedAtLabel } from '../lib/actedAt';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { leavePurposeLabel } from '../lib/encouragementDay';
 
 interface Props {
   user: AuthUser;
@@ -53,7 +54,7 @@ interface LeaveReq {
   approved2_at?: string | null;
   approver2_name?: string | null;
   requester?: { name: string } | null;
-  /** シフト調整の状態。有給奨励日だけの休暇は登録のときに DB が 'not_needed' を入れる（2026-09-28 受理の選択で使う） */
+  /** シフト調整の状態。有休奨励日だけの休暇は登録のときに DB が 'not_needed' を入れる（2026-09-28 受理の選択で使う） */
   shift_adjust_status?: string | null;
 }
 
@@ -172,7 +173,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
   const shiftNotNeededRef = useRef(false);
   const chooseShiftNotNeeded = (v: boolean) => { shiftNotNeededRef.current = v; setShiftNotNeeded(v); };
-  /** 選択を出すか：権限があり、まだ「調整不要」でない（有給奨励日だけの休暇は DB が自動で調整不要にしている） */
+  /** 選択を出すか：権限があり、まだ「調整不要」でない（有休奨励日だけの休暇は DB が自動で調整不要にしている） */
   const canChooseShift = (req: LeaveReq) => (isAdmin || !!canShiftAdjust) && req.shift_adjust_status !== 'not_needed';
   /** 受理の update に一緒に入れる列。🚨 受理と同じ1回の保存で書く（別々に保存すると受理だけ通ることがある） */
   const shiftFieldsFor = (req: LeaveReq, nowIso: string) =>
@@ -938,7 +939,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   })()}
                   {req.purpose && req.purpose.trim() && (
                     <div style={{ color: text, fontSize: 14, marginBottom: 6, fontWeight: 500 }}>
-                      事由: {req.purpose}
+                      事由: {leavePurposeLabel(req.purpose)}
                     </div>
                   )}
                   {req.reason && (

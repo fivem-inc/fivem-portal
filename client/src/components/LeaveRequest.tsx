@@ -73,6 +73,7 @@ import type { AuthUser, AdminLeaveRequest } from '../types';
 import { normalizeTime } from '../lib/timeInput';
 import TimeInput from './TimeInput';
 import { formatLeavePeriod } from '../lib/leaveDates';
+import { leavePurposeLabel } from '../lib/encouragementDay';
 
 // 休暇申請フォームの下書き
 interface LeaveDraft {
@@ -860,19 +861,19 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     const diffDays = Math.round((deadlineDate.getTime() - todayDate.getTime()) / 86400000);
     const dateLabel = `${Number(d.deadline.slice(5,7))}月${Number(d.deadline.slice(8,10))}日`;
     let msg: string;
-    if (diffDays > 3) msg = `📅 有給奨励日の回答をお願いします（期限：${dateLabel}）`;
-    else if (diffDays === 3) msg = `⚠️ 有給奨励日の回答期限まで3日です`;
-    else if (diffDays === 2) msg = `⚠️ 有給奨励日の回答期限まで2日です`;
-    else if (diffDays === 1) msg = `⚠️ 有給奨励日の回答期限まで1日です`;
+    if (diffDays > 3) msg = `📅 有休奨励日の回答をお願いします（期限：${dateLabel}）`;
+    else if (diffDays === 3) msg = `⚠️ 有休奨励日の回答期限まで3日です`;
+    else if (diffDays === 2) msg = `⚠️ 有休奨励日の回答期限まで2日です`;
+    else if (diffDays === 1) msg = `⚠️ 有休奨励日の回答期限まで1日です`;
     else if (diffDays === 0) msg = `🔴 本日が回答期限です！`;
-    else msg = `❗ 有給奨励日の回答が未完了です`;
+    else msg = `❗ 有休奨励日の回答が未完了です`;
     return { ...d, msg, diffDays };
   });
 
   const encAnswerModal = encAnsweringDay ? (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-        <h3 style={{ margin: '0 0 4px', color: text, fontSize: 16 }}>📅 有給奨励日への回答</h3>
+        <h3 style={{ margin: '0 0 4px', color: text, fontSize: 16 }}>📅 有休奨励日への回答</h3>
         <p style={{ margin: '0 0 16px', fontSize: 13, color: subText }}>対象日: {(() => { const d = new Date(encAnsweringDay.target_date + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${['日','月','火','水','木','金','土'][d.getUTCDay()]})`; })()}　期限: {(() => { const d = new Date(encAnsweringDay.deadline + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${['日','月','火','水','木','金','土'][d.getUTCDay()]})`; })()}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
           {([1, 2, 3, 4] as const).map(n => {
@@ -2068,7 +2069,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                       {req.approver2 && <span>受理者: {req.approver2.name}</span>}
                     </div>
                     {req.purpose && (
-                      <div style={{ color: subText, fontSize: 12, marginTop: 2, textAlign: 'left' }}>事由: {req.purpose}</div>
+                      <div style={{ color: subText, fontSize: 12, marginTop: 2, textAlign: 'left' }}>事由: {leavePurposeLabel(req.purpose)}</div>
                     )}
                     {req.reason && (
                       <div style={{ color: subText, fontSize: 12, marginTop: 1, textAlign: 'left' }}>備考: {req.reason}</div>

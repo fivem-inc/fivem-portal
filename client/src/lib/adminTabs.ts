@@ -35,7 +35,7 @@ export const MANAGER_TAB_INFO: Record<ManagerTabKey, ManagerTabInfo> = {
   },
   scheduled_reminders: {
     label: '📅 リマインド設定',
-    canDo: '定期リマインドの追加・編集・ON/OFF・削除と対応状況、有給奨励日・連絡板の締切未読の送る時刻',
+    canDo: '定期リマインドの追加・編集・ON/OFF・削除と対応状況、有休奨励日・連絡板の締切未読の送る時刻',
     dbNote: 'リマインドの書き込みを DB でも許可します',
   },
   faq: {

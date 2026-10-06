@@ -1503,7 +1503,7 @@ const OvertimeAdminTab: React.FC = () => {
             <strong>休館日・全社員休み</strong>＝会社休日（祝パターン適用）／
             <strong>休館日・社員出勤日</strong>と<strong>（有休奨励日）</strong>＝どちらも出勤日として扱います（出パターン適用）。<br />
             ※ 有休奨励日は<strong>カレンダーの色分け用</strong>です。スタッフに回答を求める場合は、
-            管理画面 → 休暇申請 → 有給奨励日 から別途作成してください。
+            管理画面 → 休暇申請 → 有休奨励日 から別途作成してください。
           </p>
 
           <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>

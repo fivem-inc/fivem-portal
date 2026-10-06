@@ -15,6 +15,7 @@ import {
 } from '../../lib/attendanceTypes';
 import { describeUpdate, describePartial } from '../../lib/statusUpdate';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
+import { ENC_PURPOSE_MARK, ENC_REASON_MARK, leavePurposeLabel } from '../../lib/encouragementDay';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -102,7 +103,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectNewType, setRejectNewType] = useState('');
   // 共通インライン確認（window.confirm廃止）。shiftChoice＝マネージャー段の代理受理のときだけ「シフト調整」を出す（2026-09-28）
-  //   'choose'＝［必要］［調整不要］を選ぶ／'already'＝すでに調整不要（有給奨励日だけの休暇など）なので表示だけ
+  //   'choose'＝［必要］［調整不要］を選ぶ／'already'＝すでに調整不要（有休奨励日だけの休暇など）なので表示だけ
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; shiftChoice?: 'choose' | 'already' } | null>(null);
   // 🚨 既定は「必要」。onConfirm は開いた時点の関数なので、選んだ値は ref で読む（受理ページ LeaveApprovals と同じ作り）
   const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
@@ -241,7 +242,7 @@ const LeaveRequestsTab: React.FC = () => {
         name: nm[r.user_id] ?? '不明',
         type: r.leave_type_other ? `${r.leave_type}（${r.leave_type_other}）` : r.leave_type,
         days: totalDays || '',
-        reason: r.purpose ?? r.reason ?? '',
+        reason: (r.purpose ? leavePurposeLabel(r.purpose) : null) ?? r.reason ?? '',
         ap1: r.approver_id ? (nm[r.approver_id] ?? '') : '',
         ap2: r.approver2_id ? (nm[r.approver2_id] ?? '') : '',
         status: STATUS_LABEL[r.status] ?? r.status,
@@ -359,7 +360,7 @@ const LeaveRequestsTab: React.FC = () => {
 
   useEffect(() => { fetchEncDays(); }, [fetchEncDays]);
 
-  // 有給奨励日を「日ごと削除」する。
+  // 有休奨励日を「日ごと削除」する。
   // 既存の「個人ごとの✕（対象から削除）」を全員に行うのと同じ挙動：
   // 回答 → 対象者 → その日に自動作成された承認済み有給申請 → 奨励日本体 の順に削除。
   const handleDeleteEncDay = useCallback(async (day: EncDay) => {
@@ -368,7 +369,7 @@ const LeaveRequestsTab: React.FC = () => {
       supabase.from('paid_leave_encouragement_responses').delete().eq('encouragement_day_id', day.id),
       supabase.from('paid_leave_encouragement_targets').delete().eq('encouragement_day_id', day.id),
       supabase.from('leave_requests').delete()
-        .eq('start_date', day.target_date).eq('reason', '【有給奨励日】').eq('status', 'approved'),
+        .eq('start_date', day.target_date).eq('reason', ENC_REASON_MARK).eq('status', 'approved'),
     ]);
     const childErr = child.find(r => r.error)?.error;
     if (childErr) {
@@ -541,7 +542,7 @@ const LeaveRequestsTab: React.FC = () => {
           const encCreateModal = showEncCreate ? (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
               <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
-                <h3 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#333', fontSize: 16 }}>📅 有給奨励日 新規作成</h3>
+                <h3 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#333', fontSize: 16 }}>📅 有休奨励日 新規作成</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div>
                     <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>対象日</label>
@@ -679,7 +680,7 @@ const LeaveRequestsTab: React.FC = () => {
                     </div>
                     <div style={{ padding: '10px 12px', background: isDarkMode ? '#1e2a3a' : '#eff6ff', borderRadius: 8, borderLeft: '3px solid #3b82f6' }}>
                       <p style={{ margin: 0, fontSize: 12, color: isDarkMode ? '#93c5fd' : '#1d4ed8' }}>
-                        📅 有給奨励日の回答をお願いします（{dateLabel}、期限：{encCreateDeadline}）
+                        📅 有休奨励日の回答をお願いします（{dateLabel}、期限：{encCreateDeadline}）
                       </p>
                     </div>
                   </div>
@@ -703,7 +704,7 @@ const LeaveRequestsTab: React.FC = () => {
                       );
                       const dl2 = `${d2.getMonth()+1}月${d2.getDate()}日`;
                       await supabase.from('notifications').insert(
-                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dl2}、期限：${encCreateDeadline}）`, event_key: 'reminder:encouragement' }))
+                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有休奨励日の回答をお願いします（${dl2}、期限：${encCreateDeadline}）`, event_key: 'reminder:encouragement' }))
                       );
                       setEncCreating(false);
                       setShowEncConfirm(false); setShowAllEncTargets(false);
@@ -800,7 +801,7 @@ const LeaveRequestsTab: React.FC = () => {
                                   const { error } = await supabase.from('leave_requests').delete()
                                     .eq('user_id', r.user_id)
                                     .eq('start_date', encDetailDay.target_date)
-                                    .eq('reason', '【有給奨励日】')
+                                    .eq('reason', ENC_REASON_MARK)
                                     .eq('status', 'approved');
                                   // 🚨 0件は正常（休暇申請を作っていない人もいる）。error だけ見る
                                   if (error) { setErrorMsg(`休暇申請を取り消せませんでした：${error.message}`); return; }
@@ -882,7 +883,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         .delete()
                                         .eq('user_id', r.user_id)
                                         .eq('start_date', encDetailDay.target_date)
-                                        .eq('reason', '【有給奨励日】')
+                                        .eq('reason', ENC_REASON_MARK)
                                         .eq('status', 'approved')
                                         .select('id');
                                       if (delErr) {
@@ -899,8 +900,8 @@ const LeaveRequestsTab: React.FC = () => {
                                         leave_dates: JSON.stringify([encDetailDay.target_date]),
                                         start_date: encDetailDay.target_date,
                                         end_date: encDetailDay.target_date,
-                                        purpose: '有給奨励日',
-                                        reason: '【有給奨励日】',
+                                        purpose: ENC_PURPOSE_MARK,
+                                        reason: ENC_REASON_MARK,
                                         status: 'approved',
                                         current_approver: 'none',
                                       });
@@ -994,7 +995,7 @@ const LeaveRequestsTab: React.FC = () => {
                                       if (d) {
                                         const dateLabel = `${Number(d.target_date.slice(5,7))}月${Number(d.target_date.slice(8,10))}日`;
                                         await supabase.from('notifications').insert(
-                                          encAddTargetIds.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dateLabel}、期限：${d.deadline}）`, event_key: 'reminder:encouragement' }))
+                                          encAddTargetIds.map(uid => ({ user_id: uid, message: `📅 有休奨励日の回答をお願いします（${dateLabel}、期限：${d.deadline}）`, event_key: 'reminder:encouragement' }))
                                         );
                                       }
                                       setEncAddingTargets(false);
@@ -1049,7 +1050,7 @@ const LeaveRequestsTab: React.FC = () => {
                             const email = emailMap[r.user_id];
                             if (!email) continue;
                             await supabase.functions.invoke('send-email', {
-                              body: { to: email, subject: '有給奨励日の回答をお願いします', text: `${r.userName}さん\n\n有給奨励日（${encDetailDay?.target_date}）の回答期限（${encDetailDay?.deadline}）が近づいています。\nサイトよりご回答ください。` },
+                              body: { to: email, subject: '有休奨励日の回答をお願いします', text: `${r.userName}さん\n\n有休奨励日（${encDetailDay?.target_date}）の回答期限（${encDetailDay?.deadline}）が近づいています。\nサイトよりご回答ください。` },
                             });
                           }
                           setEncSendingMail(false);
@@ -1165,10 +1166,10 @@ const LeaveRequestsTab: React.FC = () => {
                 )}
               </div>
 
-              {/* 有給奨励日 */}
+              {/* 有休奨励日 */}
               <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', margin: 0 }}>📅 有給奨励日</p>
+                  <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', margin: 0 }}>📅 有休奨励日</p>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <select value={encFY} onChange={e => setEncFY(e.target.value)}
                       style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 11 }}>
@@ -1503,7 +1504,7 @@ const LeaveRequestsTab: React.FC = () => {
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 11 }}>{dateDisplay}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>{days}日</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
-                              {req.purpose && <div>{req.purpose}</div>}
+                              {req.purpose && <div>{leavePurposeLabel(req.purpose)}</div>}
                               {req.reason && (() => {
                                 const displayReason = req.reason.replace(/[\s　]?【再申請】元申請ID: \S+/g, '').replace(/【管理者が種別変更】[^　]+(（変更して受理）)?/g, '').trim();
                                 const isReapply = req.reason.includes('【再申請】');
@@ -1765,7 +1766,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 10, color: isDarkMode ? '#adb5bd' : '#555' }}>{pDateDisplay}</td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>{pDays}日</td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'left', fontSize: 11, wordBreak: 'break-word', color: isDarkMode ? '#adb5bd' : '#555' }}>
-                                  {parent.purpose && <div>{parent.purpose}</div>}
+                                  {parent.purpose && <div>{leavePurposeLabel(parent.purpose)}</div>}
                                   {pDisplayReason && <div style={{ fontSize: 10 }}>備考: {pDisplayReason}</div>}
                                   {parent.rejected_reason && <div style={{ fontSize: 10, color: '#dc3545' }}>差し戻し理由: {parent.rejected_reason}</div>}
                                 </td>

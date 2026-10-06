@@ -27,6 +27,7 @@ import TimeInput from '../components/TimeInput';
 import { PageTabs } from '../components/PageTabs';
 import ShiftAdjustTab from '../components/ShiftAdjustTab';
 import { TOGGLE_BLUE } from '../lib/buttonStyles';
+import { ENC_PURPOSE_MARK, ENC_REASON_MARK } from '../lib/encouragementDay';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -1681,7 +1682,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   useEffect(() => { if (tabParam === 'adjust') setTab('adjust'); }, [tabParam]);
   // 休暇・欠勤の行の「シフト 未／調整中／…」の印に使う、日ごとの場の状態。
   // 🚨 2026-09-28：休暇の行の印も**その日の場**を見る（休暇1件まるごとの列ではなく）。
-  //    場が無い日（過ぎた日・有給奨励日・場を読む権限が無い人）だけ、休暇の列 shift_adjust_status を見る
+  //    場が無い日（過ぎた日・有休奨励日・場を読む権限が無い人）だけ、休暇の列 shift_adjust_status を見る
   const [saSlots, setSaSlots] = useState<Record<string, SaSlotMark>>({});
   const [saOpenId, setSaOpenId] = useState<string | null>(null);
   // 「シフト未調整だけ」の絞り込み（変えられる人にだけ出す）
@@ -1984,7 +1985,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
 
   /**
    * 休暇の行の、その日のシフトの印（2026-09-28）。
-   * その日の場があればその状態（1日ずつ）。無い日（過ぎた日・有給奨励日・場を読む権限が無い人）は休暇1件の列。
+   * その日の場があればその状態（1日ずつ）。無い日（過ぎた日・有休奨励日・場を読む権限が無い人）は休暇1件の列。
    * 「誰がいつ」は場の記録。場に無ければ、休暇の列が同じ印のときだけ休暇の記録を使う（違う印の人名を出さない）
    */
   const leaveDayMark = (ev: LeaveEvent, date: string): { key: ShiftMarkKey; slotId: string | null; byName: string | null; at: string | null } => {
@@ -2391,11 +2392,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                 const c = getEventColor(ev);
                 // 理由の2行目：調整休のみ「振替休日：〇〇のため」形式で表示。
                 // 他の休暇の事由はプライバシー配慮で全スタッフ向けのこの一覧には出さない（管理画面では見られる）
-                // ただし有給奨励日由来の申請（reason='【有給奨励日】'）は会社が指定した日なので明示する
+                // ただし有休奨励日由来の申請（reason=ENC_REASON_MARK）は会社が指定した日なので明示する
                 const choseiNote = ev.leave_type === '調整休'
                   ? `${ev.reason?.startsWith('振替休日') ? '振替休日' : '時間外調整休'}${ev.purpose ? `：${ev.purpose}` : ''}`
-                  : (ev.reason?.includes('【有給奨励日】') || ev.purpose === '有給奨励日')
-                    ? '📅 有給奨励日'
+                  : (ev.reason?.includes(ENC_REASON_MARK) || ev.purpose === ENC_PURPOSE_MARK)
+                    ? '📅 有休奨励日'
                     : null;
                 // シフト調整のチップ（2026-09-09）。受理済み（マネージャー受理以降）だけに出す。
                 // 🚨 受理前は調整のしようがないので出さない。⑨の毎朝のお知らせも同じ条件にすること
