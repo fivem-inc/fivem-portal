@@ -18,7 +18,7 @@ import { buildKidsPrintHtml } from '../../lib/kidsShiftPrint';
 
 // ⑤ こどもシフト表（2026-09-16・段階1の1回目）。設計・決めたことは docs/計画-管理画面の開放.md の 5-9〜5-9-3。
 // ・置き場所（列・校の見出し・曜日の書き添え）×曜日のマスを「いつから」で版にする（変えたマスだけ・先の版は残す）
-// ・案は「変えたマスだけ」を持つ。決定すると決定済みの表に入り、案はしまう（しまった案は2年で消える）
+// ・案は「変えたマスだけ」を持つ。決定すると決定済みの表に入り、案は「過去の案」へ（2年で消える・画面の言葉は 2026-10-06 に「しまった案」から変更）
 // ・追加必要＝必要な人数に足りない分（班の数から初期値）。重なり＝同じ人が同じ時間に2か所
 // 🚨 ⚠️（出勤していない）と「確認した」・案を比べる・Excel・校ごとの PDF は2回目
 // 🚨 下書きは「決定済みの表」と「案ごと」で分けて持つ（切り替えで混ざらないように・レビュー U2）
@@ -369,7 +369,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     setPanelErr('');
     const r = await savePlan({ op: 'create', name: newPlan.name.trim(), apply_from: newPlan.from, copy_from: newPlan.copy || null });
     if (r.error) { setPanelErr(`作れませんでした：${r.error}`); return; }
-    if (!r.ok && r.reason === 'plan_limit') { setPanelErr(`作業中の案が${r.limit}個あります。使わない案をしまってから、新しい案を作ってください。`); return; }
+    if (!r.ok && r.reason === 'plan_limit') { setPanelErr(`作業中の案が${r.limit}個あります。使わない案を［この案を使わない］で過去の案に移してから、新しい案を作ってください。`); return; }
     if (!r.ok) { setPanelErr(`作れませんでした（${r.reason ?? ''}）`); return; }
     setNewPlan(null);
     await load(true);
@@ -379,7 +379,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const archivePlan = async (p: KidsPlan) => {
     setPanelErr('');
     const r = await savePlan({ op: 'archive', plan_id: p.id, revision: p.revision });
-    if (r.error || !r.ok) { setPanelErr(`しまえませんでした：${r.error ?? r.reason ?? ''}`); return; }
+    if (r.error || !r.ok) { setPanelErr(`過去の案に移せませんでした：${r.error ?? r.reason ?? ''}`); return; }
     if (view === p.id) setView('decided');
     await load(true);
   };
@@ -682,7 +682,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           onClick={() => setNewPlan({ name: '', from: applyFrom, copy: '' })}>＋ 新しい案</button>
         <span style={{ fontSize: 12, color: subText }}>作業中 {openPlans.length}／{data.settings.plan_limit}</span>
         {archivedPlans.length > 0 && (
-          <button type="button" style={linkBtn} onClick={() => setShowArchived(v => !v)}>しまった案 ▼（{archivedPlans.length}）</button>
+          <button type="button" style={linkBtn} onClick={() => setShowArchived(v => !v)}>過去の案 ▼（{archivedPlans.length}）</button>
         )}
       </div>
 
@@ -711,7 +711,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
               <button type="button" style={linkBtn} onClick={() => setNewPlan({ name: `${p.name}の写し`, from: applyFrom, copy: p.id })}>写して新しい案にする</button>
             </div>
           ))}
-          <div style={{ color: subText, marginTop: 4 }}>🚨 しまった案は、決定から2年で自動的に消えます。</div>
+          <div style={{ color: subText, marginTop: 4 }}>🚨 過去の案は、2年たつと自動的に消えます（決定した日・使わないにした日から）。</div>
         </div>
       )}
 
@@ -740,7 +740,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                 .then(r => { if (r.error || !r.ok) setSaveErr(`予定の適用開始日を変えられませんでした：${r.error ?? r.reason ?? ''}`); return load(true); });
             }} />
           <span style={{ marginLeft: 8, fontSize: 12 }}>最後の保存 {plan.updated_at.slice(0, 16).replace('T', ' ')}</span>
-          <button type="button" style={{ ...linkBtn, marginLeft: 8 }} onClick={() => void archivePlan(plan)}>この案をしまう</button>
+          <button type="button" style={{ ...linkBtn, marginLeft: 8 }} onClick={() => void archivePlan(plan)}>この案を使わない</button>
         </div>
       )}
 
