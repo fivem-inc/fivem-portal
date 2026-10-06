@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { todayJstStr } from '../../lib/breakCalc';
-import { ROSTER_DAY_LABEL, prevDate, shiftDayOn, type RosterDayKind } from '../../lib/shiftRoster';
+import { ROSTER_DAY_LABEL, normTime, prevDate, shiftDayOn, type RosterDayKind } from '../../lib/shiftRoster';
+import { bandsOfDay, itemsByBand, poolRowOfBand, type KidsBand } from '../../lib/kidsShiftBands';
 import { loadRosterData, type RosterData, type RosterPatternRow } from '../../lib/shiftRosterApi';
 import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
-  KIDS_WEEK, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
+  KIDS_WEEK, sigOfItems, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
   kidsCellIssues, kidsGridSheet, kidsListSheet, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell,
 } from '../../lib/kidsShift';
@@ -14,7 +15,7 @@ import {
   ackKidsIssue, decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
 } from '../../lib/kidsShiftApi';
-import { buildKidsPrintHtml } from '../../lib/kidsShiftPrint';
+import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
 
 // ⑤ こどもシフト表（2026-09-16・段階1の1回目）。設計・決めたことは docs/計画-管理画面の開放.md の 5-9〜5-9-3。
@@ -79,6 +80,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [markScreen, setMarkScreen] = useState(true);
   const [pdfMark, setPdfMark] = useState(true);
   const [pdfBlank, setPdfBlank] = useState(true);
+  // PDF の紙（2026-10-06 ユーザー確定：出すときに選ぶ。A3 は要らない＝プリンターで拡大できる）
+  const [pdfLayout, setPdfLayout] = useState<KidsPrintLayout>('two');
   const [showArchived, setShowArchived] = useState(false);
 
   const plan: KidsPlan | null = useMemo(
@@ -204,6 +207,28 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const activeColumns = useMemo(() => places.filter(p => p.kind === 'column' && p.active).sort((a, b) => a.sort_order - b.sort_order), [places]);
   const heads = useMemo(() => places.filter(p => p.kind === 'head' && p.active).sort((a, b) => a.sort_order - b.sort_order), [places]);
   const dayNotePlace = useMemo(() => places.find(p => p.kind === 'daynote' && p.active) ?? null, [places]);
+  // 「3F・5F で動ける人」（共通の人）の置き場所（校ごとに1つ・2026-10-06。いまは四条本校だけ）
+  const poolPlaces = useMemo(() => places.filter(p => p.kind === 'pool' && p.active), [places]);
+  const poolOfSchool = useCallback((school: string | null) => poolPlaces.find(p => p.school === school) ?? null, [poolPlaces]);
+  /** 共通の人で回せる列か（共通の置き場所がある校の 3F・5F） */
+  const isPoolColumn = useCallback((p: KidsPlace | undefined) =>
+    !!p && p.kind === 'column' && !!poolOfSchool(p.school) && (p.floor === '3F' || p.floor === '5F'), [poolOfSchool]);
+  /** クラス（班のある行＝帯の目印・共通で回せる行） */
+  const isClassItem = useCallback((it: KidsItem) => !!data?.rowKinds.find(k => k.key === it.kind)?.has_groups, [data]);
+  /** その曜日の共通の行を組み立てる材料（画面・PDF で同じものを使う） */
+  const poolCtxOf = useCallback((d: RosterDayKind, poolPlace: KidsPlace, cellOf: (placeId: string, d: string) => KidsCellValue = shownCell) => {
+    const cell = cellOf(poolPlace.id, d);
+    return {
+      poolPlace,
+      poolItem: cell.find(it => it.kind === 'pool') ?? null,
+      sources: activeColumns.map(p => ({ place: p, items: cellOf(p.id, d) })),
+      poolColumnIds: new Set(activeColumns.filter(p => p.school === poolPlace.school && isPoolColumn(p)).map(p => p.id)),
+      isClass: isClassItem,
+      kindLabel: (k: string) => data?.rowKinds.find(r => r.key === k)?.label ?? k,
+      defaultMinutes: (k: string) => data?.rowKinds.find(r => r.key === k)?.default_minutes ?? 50,
+      requiredOf: (it: KidsItem) => it.required ?? (data ? defaultsForGroups(data.settings, it.groups).required : 0),
+    };
+  }, [shownCell, activeColumns, isPoolColumn, isClassItem, data]);
 
   const hasContent = useCallback((placeId: string, d: string) => shownCell(placeId, d).length > 0, [shownCell]);
   const [extraColumns, setExtraColumns] = useState<Set<string>>(new Set());
@@ -216,12 +241,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     const out: { place: KidsPlace; day: RosterDayKind; item: KidsItem; need: number; lessonNeed: number }[] = [];
     for (const d of KIDS_WEEK) for (const p of activeColumns) {
       for (const it of shownCell(p.id, d)) {
+        if (it.use_pool && isPoolColumn(p)) continue;   // 共通の人で回すクラスは、共通の行で数える
         const s = shortfallOf(it, data.settings, canLesson, inactive);
         if (s) out.push({ place: p, day: d, item: it, need: s.need, lessonNeed: s.lessonNeed });
       }
     }
     return out;
-  }, [data, activeColumns, shownCell, canLesson, inactive]);
+  }, [data, activeColumns, shownCell, canLesson, inactive, isPoolColumn]);
 
   // ⚠️（出勤していない・2026-09-22）。
   // 🚨 判定は lib/kidsShift.ts の kidsCellIssues（中身は ④掃除担当表・③勉強会と同じ shiftTimeIssue）。
@@ -262,13 +288,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   /** ⚠️ の数（確認済みを除いたもの／確認済みの数）。見出しの「⚠️ 5件（確認済み 3）」に使う */
   const issueCount = useMemo(() => {
     let open = 0, acked = 0;
-    for (const d of KIDS_WEEK) for (const p of activeColumns.concat(data?.places.filter(x => x.kind === 'head' && x.active) ?? [])) {
+    for (const d of KIDS_WEEK) for (const p of activeColumns.concat(data?.places.filter(x => x.kind === 'head' && x.active) ?? [], poolPlaces)) {
       for (const i of issuesOf(p.id, d)) {
         if (isAcked(p.id, d, i.key)) acked++; else open++;
       }
     }
     return { open, acked };
-  }, [activeColumns, data, issuesOf, isAcked]);
+  }, [activeColumns, data, issuesOf, isAcked, poolPlaces]);
 
   const ackIssue = async (placeId: string, d: RosterDayKind, key: string) => {
     const o = ackOwner(placeId, d);
@@ -430,36 +456,57 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   /** PDF。onlySchool を渡すとその校だけ出す（校ごとの PDF・2026-09-22） */
   const printPdf = (onlySchool?: string) => {
     if (!data) return;
-    // 🚨 いまのマスと比べる先のマスを、同じ作り方で文字にする（作り方が違うと、変わっていない所まで印が付く）
-    const printLines = (cell: KidsCellValue) => cell.flatMap(it => {
-      const s = shortfallOf(it, data.settings, canLesson, inactive);
-      return (pdfBlank ? itemTextWithBlanks(it, nameOf, s, k => data.roleKinds.find(r => r.key === k)?.label ?? k)
-        : itemText(it, nameOf, k => data.roleKinds.find(r => r.key === k)?.label ?? k)).split('\n');
-    });
-    const changed = new Set<string>();
-    for (const d of KIDS_WEEK) for (const p of activeColumns) {
-      if (!cellEquals(shownCell(p.id, d), baseCell(p.id, d))) changed.add(cellKey(p.id, d));
-    }
     const off: Partial<Record<RosterDayKind, string[]>> = {};
     const dayNotes: Partial<Record<RosterDayKind, string[]>> = {};
     for (const d of KIDS_WEEK) {
       off[d] = offOfDay(d).map(s => nameOf(s.id));
       dayNotes[d] = dayNotePlace ? shownCell(dayNotePlace.id, d).map(it => it.note).filter(Boolean) : [];
     }
+    // 🚨 画面と同じ組み立て（時刻の帯・共通の行・行の文字）を使う。PDF だけ別の作り方にしない
+    const colsOf = (d: RosterDayKind) => columnsOfDay(d).filter(c => !onlySchool || c.school === onlySchool);
+    const bandCache = new Map<RosterDayKind, KidsBand[]>();
+    const bandsOf = (d: RosterDayKind): KidsBand[] => {
+      let b = bandCache.get(d);
+      if (!b) {
+        b = bandsOfDay(colsOf(d).map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem);
+        if (b.length === 0) b = [{ from: 0, to: null, label: '' }];
+        bandCache.set(d, b);
+      }
+      return b;
+    };
+    const fmtCommon = (r: ReturnType<typeof poolRowOfBand>) => r.common.map(x => `${nameOf(x.userId)}${x.note}`).join('・');
+    const fmtOther = (r: ReturnType<typeof poolRowOfBand>) => r.other.map(x => `${nameOf(x.userId)}${x.where ? `（${x.where}）` : ''}`).join('・');
     const html = buildKidsPrintHtml({
       title: `${md(baseDate)}〜 こどもシフト表${plan ? ` ${plan.name}` : ''}${onlySchool ? `（${onlySchool}）` : ''}`,
       asOf: today,
       notes: (data.notes ?? []).filter(n => n.active).map(n => n.body),
-      places: onlySchool ? places.filter(p => p.school === onlySchool) : places,
-      columnsOf: d => columnsOfDay(d).filter(c => !onlySchool || c.school === onlySchool),
-      linesOf: (placeId, d) => printLines(shownCell(placeId, d)),
-      baseLinesOf: (placeId, d) => printLines(baseCell(placeId, d)),
+      columnsOf: colsOf,
+      bandsOf,
+      cellOf: (placeId, d, bi) => ({
+        lines: linesOfItems(placeId, itemsByBand(shownCell(placeId, d), bandsOf(d))[bi] ?? [], pdfBlank),
+        base: linesOfItems(placeId, itemsByBand(baseCell(placeId, d), bandsOf(d))[bi] ?? [], pdfBlank),
+      }),
+      poolOf: (d, bi) => {
+        const cs = colsOf(d);
+        for (const pp of poolPlaces) {
+          const ids = cs.filter(c => c.school === pp.school && isPoolColumn(c)).map(c => c.id);
+          if (ids.length === 0) continue;
+          const first = cs.findIndex(c => c.id === ids[0]);
+          if (!ids.every((id, j) => cs[first + j]?.id === id)) continue;
+          const b = bandsOf(d)[bi];
+          const r = poolRowOfBand(b, poolCtxOf(d, pp));
+          if (!r.show) return null;
+          const rb = poolRowOfBand(b, poolCtxOf(d, pp, baseCell));
+          return { placeIds: ids, common: fmtCommon(r), other: fmtOther(r), baseCommon: fmtCommon(rb), baseOther: fmtOther(rb) };
+        }
+        return null;
+      },
       headOf: (school, d) => {
         const head = heads.find(h => h.school === school);
         if (!head) return [];
         return shownCell(head.id, d).map(it => itemText(it, nameOf, k => data.roleKinds.find(r => r.key === k)?.label ?? k));
       },
-      changed, markChanges: pdfMark, offStaff: off, dayNotes,
+      markChanges: pdfMark, offStaff: off, dayNotes, layout: pdfLayout,
     });
     setPanelErr(openRosterPrint(html) ?? '');
   };
@@ -553,6 +600,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
               </span>
             </>
           )}
+          {kind?.has_groups && isPoolColumn(place) && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5 }}>
+              <input type="checkbox" checked={it.use_pool} onChange={e => setItem({ use_pool: e.target.checked })} />
+              共通の人で回す
+            </label>
+          )}
           {isRole && (
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5 }}>
               <input type="checkbox" checked={it.is_none} onChange={e => setItem({ is_none: e.target.checked, people: e.target.checked ? [] : it.people })} />
@@ -584,7 +637,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                 </select>
                 <select value={p.role} style={inputStyle} onChange={e => setPerson(pi, { role: e.target.value as KidsPerson['role'] })}>
                   <option value="lead">担当</option>
-                  <option value="onduty">勤務中（担当しない）</option>
+                  <option value="onduty">（ ）出勤・レッスンに入らない（事務など）</option>
                   <option value="support">サポート</option>
                 </select>
                 <input type="time" step={300} value={p.start} style={{ ...inputStyle, width: 110 }} onChange={e => setPerson(pi, { start: e.target.value })} />
@@ -619,6 +672,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         <input type="text" value={it.note} maxLength={200} placeholder={isNote ? '書き添え（例：今田・奥村ー誰か休みの時、各校に午前中出勤可能）' : '書き添え（例：（月1回）・定員5・打合せ4階）'}
           style={{ ...inputStyle, width: '100%', marginTop: 6 }} onChange={e => setItem({ note: e.target.value })} />
         {place?.kind === 'column' && (kind?.has_groups ?? false) && (() => {
+          if (it.use_pool && isPoolColumn(place)) {
+            return <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>共通の人で回します（足りるかは表の「共通」の行で見ます）</div>;
+          }
           const s = shortfallOf(it, data.settings, canLesson, inactive);
           if (!s) return <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>人数はそろっています</div>;
           return (
@@ -633,6 +689,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
 
   const cellEditor = (placeId: string, d: RosterDayKind) => {
     const place = places.find(p => p.id === placeId);
+    if (place?.kind === 'pool') return poolEditor(placeId, d);
     const v = shownCell(placeId, d);
     const k = cellKey(placeId, d);
     const kinds = place?.kind === 'head' ? [{ key: 'role', label: '見出しの役割' }]
@@ -665,14 +722,24 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     );
   };
 
-  const linesOfCell = (cell: KidsCellValue): string[] =>
-    cell.flatMap(it => {
-      const s = shortfallOf(it, data.settings, canLesson, inactive);
-      return itemTextWithBlanks(it, nameOf, s, roleLabel).split('\n');
+  /**
+   * 画面・PDF に出す行の形。🚨 共通で回すクラス（本校 3F・5F）は（ ）の人を出さず（共通の行の「他業務」に出るため）、
+   * 「（ ）」も付けず（足りるかは共通の行で数える）、最初の行の終わりに「共通」と書く（2026-10-06 ユーザー確定）
+   */
+  const displayItem = (placeId: string, it: KidsItem): { it: KidsItem; pool: boolean } => {
+    const pool = it.use_pool && isPoolColumn(places.find(p => p.id === placeId));
+    return pool ? { it: { ...it, people: it.people.filter(p => p.role !== 'onduty') }, pool } : { it, pool };
+  };
+  const linesOfItems = (placeId: string, items: KidsItem[], blanks = true): string[] =>
+    items.flatMap(raw => {
+      const { it, pool } = displayItem(placeId, raw);
+      const s = blanks && !pool ? shortfallOf(it, data.settings, canLesson, inactive) : null;
+      const text0 = blanks ? itemTextWithBlanks(it, nameOf, s, roleLabel) : itemText(it, nameOf, roleLabel);
+      const lines = text0.split('\n');
+      if (pool) lines[0] = `${lines[0]}\u3000共通`;
+      return lines;
     });
-  const cellLinesOf = (placeId: string, d: RosterDayKind): string[] => linesOfCell(shownCell(placeId, d));
-  /** 比べる先（前の日・決定済みの表）のマスの文字。変わった所の印に使う */
-  const baseLinesOf = (placeId: string, d: RosterDayKind): string[] => linesOfCell(baseCell(placeId, d));
+  const cellLinesOf = (placeId: string, d: RosterDayKind): string[] => linesOfItems(placeId, shownCell(placeId, d));
   /** 1行を、変わった所だけ濃いピンクにして出す */
   const renderMarked = (parts: { text: string; hit: boolean }[]) =>
     parts.map((p, i) => (p.hit ? <span key={i} style={CHANGE_MARK_SPAN}>{p.text}</span> : <React.Fragment key={i}>{p.text}</React.Fragment>));
@@ -685,6 +752,129 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
 
   const cols = columnsOfDay(day);
   const headBySchool = (school: string) => heads.find(h => h.school === school) ?? null;
+  // 時刻の帯（その曜日のクラスの開始時刻から自動で作る）。中身が無い日は1本だけ
+  const bandsNow: KidsBand[] = (() => {
+    const b = bandsOfDay(cols.map(c => ({ placeId: c.id, items: shownCell(c.id, day) })), isClassItem);
+    return b.length > 0 ? b : [{ from: 0, to: null, label: '' }];
+  })();
+  // 共通の行。🚨 その校の 3F・5F が表に並んで出ているときだけ（並んでいないと1行にまとめられない）
+  const poolNow = (() => {
+    for (const pp of poolPlaces) {
+      const ids = cols.filter(c => c.school === pp.school && isPoolColumn(c)).map(c => c.id);
+      if (ids.length === 0) continue;
+      const first = cols.findIndex(c => c.id === ids[0]);
+      if (!ids.every((id, j) => cols[first + j]?.id === id)) continue;
+      const ctx = poolCtxOf(day, pp);
+      const baseCtx = poolCtxOf(day, pp, baseCell);
+      return {
+        place: pp, ids: new Set(ids), first, span: ids.length,
+        rows: bandsNow.map(b => poolRowOfBand(b, ctx)),
+        baseRows: bandsNow.map(b => poolRowOfBand(b, baseCtx)),
+      };
+    }
+    return null;
+  })();
+
+  // ─── 「3F・5F で動ける人」の入力（2026-10-06 ユーザー確定：人・何時から・何時まで だけ） ───
+  const poolEditor = (placeId: string, d: RosterDayKind) => {
+    const place = places.find(p => p.id === placeId);
+    if (!place) return null;
+    const v = shownCell(placeId, d);
+    const item = v.find(it => it.kind === 'pool') ?? null;
+    const people = item?.people ?? [];
+    const rest = v.filter(it => it.kind !== 'pool');
+    const poolCols = activeColumns.filter(c => c.school === place.school && isPoolColumn(c));
+    // 時刻のボタン＝その曜日のクラスの時刻（全校の帯と同じ作り方）
+    const times = bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem)
+      .filter(b => !b.label.startsWith('〜')).map(b => b.label);
+    const setPeople = (next: KidsPerson[]) =>
+      setCell(placeId, d, next.length === 0 ? rest : [...rest, { ...(item ?? emptyItem('pool')), people: next }]);
+    const setPerson = (pi: number, patch: Partial<KidsPerson>) => setPeople(people.map((p, j) => (j === pi ? { ...p, ...patch } : p)));
+    // 🚨 最初の1人を足したときだけ、共通で回すクラスを自動で選ぶ（担当の名前が入っていない 3F・5F のクラス）。あとは下のチェックで直せる
+    const addPerson = () => {
+      if (people.length === 0) {
+        for (const c of poolCols) {
+          const cell = shownCell(c.id, d);
+          if (!cell.some(it => isClassItem(it) && !it.use_pool && !it.people.some(p => p.role === 'lead'))) continue;
+          setCell(c.id, d, cell.map(it => (isClassItem(it) && !it.people.some(p => p.role === 'lead') ? { ...it, use_pool: true } : it)));
+        }
+      }
+      setPeople([...people, { user_id: '', role: 'lead', start: times[0] ?? '', end: '' }]);
+    };
+    const timeBtns = (value: string, onPick: (t: string) => void) => (
+      <span style={{ display: 'inline-flex', gap: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+        {times.map(t => (
+          <button key={t} type="button" onClick={() => onPick(t)} style={{ ...toggle(normTime(value) === normTime(t)), padding: '2px 6px', fontSize: 11.5 }}>{t}</button>
+        ))}
+        <input type="time" step={300} value={value} style={{ ...inputStyle, width: 104 }} onChange={e => onPick(e.target.value)} />
+      </span>
+    );
+    const ctx = poolCtxOf(d, place);
+    const bands = bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem);
+    return (
+      <div style={{ padding: '10px 12px', borderRadius: 10, border: '2px solid #1976d2', background: cardBg, textAlign: 'left', fontSize: 13, color: text, marginTop: 10 }}>
+        <b>{place.school} 3F・5F で動ける人（{ROSTER_DAY_LABEL[d]}）</b>
+        <div style={{ fontSize: 12, color: subText, margin: '4px 0 8px', lineHeight: 1.6 }}>
+          その時間に 3F・5F のどちらにも入れる人を、何時から何時までいるかで入れます。
+          クラスの担当・（ ）・P・打合せなどに入っている時間は、自動で共通から外れます（紙と同じ）。
+        </div>
+        {people.length === 0 && <div style={{ color: subText, marginBottom: 6 }}>まだだれも入っていません</div>}
+        {people.map((p, pi) => (
+          <div key={pi} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '6px 0', borderTop: pi > 0 ? `1px solid ${borderColor}` : 'none' }}>
+            <select value={p.user_id} style={inputStyle} onChange={e => setPerson(pi, { user_id: e.target.value })}>
+              <option value="">人を選ぶ</option>
+              {!activeStaff.some(s => s.id === p.user_id) && p.user_id && <option value={p.user_id}>{nameOf(p.user_id)}（退職）</option>}
+              {/* 🚨 同じ人は1回だけ（DB で同じ行に同じ人を2回入れられない） */}
+              {activeStaff.filter(s => s.id === p.user_id || !people.some(x => x.user_id === s.id)).map(s => (
+                <option key={s.id} value={s.id}>{fullName(s.name)}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12, color: subText }}>何時から</span>{timeBtns(p.start, t => setPerson(pi, { start: t }))}
+            <span style={{ fontSize: 12, color: subText }}>何時まで</span>{timeBtns(p.end, t => setPerson(pi, { end: t }))}
+            <button type="button" aria-label="この人を外す" onClick={() => setPeople(people.filter((_, j) => j !== pi))}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 14 }}>✕</button>
+          </div>
+        ))}
+        <button type="button" onClick={addPerson}
+          style={{ background: 'none', border: `1px dashed ${borderColor}`, borderRadius: 6, cursor: 'pointer', padding: '3px 8px', fontSize: 12, color: '#0d6efd', marginTop: 4 }}>
+          ＋ 人を足す
+        </button>
+        <div style={{ fontSize: 11.5, color: subText, marginTop: 4 }}>「何時まで」が空のときは、その日の終わりまでいる扱いです</div>
+
+        {/* 共通で回すクラス（ユーザー確定：初めは自動・ここで直せる） */}
+        <div style={{ marginTop: 10 }}>
+          <b style={{ fontSize: 12.5 }}>共通の人で回すクラス</b>
+          {poolCols.flatMap(c => shownCell(c.id, d).map((it, i) => ({ c, it, i }))).filter(x => isClassItem(x.it)).map(({ c, it, i }) => (
+            <label key={`${c.id}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, marginTop: 3, cursor: 'pointer' }}>
+              <input type="checkbox" checked={it.use_pool}
+                onChange={e => { const cell = shownCell(c.id, d); setCell(c.id, d, cell.map((x, j) => (j === i ? { ...x, use_pool: e.target.checked } : x))); }} />
+              {c.floor} {normTime(it.start)}〜 {it.class_name}{it.groups != null ? ` ${it.groups}班` : ''}
+            </label>
+          ))}
+        </div>
+
+        {/* 表に出る形の見本（画面の表と同じ組み立て） */}
+        <div style={{ marginTop: 10, padding: '6px 8px', borderRadius: 6, background: innerBg, fontSize: 12, lineHeight: 1.7 }}>
+          <b>表に出る形</b>
+          {bands.map((b, bi) => {
+            const r = poolRowOfBand(b, ctx);
+            if (!r.show) return null;
+            return (
+              <div key={bi}>
+                {b.label}{'\u3000'}共通 {r.common.length}人／要る {r.need}：{r.common.map(x => `${nameOf(x.userId)}${x.note}`).join('・') || 'なし'}
+                {r.other.length > 0 && `\u3000｜\u3000他業務：${r.other.map(o => `${nameOf(o.userId)}${o.where ? `（${o.where}）` : ''}`).join('・')}`}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          {viewDrafts[cellKey(placeId, d)] && <button type="button" style={linkBtn} onClick={() => revertCell(cellKey(placeId, d))}>↩ 直す前に戻す</button>}
+          <button type="button" onClick={() => setOpenKey(null)} style={{ ...inputStyle, cursor: 'pointer', marginLeft: 'auto' }}>閉じる</button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -815,56 +1005,104 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         })}
       </div>
 
-      {/* 表 */}
+      {/* 表（左に時刻の列・全校を時刻の帯でそろえる・2026-10-06 ユーザー確定 案E）。
+          本校 3F・5F の帯のすぐ下に「共通 ○人／要る ○：…｜他業務：…」。組み立ては lib/kidsShiftBands.ts（PDF と同じ） */}
       <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: Math.max(600, cols.length * 150) }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: Math.max(600, cols.length * 150 + 56), tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ background: innerBg }}>
-              {cols.map(c => (
-                <th key={c.id} style={{ padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 12.5, color: text }}>
-                  {c.label}
-                </th>
-              ))}
+              <th style={{ width: 56, padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, fontSize: 12, color: subText }}>時刻</th>
+              {cols.map(c => {
+                const k = cellKey(c.id, day);
+                // 🚨 確認済みは数えない（押すと薄くなり数から外れる・設計書 5-9）
+                const warn = issuesOf(c.id, day).filter(i => !isAcked(c.id, day, i.key)).length;
+                const diff = isDiff(c.id, day);   // 比べているときだけ true
+                const dirty = changedKeys.includes(k);
+                return (
+                  <th key={c.id} onClick={() => setOpenKey(o => (o === k ? null : k))}
+                    style={{
+                      padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 12.5, color: text, cursor: 'pointer',
+                      outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+                    }}>
+                    {c.label}{warn > 0 ? ' ⚠️' : ''}{diff ? ' ≠' : ''}
+                  </th>
+                );
+              })}
               {cols.length === 0 && <th style={{ padding: 10, color: subText, fontSize: 13 }}>この曜日には、まだ何も入っていません</th>}
             </tr>
           </thead>
           <tbody>
-            <tr>
-              {cols.map(c => {
-                const k = cellKey(c.id, day);
-                const lines = cellLinesOf(c.id, day);
-                const isRed = !cellEquals(shownCell(c.id, day), baseCell(c.id, day));
-                const dirty = changedKeys.includes(k);
-                // 🚨 確認済みは数えない（押すと薄くなり数から外れる・設計書 5-9）
-                const warn = issuesOf(c.id, day).filter(i => !isAcked(c.id, day, i.key)).length;
-                const diff = isDiff(c.id, day);   // 比べているときだけ true
-                return (
-                  <td key={c.id} onClick={() => setOpenKey(o => (o === k ? null : k))}
-                    style={{
-                      padding: '5px 4px', borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
-                      fontSize: 12, color: text, ...changeCellStyle(isRed && markScreen),
-                      outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
-                    }}>
-                    {(() => {
-                      // 変わった所（名前・時刻など）だけ濃いピンク。抜けたものは最後に「前：」で出す
-                      const marked = isRed && markScreen ? diffLines(lines, baseLinesOf(c.id, day)) : null;
-                      if (lines.length === 0) {
-                        return <>
-                          <span style={{ color: marked ? '#000' : subText }}>{diff ? '≠ ' : ''}—</span>
+            {cols.length > 0 && bandsNow.map((b, bi) => {
+              const pr = poolNow?.rows[bi];
+              const prBase = poolNow?.baseRows[bi];
+              const withPool = !!pr?.show;
+              return (
+                <React.Fragment key={bi}>
+                  <tr>
+                    <td rowSpan={withPool ? 2 : 1}
+                      style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 12.5, fontWeight: 'bold', color: text, background: innerBg }}>
+                      {b.label}
+                    </td>
+                    {cols.map(c => {
+                      const k = cellKey(c.id, day);
+                      const items = itemsByBand(shownCell(c.id, day), bandsNow)[bi];
+                      const baseItems = itemsByBand(baseCell(c.id, day), bandsNow)[bi];
+                      const lines = linesOfItems(c.id, items);
+                      // 変わった所の印は帯ごとに見る（マス全体ではなく、変わった帯だけ薄い黄色）
+                      const changed = markScreen && sigOfItems(items) !== sigOfItems(baseItems);
+                      const marked = changed ? diffLines(lines, linesOfItems(c.id, baseItems)) : null;
+                      const inPool = withPool && !!poolNow?.ids.has(c.id);
+                      return (
+                        <td key={c.id} rowSpan={withPool && !inPool ? 2 : 1} onClick={() => setOpenKey(o => (o === k ? null : k))}
+                          style={{
+                            padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
+                            fontSize: 12, color: text, ...changeCellStyle(changed),
+                            outline: openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+                          }}>
+                          {lines.length === 0 && bi === 0 && shownCell(c.id, day).length === 0 && <span style={{ color: subText }}>—</span>}
+                          {lines.map((l, i) => <div key={i}>{marked ? renderMarked(marked.lines[i]) : l}</div>)}
                           {marked && renderRemoved(marked.removed, true)}
-                        </>;
-                      }
-                      return <>
-                        {lines.map((l, i) => (
-                          <div key={i}>{i === 0 ? `${diff ? '≠' : ''}${warn > 0 ? '⚠️' : ''}` : ''}{marked ? renderMarked(marked.lines[i]) : l}</div>
-                        ))}
-                        {marked && renderRemoved(marked.removed, true)}
-                      </>;
-                    })()}
-                  </td>
-                );
-              })}
-            </tr>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  {withPool && pr && poolNow && (
+                    <tr>
+                      {(() => {
+                        const pk = cellKey(poolNow.place.id, day);
+                        const text1 = pr.common.map(x => `${nameOf(x.userId)}${x.note}`).join('・') || 'なし';
+                        const text2 = pr.other.map(o => `${nameOf(o.userId)}${o.where ? `（${o.where}）` : ''}`).join('・');
+                        const baseText = prBase ? [prBase.common.map(x => `${nameOf(x.userId)}${x.note}`).join('・'), prBase.other.map(o => `${nameOf(o.userId)}${o.where ? `（${o.where}）` : ''}`).join('・')] : ['', ''];
+                        const changed = markScreen && (text1 !== (baseText[0] || 'なし') || text2 !== baseText[1]);
+                        const m1 = changed ? diffLines([text1], [baseText[0]]) : null;
+                        const m2 = changed ? diffLines([text2], [baseText[1]]) : null;
+                        const short = pr.common.length < pr.need;
+                        return (
+                          <td colSpan={poolNow.span} onClick={() => setOpenKey(o => (o === pk ? null : pk))}
+                            style={{
+                              padding: '4px 6px', borderTop: `1px dashed ${borderColor}`, borderLeft: `1px solid ${borderColor}`, cursor: 'pointer',
+                              fontSize: 12, color: text, background: isDarkMode ? '#3a3f44' : '#f7f7f5', ...changeCellStyle(changed),
+                              outline: openKey === pk ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+                            }}>
+                            <span style={{ fontSize: 11, padding: '0 5px', borderRadius: 3, marginRight: 6, background: short ? '#fff3cd' : '#d3d1c7', color: short ? '#856404' : '#2c2c2a', border: short ? '1px solid #ffc107' : 'none' }}>
+                              共通 {pr.common.length}人／要る {pr.need}{short ? `（あと ${pr.need - pr.common.length} 人）` : ''}
+                            </span>
+                            {m1 ? renderMarked(m1.lines[0]) : text1}
+                            {(text2 || (m2 && m2.removed.length > 0)) && (
+                              <span style={{ marginLeft: 10 }}>
+                                <span style={{ fontSize: 11, padding: '0 5px', borderRadius: 3, marginRight: 4, border: '1px solid #b4b2a9', background: '#fff', color: '#444441' }}>他業務</span>
+                                {m2 ? renderMarked(m2.lines[0]) : text2}
+                              </span>
+                            )}
+                            {m1 && renderRemoved([...m1.removed, ...(m2?.removed ?? [])])}
+                          </td>
+                        );
+                      })()}
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -878,6 +1116,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           <option value="">＋ 列を足す（この曜日）</option>
           {activeColumns.filter(c => !cols.some(x => x.id === c.id)).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select>
+        {poolPlaces.map(pp => {
+          const n = shownCell(pp.id, day).find(it => it.kind === 'pool')?.people.length ?? 0;
+          return (
+            <button key={pp.id} type="button" style={{ ...inputStyle, cursor: 'pointer' }}
+              onClick={() => setOpenKey(o => (o === cellKey(pp.id, day) ? null : cellKey(pp.id, day)))}>
+              {pp.school} 3F・5F で動ける人（{ROSTER_DAY_LABEL[day]}）{n > 0 ? `：${n}人` : 'を入れる'}
+            </button>
+          );
+        })}
         {dayNotePlace && (
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }}
             onClick={() => setOpenKey(o => (o === cellKey(dayNotePlace.id, day) ? null : cellKey(dayNotePlace.id, day)))}>
@@ -906,6 +1153,19 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
             </div>
           ))}
           {shortfalls.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {shortfalls.length - 12} 件</div>}
+          {KIDS_WEEK.flatMap(d => poolPlaces.flatMap(pp => {
+            const ctx = poolCtxOf(d, pp);
+            return bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem)
+              .map(b => ({ d, pp, b, r: poolRowOfBand(b, ctx) }))
+              .filter(x => x.r.show && x.r.common.length < x.r.need);
+          })).map((x, i) => (
+            <div key={`pool${i}`} style={{ fontSize: 12.5, color: text, marginTop: 3 }}>
+              <button type="button" style={linkBtn} onClick={() => { setDay(x.d); setOpenKey(cellKey(x.pp.id, x.d)); }}>
+                {ROSTER_DAY_LABEL[x.d]} {x.pp.school} 共通 {x.b.label}
+              </button>
+              {'\u3000あと '}{x.r.need - x.r.common.length} 人（共通 {x.r.common.length}人／要る {x.r.need}）
+            </div>
+          ))}
         </div>
         <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
           <b style={{ fontSize: 13, color: text }}>重なり {overlaps.length} 件</b>
@@ -931,7 +1191,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         </div>
         {(() => {
           const all = KIDS_WEEK.flatMap(d =>
-            (activeColumns.concat((data?.places ?? []).filter(x => x.kind === 'head' && x.active)))
+            (activeColumns.concat((data?.places ?? []).filter(x => x.kind === 'head' && x.active), poolPlaces))
               .flatMap(p => issuesOf(p.id, d).map(i => ({ d, p, i, acked: isAcked(p.id, d, i.key) }))));
           const open = all.filter(x => !x.acked);
           if (all.length === 0) return <div style={{ fontSize: 12.5, color: subText, marginTop: 4 }}>ありません</div>;
@@ -1061,8 +1321,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
               <input type="checkbox" checked={pdfMark} onChange={e => setPdfMark(e.target.checked)} />変わった所に印（ピンク）を付ける
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input type="checkbox" checked={pdfBlank} onChange={e => setPdfBlank(e.target.checked)} />{'追加必要を「（　）」で刷る'}
+              <input type="checkbox" checked={pdfBlank} onChange={e => setPdfBlank(e.target.checked)} />{'追加必要を「（ ）」で刷る'}
             </label>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              紙：
+              <button type="button" style={toggle(pdfLayout === 'two')} onClick={() => setPdfLayout('two')}>A4横2枚（月〜水・木〜日）</button>
+              <button type="button" style={toggle(pdfLayout === 'one')} onClick={() => setPdfLayout('one')}>A4横1枚（字を小さく詰める）</button>
+            </span>
             <button type="button" style={primaryBtn} onClick={() => printPdf()}>全校を別の窓に出す</button>
           </div>
           {/* 校ごとの PDF（2026-09-22）。🚨 その校の列がある曜日だけが出る（中身のある列だけ、の決まりは同じ） */}
