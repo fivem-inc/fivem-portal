@@ -194,6 +194,16 @@ export function validateDay(day: RosterDay, workplaces: string[]): string | null
 }
 
 /** "四条本校" → "本校"、"西陣校" → "西陣"（表のマス用の短い名前） */
+/** 勤務表と同じ人の並び：メインの部門の順 → 役職の高い順 → 名前（掃除担当表の人ごとの表も使う・2026-10-06） */
+export function compareRosterStaff(
+  a: { id: string; name: string; role_title: string | null },
+  b: { id: string; name: string; role_title: string | null },
+  areaOrder: (userId: string) => number,
+  rank: (roleTitle: string | null) => number,
+): number {
+  return areaOrder(a.id) - areaOrder(b.id) || rank(a.role_title) - rank(b.role_title) || a.name.localeCompare(b.name, 'ja');
+}
+
 export function shortSchool(name: string): string {
   return name.replace('四条本校', '本校').replace(/校$/, '');
 }

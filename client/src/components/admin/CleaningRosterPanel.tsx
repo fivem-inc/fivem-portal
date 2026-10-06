@@ -1,14 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRoles } from '../../hooks/useRoles';
 import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
+import { tintBtn as tintBtnOf } from '../../lib/buttonStyles';
 import { todayJstStr } from '../../lib/breakCalc';
 import { isShiftTarget } from '../../lib/shiftExcelImport';
-import { ROSTER_DAY_LABEL, prevDate, type RosterDayKind } from '../../lib/shiftRoster';
+import { rankOf } from '../../lib/roleAttrs';
+import {
+  ROSTER_DAY_LABEL, compareRosterStaff, dayTimeText, deriveFields, normTime, prevDate, shiftDayOn, shortSchool, type RosterDayKind,
+} from '../../lib/shiftRoster';
 import { loadRosterData, type RosterData, type RosterPatternRow } from '../../lib/shiftRosterApi';
 import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
-  CLEANING_WEEK, cellEquals, cellError, cellIsEmpty, cellIssues, cellKey, cellLines, cellValue, cellVersionOn, dayOfFrom,
-  offAndUnassigned, type CleaningCellValue, type CleaningRow,
+  CLEANING_WEEK, cellEquals, cellError, cellIsEmpty, cellIssues, cellKey, cellLines, cellSameIgnoringOrder, cellValue, cellVersionOn, dayOfFrom,
+  offAndUnassigned, overlapIssues, personAssigns, personDaySig, rosterCleaningLines,
+  type CleaningCellValue, type CleaningIssue, type CleaningRow, type PersonAssign,
 } from '../../lib/cleaningRoster';
 import {
   ackCleaningIssue, addCleaningNote, addCleaningRow, loadCleaningData, loadCleaningToken, saveCleaning, saveDisplayName,
@@ -22,6 +28,11 @@ import { buildCleaningPrintHtml } from '../../lib/cleaningRosterPrint';
 // ・赤字は「適用開始日の前日に効いているマス」と比べて変わったマス。⚠️ は週のシフトから計算（保存は止めない）
 // ・表の下の「休み」「担当なし」は週のシフトから自動（掃除の対象外の人は出さない）
 // 🚨 判定・名前の決め方は lib（cleaningRoster.ts・staffName.ts）の1か所。勤務表の欄も同じものを使う
+// ・［仕事ごと］［人ごと］の2つの表（2026-10-06・案B）。人ごとの表で直しても、同じ下書き（行×曜日のマス）に入る。
+//   書き添え・「この日は無し」はマスの性質なので［仕事ごと］で直す。並びは勤務表と同じ（lib の compareRosterStaff）
+// ・別の校の掃除と時間が重なると ⚠️（保存は止めない）。同じ校の別の場所・同じ時刻はそのまま
+
+const VIEW_KEY = 'cleaningRosterView';
 
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const rowTitle = (r: Pick<CleaningRow, 'school' | 'floor' | 'task'>) => `${r.school}${r.floor ? ` ${r.floor}` : ''} ${r.task}`;
@@ -39,6 +50,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     fontWeight: on ? 'bold' : 'normal', background: on ? '#1976d2' : (isDarkMode ? '#495057' : '#e9ecef'), color: on ? '#fff' : text,
   });
   const primaryBtn: React.CSSProperties = { padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#1976d2', color: '#fff' };
+  const tintBtn: React.CSSProperties = { ...tintBtnOf(isDarkMode), padding: '4px 12px', fontSize: 12.5 };
   const linkBtn: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: subText, textDecoration: 'underline' };
 
   const today = todayJstStr();
@@ -66,6 +78,18 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const [labelConfirm, setLabelConfirm] = useState<{ userId: string; label: string; changes: string[] } | null>(null);
   const [newRow, setNewRow] = useState({ school: '', floor: '', task: '', short_name: '', minutes: 15 });
   const [newNote, setNewNote] = useState('');
+  const roles = useRoles();
+  const [view, setViewState] = useState<'task' | 'person'>(() => {
+    try { return localStorage.getItem(VIEW_KEY) === 'person' ? 'person' : 'task'; } catch { return 'task'; }
+  });
+  const setView = (v: 'task' | 'person') => {
+    setViewState(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* 端末に覚えられなくても表は切り替わる */ }
+  };
+  const [personArea, setPersonArea] = useState('all');
+  const [personOpen, setPersonOpen] = useState<string | null>(null);
+  const [personAdd, setPersonAdd] = useState<{ rowId: string; start: string } | null>(null);
+  const [personErr, setPersonErr] = useState('');
 
   // 読み込み：適用開始日の前日（赤字の比べ先）に効いている版と、それより先の版
   const load = useCallback(async (keepDrafts: boolean) => {
@@ -98,21 +122,38 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   if (!data || !roster) return null;
 
   const cells = data.cells;
-  const savedAt = (rowId: string, day: RosterDayKind, date: string) => cellValue(cellVersionOn(cells, rowId, day, date));
+  const savedMemo = new Map<string, CleaningCellValue>();
+  const savedAt = (rowId: string, day: RosterDayKind, date: string) => {
+    const k = `${rowId}|${day}|${date}`;
+    let v = savedMemo.get(k);
+    if (!v) { v = cellValue(cellVersionOn(cells, rowId, day, date)); savedMemo.set(k, v); }
+    return v;
+  };
   const shown = (rowId: string, day: RosterDayKind) => drafts[cellKey(rowId, day)] ?? savedAt(rowId, day, applyFrom);
   const base = (rowId: string, day: RosterDayKind) => savedAt(rowId, day, prevDate(applyFrom));
   const splitKey = (k: string) => { const [rowId, day] = k.split('|'); return { rowId, day: day as RosterDayKind }; };
   const changedKeys = Object.keys(drafts).filter(k => { const { rowId, day } = splitKey(k); return !cellEquals(drafts[k], savedAt(rowId, day, applyFrom)); });
+  const changedSet = new Set(changedKeys);
   const rowById = (id: string) => data.rows.find(r => r.id === id);
 
-  const issuesOf = (row: CleaningRow, day: RosterDayKind, v = shown(row.id, day)) =>
-    cellIssues(row, v, dayOfFrom(rowsByUser, day, applyFrom), fullNames);
+  // ⚠️＝週のシフトと合わない（cellIssues）＋別の校の掃除と時間が重なる（overlapIssues・2026-10-06）
+  const issuesOf = (row: CleaningRow, day: RosterDayKind, v = shown(row.id, day), valueOf = (rid: string) => (rid === row.id ? v : shown(rid, day))) => [
+    ...cellIssues(row, v, dayOfFrom(rowsByUser, day, applyFrom), fullNames),
+    ...overlapIssues(row, v, activeRows, valueOf, fullNames),
+  ];
+  const issueMemo = new Map<string, CleaningIssue[]>();
+  const issuesAt = (row: CleaningRow, day: RosterDayKind) => {
+    const k = cellKey(row.id, day);
+    let v = issueMemo.get(k);
+    if (!v) { v = issuesOf(row, day); issueMemo.set(k, v); }
+    return v;
+  };
   const isAcked = (row: CleaningRow, day: RosterDayKind, key: string) => {
-    if (changedKeys.includes(cellKey(row.id, day))) return false;
+    if (changedSet.has(cellKey(row.id, day))) return false;
     const v = cellVersionOn(cells, row.id, day, applyFrom);
     return !!v && data.acks.some(a => a.cell_id === v.id && a.issue_key === key);
   };
-  const allIssues = activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => issuesOf(r, d).map(i => ({ r, d, i, acked: isAcked(r, d, i.key) }))));
+  const allIssues = activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => issuesAt(r, d).map(i => ({ r, d, i, acked: isAcked(r, d, i.key) }))));
   const unacked = allIssues.filter(x => !x.acked);
 
   const footerOf = (day: RosterDayKind) => {
@@ -122,10 +163,18 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   };
 
   // ─── 入力 ───
-  const setCell = (rowId: string, day: RosterDayKind, v: CleaningCellValue) => {
+  const setCells = (day: RosterDayKind, next: Record<string, CleaningCellValue>) => {
     setSaveMsg(''); setSaveErr('');
-    setDrafts(prev => ({ ...prev, [cellKey(rowId, day)]: v }));
+    setDrafts(prev => {
+      const n = { ...prev };
+      for (const [rowId, v] of Object.entries(next)) {
+        const k = cellKey(rowId, day);
+        if (cellSameIgnoringOrder(v, savedAt(rowId, day, applyFrom))) delete n[k]; else n[k] = v;
+      }
+      return n;
+    });
   };
+  const setCell = (rowId: string, day: RosterDayKind, v: CleaningCellValue) => setCells(day, { [rowId]: v });
   const revertCell = (key: string) => setDrafts(prev => { const n = { ...prev }; delete n[key]; return n; });
 
   // ─── 保存 ───
@@ -146,7 +195,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const { rowId, day } = splitKey(k);
     const r = rowById(rowId);
     if (!r) return [];
-    const before = new Set(issuesOf(r, day, savedAt(rowId, day, applyFrom)).map(i => i.key));
+    const before = new Set(issuesOf(r, day, savedAt(rowId, day, applyFrom), rid => savedAt(rid, day, applyFrom)).map(i => i.key));
     return issuesOf(r, day, drafts[k]).filter(i => !before.has(i.key)).map(i => `${rowTitle(r)}（${ROSTER_DAY_LABEL[day]}）：${i.text}`);
   });
   const emptyCount = changedKeys.filter(k => cellIsEmpty(drafts[k])).length;
@@ -233,7 +282,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const warn = new Set<string>();
     for (const r of rows) for (const d of CLEANING_WEEK) {
       if (!cellEquals(shown(r.id, d), base(r.id, d))) changed.add(cellKey(r.id, d));
-      if (issuesOf(r, d).some(i => !isAcked(r, d, i.key))) warn.add(cellKey(r.id, d));
+      if (issuesAt(r, d).some(i => !isAcked(r, d, i.key))) warn.add(cellKey(r.id, d));
     }
     const off: Partial<Record<RosterDayKind, string[]>> = {};
     const unassigned: Partial<Record<RosterDayKind, string[]>> = {};
@@ -252,7 +301,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const k = cellKey(row.id, day);
     const v = shown(row.id, day);
     const err = cellError(v);
-    const issues = issuesOf(row, day);
+    const issues = issuesAt(row, day);
     const setV = (next: Partial<CleaningCellValue>) => setCell(row.id, day, { ...v, ...next });
     const schoolRows = activeRows.filter(r => r.school === row.school);
     return (
@@ -308,7 +357,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
             return (
               <div key={i.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
                 <span>{acked ? '✓' : '⚠️'} {i.text}{acked ? '（確認済み）' : '（保存はできます）'}</span>
-                {!acked && !changedKeys.includes(k) && cellVersionOn(cells, row.id, day, applyFrom) && (
+                {!acked && !changedSet.has(k) && cellVersionOn(cells, row.id, day, applyFrom) && (
                   <button type="button" onClick={() => void ack(row, day, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
                 )}
               </div>
@@ -326,8 +375,8 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const k = cellKey(row.id, day);
     const v = shown(row.id, day);
     const isRed = !cellEquals(v, base(row.id, day));
-    const dirty = changedKeys.includes(k);
-    const warnCount = issuesOf(row, day).filter(i => !isAcked(row, day, i.key)).length;
+    const dirty = changedSet.has(k);
+    const warnCount = issuesAt(row, day).filter(i => !isAcked(row, day, i.key)).length;
     const lines = cellLines(v, names);
     return (
       <td key={day} onClick={() => setOpenKey(o => (o === k ? null : k))}
@@ -344,12 +393,226 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     );
   };
 
+  // ─── 人ごとの表（2026-10-06・案B） ───
+  // 行＝掃除の対象の人（対象外は出さない）。週のシフトが1行も無い人は、マスに入っているときだけ出す
+  const areaOrder = (userId: string) => roster.areas.find(a => a.id === roster.mainAreas[userId])?.sort_order ?? 999;
+  const inWeek = new Set(activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => shown(r.id, d).entries.map(e => e.user_id))));
+  const people = roster.staff
+    .filter(s => !data.excluded.has(s.id) && (rowsByUser.has(s.id) || inWeek.has(s.id)))
+    .sort((a, b) => compareRosterStaff(a, b, areaOrder, t => rankOf(roles, t) ?? 99));
+  // 対象外にした人・在籍していない人がマスに残っているとき（消えたように見せない）
+  const others = [...inWeek].filter(id => id && !people.some(p => p.id === id));
+  const hasArea = (userId: string) => roster.areas.some(a => a.id === roster.mainAreas[userId]);
+  const personAreas = roster.areas.filter(a => people.some(p => roster.mainAreas[p.id] === a.id));
+  const hasNoArea = people.some(p => !hasArea(p.id));
+  const shownPeople = personArea === 'all' ? people
+    : personArea === 'none' ? people.filter(p => !hasArea(p.id))
+    : people.filter(p => roster.mainAreas[p.id] === personArea);
+
+  const shownOf = (day: RosterDayKind) => (rid: string) => shown(rid, day);
+  const savedOf = (day: RosterDayKind) => (rid: string) => savedAt(rid, day, applyFrom);
+  const baseOf = (day: RosterDayKind) => (rid: string) => base(rid, day);
+  const shiftOf = (userId: string, day: RosterDayKind) => shiftDayOn(rowsByUser.get(userId) ?? [], day, applyFrom);
+  const personIssues = (userId: string, day: RosterDayKind) =>
+    activeRows.flatMap(r => issuesAt(r, day).filter(i => i.userId === userId).map(i => ({ r, i })));
+  const shiftSchools = (userId: string, day: RosterDayKind) => {
+    const d = shiftOf(userId, day);
+    return d ? [...new Set(d.segments.flatMap(x => x.location.split('→').map(s => s.trim()).filter(Boolean)))] : [];
+  };
+  const shiftText = (userId: string, day: RosterDayKind) => {
+    const d = shiftOf(userId, day);
+    if (!d) return '週のシフトが未登録';
+    if (deriveFields(d.segments).bands.length === 0) return 'この日はシフトが休み';
+    return `シフト ${dayTimeText(d)} ${shiftSchools(userId, day).join('・')}`;
+  };
+  /** 人ごとの表で入れられるか（入れられなければ理由） */
+  const canPut = (to: CleaningCellValue, userId: string, start: string) => {
+    if (!to.is_none && to.entries.length >= 6) return 'その場所はもう6人入っています';
+    if (to.entries.some(e => e.user_id === userId && normTime(e.start) === normTime(start))) return 'その場所には、もう同じ時刻で入っています';
+    return null;
+  };
+  const put = (to: CleaningCellValue, userId: string, start: string): CleaningCellValue =>
+    ({ ...to, is_none: false, entries: [...(to.is_none ? [] : to.entries), { user_id: userId, start }] });
+  const moveAssign = (day: RosterDayKind, userId: string, a: PersonAssign, toRowId: string) => {
+    if (toRowId === a.rowId) return;
+    const to = shown(toRowId, day);
+    const why = canPut(to, userId, a.start);
+    if (why) { setPersonErr(why); return; }
+    setPersonErr('');
+    const from = shown(a.rowId, day);
+    setCells(day, { [a.rowId]: { ...from, entries: from.entries.filter((_, i) => i !== a.index) }, [toRowId]: put(to, userId, a.start) });
+  };
+  const retimeAssign = (day: RosterDayKind, userId: string, a: PersonAssign, start: string) => {
+    const from = shown(a.rowId, day);
+    if (start && from.entries.some((e, i) => i !== a.index && e.user_id === userId && normTime(e.start) === normTime(start))) {
+      setPersonErr('その場所には、もう同じ時刻で入っています'); return;
+    }
+    setPersonErr('');
+    setCell(a.rowId, day, { ...from, entries: from.entries.map((e, i) => (i === a.index ? { ...e, start } : e)) });
+  };
+  const removeAssign = (day: RosterDayKind, a: PersonAssign) => {
+    setPersonErr('');
+    const from = shown(a.rowId, day);
+    setCell(a.rowId, day, { ...from, entries: from.entries.filter((_, i) => i !== a.index) });
+  };
+  const addAssign = (day: RosterDayKind, userId: string) => {
+    if (!personAdd) return;
+    const to = shown(personAdd.rowId, day);
+    const why = canPut(to, userId, personAdd.start);
+    if (why) { setPersonErr(why); return; }
+    setPersonErr('');
+    setCell(personAdd.rowId, day, put(to, userId, normTime(personAdd.start)));
+    setPersonAdd(null);
+  };
+  /** 場所の選び方：その日のシフトの校を先に（校ごとにまとめる） */
+  const rowOptions = (userId: string, day: RosterDayKind, currentRowId: string | null) => {
+    const mine = shiftSchools(userId, day);
+    const order = [...new Set([...mine.filter(s => schools.includes(s)), ...schools])];
+    return order.map(school => (
+      <optgroup key={school} label={school}>
+        {activeRows.filter(r => r.school === school).map(r => {
+          const v = shown(r.id, day);
+          const note = r.id === currentRowId ? '' : v.is_none ? '（無しを外して入れます）' : v.entries.length >= 6 ? '（6人）' : '';
+          return <option key={r.id} value={r.id}>{`${r.floor ? `${r.floor} ` : ''}${r.task}${note}`}</option>;
+        })}
+      </optgroup>
+    ));
+  };
+  const closePerson = () => { setPersonOpen(null); setPersonAdd(null); setPersonErr(''); };
+  const openPerson = (userId: string, day: RosterDayKind) => {
+    const k = `${userId}|${day}`;
+    setPersonErr(''); setPersonAdd(null);
+    setPersonOpen(o => (o === k ? null : k));
+  };
+  const startAdd = (userId: string, day: RosterDayKind) => {
+    const d = shiftOf(userId, day);
+    const band = d ? deriveFields(d.segments).bands[0] : undefined;
+    const first = shiftSchools(userId, day)[0] ?? '';
+    const row = activeRows.find(r => r.school === first) ?? activeRows[0];
+    if (!row) return;
+    setPersonErr('');
+    setPersonAdd({ rowId: row.id, start: band ? normTime(`${Math.floor(band.s / 60)}:${String(band.s % 60).padStart(2, '0')}`) : '' });
+  };
+
+  const personEditor = (userId: string, day: RosterDayKind) => {
+    const assigns = personAssigns(activeRows, shownOf(day), userId);
+    const issues = personIssues(userId, day);
+    const errs = [...new Set(assigns.map(a => a.rowId))].map(rid => {
+      const e = cellError(shown(rid, day));
+      const r = rowById(rid);
+      return e && r ? `${rowTitle(r)}：${e}` : null;
+    }).filter((x): x is string => !!x);
+    return (
+      <div style={{ padding: '10px 12px', borderRadius: 10, border: '2px solid #1976d2', background: cardBg, textAlign: 'left', fontSize: 13, color: text }}>
+        <b>{fullNames.get(userId) ?? '（不明）'}（{ROSTER_DAY_LABEL[day]}）</b>
+        <span style={{ fontSize: 12, color: subText, marginLeft: 8 }}>{shiftText(userId, day)}</span>
+        <div style={{ marginTop: 8 }}>
+          {assigns.length === 0 && <div style={{ color: subText, marginBottom: 4 }}>この日の掃除はありません</div>}
+          {assigns.map(a => {
+            const r = rowById(a.rowId);
+            const v = shown(a.rowId, day);
+            const mates = v.entries.filter((_, i) => i !== a.index)
+              .map(e => `${names.get(e.user_id) ?? '（不明）'}${e.start && normTime(e.start) !== a.start ? ` ${normTime(e.start)}` : ''}`);
+            return (
+              <div key={`${a.rowId}|${a.index}`} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+                <select value={a.rowId} style={{ ...inputStyle, maxWidth: 300 }} aria-label="場所" onChange={ev => moveAssign(day, userId, a, ev.target.value)}>
+                  {rowOptions(userId, day, a.rowId)}
+                </select>
+                <input type="time" step={300} value={a.start} style={inputStyle} aria-label="時刻" onChange={ev => retimeAssign(day, userId, a, ev.target.value)} />
+                <span style={{ fontSize: 12, color: subText }}>
+                  同じ場所：{mates.length > 0 ? mates.join('・') : '—（外すと担当なしになります）'}
+                  {v.note.trim() ? `／書き添え：${v.note.trim()}` : ''}
+                </span>
+                <button type="button" aria-label={`${r ? rowTitle(r) : ''}から外す`} onClick={() => removeAssign(day, a)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 14 }}>✕</button>
+              </div>
+            );
+          })}
+          {personAdd ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4, padding: '6px 8px', borderRadius: 8, background: innerBg }}>
+              <select value={personAdd.rowId} style={{ ...inputStyle, maxWidth: 300 }} aria-label="足す場所" onChange={ev => setPersonAdd({ ...personAdd, rowId: ev.target.value })}>
+                {rowOptions(userId, day, null)}
+              </select>
+              <input type="time" step={300} value={personAdd.start} style={inputStyle} aria-label="足す時刻" onChange={ev => setPersonAdd({ ...personAdd, start: ev.target.value })} />
+              <button type="button" onClick={() => addAssign(day, userId)} style={tintBtn}>足す</button>
+              <button type="button" onClick={() => { setPersonAdd(null); setPersonErr(''); }} style={linkBtn}>やめる</button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => startAdd(userId, day)}
+              style={{ background: 'none', border: `1px dashed ${borderColor}`, borderRadius: 6, cursor: 'pointer', padding: '3px 8px', fontSize: 12, color: '#0d6efd', marginTop: 4 }}>
+              ＋ 掃除を足す
+            </button>
+          )}
+          {personErr && <div style={{ color: red, marginTop: 6 }}>⚠️ {personErr}</div>}
+          {errs.map(e => <div key={e} style={{ color: red, marginTop: 6 }}>⚠️ {e}</div>)}
+          {issues.map(({ r, i }) => {
+            const acked = isAcked(r, day, i.key);
+            return (
+              <div key={`${r.id}|${i.key}`} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
+                <span>{acked ? '✓' : '⚠️'} {r.school === '四条本校' ? '' : `${shortSchool(r.school)} `}{r.floor ?? ''}{r.short_name}：{i.text}{acked ? '（確認済み）' : '（保存はできます）'}</span>
+                {!acked && !changedSet.has(cellKey(r.id, day)) && cellVersionOn(cells, r.id, day, applyFrom) && (
+                  <button type="button" onClick={() => void ack(r, day, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 11.5, color: subText, marginTop: 8, lineHeight: 1.6 }}>
+            直した内容はすぐ「未保存の変更」に入ります（上の［保存］で保存）。書き添えと「この日は無し」は［仕事ごと］の表で直します。
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <button type="button" onClick={closePerson} style={{ ...inputStyle, cursor: 'pointer' }}>閉じる</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const personCell = (userId: string, day: RosterDayKind) => {
+    const k = `${userId}|${day}`;
+    const lines = rosterCleaningLines(activeRows, shownOf(day), userId);
+    const d = shiftOf(userId, day);
+    const isOff = !!d && deriveFields(d.segments).bands.length === 0;
+    const mine = personDaySig(activeRows, shownOf(day), userId);
+    const isRed = mine !== personDaySig(activeRows, baseOf(day), userId);
+    const dirty = mine !== personDaySig(activeRows, savedOf(day), userId);
+    const warnCount = personIssues(userId, day).filter(x => !isAcked(x.r, day, x.i.key)).length;
+    return (
+      <td key={day} onClick={() => openPerson(userId, day)}
+        style={{
+          padding: '4px 5px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, textAlign: 'left', verticalAlign: 'middle',
+          cursor: 'pointer', whiteSpace: 'nowrap', color: isRed ? red : text, fontWeight: isRed ? 'bold' : 'normal',
+          outline: dirty ? '2px solid #e65100' : personOpen === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+          background: isOff && lines.length === 0 ? innerBg : 'transparent',
+        }}>
+        {lines.length > 0
+          ? lines.map((l, i) => <div key={i}>{i === 0 && warnCount > 0 ? '⚠️' : ''}{l}</div>)
+          : <span style={{ color: subText }}>{!d ? '未登録' : isOff ? '休み' : '—'}</span>}
+      </td>
+    );
+  };
+
+  const personRow = (userId: string, label: string) => {
+    const open = personOpen && personOpen.startsWith(`${userId}|`) ? (personOpen.slice(userId.length + 1) as RosterDayKind) : null;
+    return (
+      <React.Fragment key={userId}>
+        <tr>
+          <td style={{ position: 'sticky', left: 0, zIndex: 1, background: cardBg, padding: '4px 6px', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap', textAlign: 'left' }}>{label}</td>
+          {CLEANING_WEEK.map(d => personCell(userId, d))}
+        </tr>
+        {open && <tr><td colSpan={8} style={{ padding: '6px 0 10px' }}>{personEditor(userId, open)}</td></tr>}
+      </React.Fragment>
+    );
+  };
+
   const hiddenCount = allRows.length - activeRows.length;
 
   return (
     <div>
       <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
-        マスを押すと、人・時刻・書き添えを入れられます。赤字は、適用開始日の前日に効いている表から変わったマスです。<br />
+        {view === 'task'
+          ? 'マスを押すと、人・時刻・書き添えを入れられます。'
+          : 'マスを押すと、その人のその日の掃除（場所・時刻）を直せます。'}
+        赤字は、適用開始日の前日に効いている表から変わったマスです。<br />
         保存すると、変えたマスだけが適用開始日から切り替わります。先に登録してある変更は消えません。
       </p>
       {rosterDraftCount > 0 && (
@@ -374,6 +637,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
         <span style={{ fontSize: 13, color: changedKeys.length > 0 ? '#e65100' : subText, fontWeight: changedKeys.length > 0 ? 'bold' : 'normal' }}>
           未保存の変更 {changedKeys.length}マス
         </span>
+        {changedKeys.length > 0 && <span style={{ fontSize: 11.5, color: subText }}>（仕事ごと・人ごとの表で共通）</span>}
         <button type="button" disabled={changedKeys.length === 0 || saving || stale} onClick={() => { setSaveErr(''); setConfirming(true); }}
           style={{ ...primaryBtn, cursor: changedKeys.length === 0 ? 'default' : 'pointer', opacity: changedKeys.length === 0 || stale ? 0.5 : 1 }}>
           保存
@@ -556,13 +820,63 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           <summary style={{ cursor: 'pointer', color: red }}>⚠️ 勤務時間と合わないマスの一覧（{unacked.length}件）</summary>
           {unacked.map(x => (
             <div key={`${x.r.id}|${x.d}|${x.i.key}`} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 3 }}>
-              <button type="button" style={{ ...linkBtn, color: '#0d6efd' }} onClick={() => setOpenKey(cellKey(x.r.id, x.d))}>{rowTitle(x.r)}（{ROSTER_DAY_LABEL[x.d]}）</button>
+              <button type="button" style={{ ...linkBtn, color: '#0d6efd' }}
+                onClick={() => { if (view === 'person' && people.some(p => p.id === x.i.userId)) { setPersonErr(''); setPersonAdd(null); setPersonOpen(`${x.i.userId}|${x.d}`); } else { setView('task'); setOpenKey(cellKey(x.r.id, x.d)); } }}>
+                {rowTitle(x.r)}（{ROSTER_DAY_LABEL[x.d]}）
+              </button>
               <span style={{ color: red }}>{x.i.text}</span>
             </div>
           ))}
         </details>
       )}
 
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <button type="button" onClick={() => setView('task')} style={toggle(view === 'task')}>仕事ごと</button>
+        <button type="button" onClick={() => setView('person')} style={toggle(view === 'person')}>人ごと</button>
+        {view === 'person' && (
+          <>
+            <span style={{ width: 1, height: 18, background: borderColor, margin: '0 4px' }} />
+            <button type="button" onClick={() => setPersonArea('all')} style={toggle(personArea === 'all')}>すべて</button>
+            {personAreas.map(a => <button key={a.id} type="button" onClick={() => setPersonArea(a.id)} style={toggle(personArea === a.id)}>{a.name}</button>)}
+            {hasNoArea && <button type="button" onClick={() => setPersonArea('none')} style={toggle(personArea === 'none')}>部門なし</button>}
+          </>
+        )}
+      </div>
+
+      {view === 'person' && (
+        <div style={{ overflowX: 'auto', maxHeight: '75vh', overflowY: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12, color: text, minWidth: 900 }}>
+            <thead>
+              <tr>
+                <th style={{ position: 'sticky', top: 0, left: 0, zIndex: 3, background: cardBg, padding: 6, borderBottom: `1px solid ${borderColor}`, textAlign: 'left', minWidth: 120 }}>名前</th>
+                {CLEANING_WEEK.map(d => <th key={d} style={{ position: 'sticky', top: 0, zIndex: 2, background: cardBg, padding: 6, borderBottom: `1px solid ${borderColor}`, minWidth: 110 }}>{ROSTER_DAY_LABEL[d]}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {shownPeople.length === 0 && <tr><td colSpan={8} style={{ padding: 10, color: subText }}>この部門の人はいません</td></tr>}
+              {shownPeople.map((p, i) => {
+                const area = roster.areas.find(a => a.id === roster.mainAreas[p.id]);
+                const prev = i > 0 ? roster.mainAreas[shownPeople[i - 1].id] ?? '' : undefined;
+                const head = personArea === 'all' && (roster.mainAreas[p.id] ?? '') !== prev;
+                return (
+                  <React.Fragment key={p.id}>
+                    {head && <tr><td colSpan={8} style={{ padding: 6, background: innerBg, fontWeight: 'bold', color: subText, textAlign: 'left' }}>{area?.name ?? '部門なし'}</td></tr>}
+                    {personRow(p.id, fullName(p.name))}
+                  </React.Fragment>
+                );
+              })}
+              {personArea === 'all' && others.length > 0 && (
+                <>
+                  <tr><td colSpan={8} style={{ padding: 6, background: innerBg, fontWeight: 'bold', color: subText, textAlign: 'left' }}>その他（掃除の対象外・在籍していない人がマスに残っています）</td></tr>
+                  {others.map(id => personRow(id, fullNames.get(id) ?? '（削除された人）'))}
+                </>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {view === 'task' && (
       <div style={{ overflowX: 'auto', maxHeight: '75vh', overflowY: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12, color: text, minWidth: 900 }}>
           <thead>
@@ -605,6 +919,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           </tbody>
         </table>
       </div>
+      )}
       {loading && <p style={{ color: subText, fontSize: 12 }}>読み込んでいます...</p>}
       <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
         ⚠️ と「休み」「担当なし」は保存済みの週のシフト（{md(applyFrom)} に効いている版）から計算しています。休憩の時刻は持っていないので、休憩と重なるかは分かりません。

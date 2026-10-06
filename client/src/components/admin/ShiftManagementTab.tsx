@@ -7,7 +7,7 @@ import { todayJstStr } from '../../lib/breakCalc';
 import { isShiftTarget } from '../../lib/shiftExcelImport';
 import {
   AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_EXTRA, ROSTER_WEEK,
-  dayEquals, deriveFields, minText, placeSteps, prevDate, rowOnDate, rowToDay, shortSchool, timeText, validateDay,
+  compareRosterStaff, dayEquals, deriveFields, minText, placeSteps, prevDate, rowOnDate, rowToDay, shortSchool, timeText, validateDay,
   type RosterDay, type RosterDayKind, type RosterSegment, type WorkArea,
 } from '../../lib/shiftRoster';
 import {
@@ -189,9 +189,7 @@ const ShiftManagementTab: React.FC = () => {
     if (!data) return [];
     return data.staff
       .filter(s => inTarget(s.employment_type))
-      .sort((a, b) => areaSort(mainAreaOf(a.id)) - areaSort(mainAreaOf(b.id))
-        || (rankOf(roles, a.role_title) ?? 99) - (rankOf(roles, b.role_title) ?? 99)
-        || a.name.localeCompare(b.name, 'ja'));
+      .sort((a, b) => compareRosterStaff(a, b, id => areaSort(mainAreaOf(id)), t => rankOf(roles, t) ?? 99));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, target, roles, drafts]);
 

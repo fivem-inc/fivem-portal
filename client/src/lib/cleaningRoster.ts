@@ -97,7 +97,8 @@ export function rowPlaceLabel(row: Pick<CleaningRow, 'school' | 'floor' | 'short
 export interface CleaningIssue {
   userId: string;
   start: string;
-  kind: ShiftTimeIssueKind;
+  /** overlap＝同じ人が同じ時間に別の校の掃除にも入っている（2026-10-06） */
+  kind: ShiftTimeIssueKind | 'overlap';
   text: string;
   key: string; // 「確認した」に使う。ずれ方が変わると変わる
 }
@@ -139,6 +140,72 @@ export function cellIssues(
     });
   }
   return out;
+}
+
+/** 掃除の長さで見た時間の重なり（境目は重ならない） */
+function overlaps(s1: number, m1: number, s2: number, m2: number): boolean {
+  return s1 < s2 + m2 && s2 < s1 + m1;
+}
+
+/**
+ * 同じ人が同じ時間に「別の校」の掃除にも入っている（⚠️・保存は止めない・2026-10-06 ユーザー確定）。
+ * ・同じ校の別の場所で同じ時刻 → そのまま（何も出さない）
+ * ・同じマスに同じ人・同じ時刻 → cellError で止める（ここでは見ない）
+ * 🚨 重なりは場所ごとの掃除の長さ（row.minutes）で見る。時刻なしは見ない
+ */
+export function overlapIssues(
+  row: Pick<CleaningRow, 'id' | 'school' | 'minutes'>,
+  value: CleaningCellValue,
+  rows: CleaningRow[],
+  valueOf: (rowId: string) => CleaningCellValue,
+  fullNames: Map<string, string>,
+): CleaningIssue[] {
+  if (value.is_none) return [];
+  const out: CleaningIssue[] = [];
+  for (const e of value.entries) {
+    const s = toMin(e.start);
+    if (s === null || !e.start) continue;
+    for (const r2 of rows) {
+      if (!r2.active || r2.id === row.id || r2.school === row.school) continue;
+      const v2 = valueOf(r2.id);
+      if (v2.is_none) continue;
+      for (const e2 of v2.entries) {
+        const s2 = toMin(e2.start);
+        if (e2.user_id !== e.user_id || s2 === null || !e2.start || !overlaps(s, row.minutes, s2, r2.minutes)) continue;
+        const place = `${shortSchool(r2.school)} ${r2.floor ?? ''}${r2.short_name}`;
+        out.push({
+          userId: e.user_id, start: normTime(e.start), kind: 'overlap',
+          text: `${fullNames.get(e.user_id) ?? '（不明）'}さんは同じ時間に別の校の掃除（${minText(s2)} ${place}）にも入っています`,
+          key: `overlap|${e.user_id}|${normTime(e.start)}|${r2.id}@${normTime(e2.start)}`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** 人ごとの表：その人のその日の掃除（マス×何番目）。時刻順・時刻なしは後ろ */
+export interface PersonAssign { rowId: string; index: number; start: string }
+export function personAssigns(rows: CleaningRow[], valueOf: (rowId: string) => CleaningCellValue, userId: string): PersonAssign[] {
+  const out: PersonAssign[] = [];
+  for (const r of rows) {
+    if (!r.active) continue;
+    const v = valueOf(r.id);
+    v.entries.forEach((e, index) => { if (e.user_id === userId) out.push({ rowId: r.id, index, start: normTime(e.start) }); });
+  }
+  return out.sort((a, b) => (toMin(a.start) ?? 9999) - (toMin(b.start) ?? 9999));
+}
+
+/** 人ごとの表の赤字・未保存の印：その人の（マス・時刻）の組が変わったか（並び順は見ない） */
+export function personDaySig(rows: CleaningRow[], valueOf: (rowId: string) => CleaningCellValue, userId: string): string {
+  return personAssigns(rows, valueOf, userId).map(a => `${a.rowId}@${a.start}`).sort().join(',');
+}
+
+/** 並び順を見ずに比べる（人ごとの表で外して戻したとき、下書きを消すため） */
+export function cellSameIgnoringOrder(a: CleaningCellValue, b: CleaningCellValue): boolean {
+  if (a.is_none !== b.is_none || a.note.trim() !== b.note.trim() || a.entries.length !== b.entries.length) return false;
+  const sig = (v: CleaningCellValue) => v.entries.map(e => `${e.user_id}@${normTime(e.start)}`).sort().join(',');
+  return sig(a) === sig(b);
 }
 
 /** 週のシフトの行を人ごとに持っているときの dayOf */
