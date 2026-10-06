@@ -316,7 +316,7 @@ export function itemTextWithBlanks(
 ): string {
   const base = itemText(item, name, roleLabel);
   if (!shortfall || shortfall.need <= 0) return base;
-  const blanks = Array.from({ length: shortfall.need }, () => '（　）').join('・');
+  const blanks = Array.from({ length: shortfall.need }, () => '（\u3000）').join('・');
   const lines = base.split('\n');
   if (lines.length >= 2) {
     lines[1] = lines[1] ? `${lines[1]}・${blanks}` : blanks;
@@ -473,6 +473,8 @@ export function kidsGridSheet(
   places: KidsPlace[],
   columnsOf: (d: RosterDayKind) => KidsPlace[],
   linesOf: (placeId: string, d: RosterDayKind) => string[],
+  /** 共通の行（2026-10-07）。その校の最後の列のすぐ下に1行で入れる。曜日ごとの文字（時刻ごとに1行） */
+  extraRows: { afterPlaceId: string; label: string; linesOf: (d: RosterDayKind) => string[] }[] = [],
 ): string[][] {
   const rows: string[][] = [['', ...days.map(dayLabel)]];
   for (const p of places) {
@@ -480,6 +482,10 @@ export function kidsGridSheet(
     if (!days.some(d => columnsOf(d).some(c => c.id === p.id))) continue;
     rows.push([p.label, ...days.map(d =>
       (columnsOf(d).some(c => c.id === p.id) ? linesOf(p.id, d) : []).join('\n'))]);
+    for (const x of extraRows.filter(e => e.afterPlaceId === p.id)) {
+      const cells = days.map(d => x.linesOf(d).join('\n'));
+      if (cells.some(Boolean)) rows.push([x.label, ...cells]);
+    }
   }
   return rows;
 }
@@ -507,7 +513,8 @@ export function kidsListSheet(
         if (it.people.length === 0) { rows.push([...base, '', '', it.note]); continue; }
         // 🚨 人ごとに1行に開く。そうしないと Excel 側で「誰が何コマ」を数えられない
         for (const pe of it.people) {
-          rows.push([...base, nameOf(pe.user_id), roleLabel(pe.role),
+          // 🚨 「3F・5F で動ける人」の人は役割を「共通」と書く（担当ではない・2026-10-07）
+          rows.push([...base, nameOf(pe.user_id), it.kind === 'pool' ? '共通' : roleLabel(pe.role),
             // 人ごとの「19まで」「16:45〜」は書き添えに添えて残す（列を増やさない）
             [it.note, pe.start || pe.end ? `${pe.start || ''}〜${pe.end || ''}` : ''].filter(Boolean).join(' / ')]);
         }

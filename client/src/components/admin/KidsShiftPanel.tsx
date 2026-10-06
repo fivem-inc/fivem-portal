@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { todayJstStr } from '../../lib/breakCalc';
-import { ROSTER_DAY_LABEL, normTime, prevDate, shiftDayOn, type RosterDayKind } from '../../lib/shiftRoster';
-import { bandsOfDay, itemsByBand, poolRowOfBand, type KidsBand } from '../../lib/kidsShiftBands';
+import { ROSTER_DAY_LABEL, minText, normTime, prevDate, shiftDayOn, type RosterDayKind } from '../../lib/shiftRoster';
+import { studyEndMin, studyLabel, studyStartMin, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
+import { loadStudyData } from '../../lib/studySessionsApi';
+import { bandIndexOf, bandsOfDay, itemsByBand, poolRowOfBand, type KidsBand } from '../../lib/kidsShiftBands';
 import { loadRosterData, type RosterData, type RosterPatternRow } from '../../lib/shiftRosterApi';
 import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
@@ -52,6 +54,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [data, setData] = useState<KidsData | null>(null);
   const [roster, setRoster] = useState<RosterData | null>(null);
   const [planCells, setPlanCells] = useState<KidsPlanCell[]>([]);
+  // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
+  const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
+  const [studyErr, setStudyErr] = useState('');
   // ── 案を比べる（2026-09-22・2回目の c）──────────────────────────
   // 🚨 いま見ているものと、選んだもう1つを比べて**違うマスに印**を付けるだけ（設計書 5-9）。
   //    書き換えはしない。どちらを採るかは［この案で決定する］のときに選ぶ（既存の仕組み）
@@ -98,6 +103,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     if (r.error || !r.data) { setLoadErr(r.error ?? '週のシフトを読み込めませんでした'); setLoading(false); return; }
     if (t.error || t.token == null) { setLoadErr(`保存の準備ができませんでした：${t.error ?? ''}`); setLoading(false); return; }
     setData(k.data); setRoster(r.data); setToken(t.token); setStale(false);
+    const st = await loadStudyData(since);
+    setStudyVersions(st.data?.versions ?? []);
+    setStudyErr(st.error ? `勉強会を読み込めませんでした（勉強会の時間を共通の人から外せません）：${st.error}` : '');
     if (!keepDrafts) setDrafts({});
     setLoading(false);
   }, [baseDate]);
@@ -207,6 +215,18 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const activeColumns = useMemo(() => places.filter(p => p.kind === 'column' && p.active).sort((a, b) => a.sort_order - b.sort_order), [places]);
   const heads = useMemo(() => places.filter(p => p.kind === 'head' && p.active).sort((a, b) => a.sort_order - b.sort_order), [places]);
   const dayNotePlace = useMemo(() => places.find(p => p.kind === 'daynote' && p.active) ?? null, [places]);
+  // 勉強会（2026-10-07）。その曜日に効いている版を、同じ校・同じ階の列に出す（階が無い勉強会はその校の最初の列）。
+  // 🚨 kind='study' の仮の行にして、帯・共通の人の判定に使う（保存はしない・マスの中身にも入れない）
+  const studyColumnOf = useCallback((v: StudyVersion) =>
+    activeColumns.find(c => c.school === v.location && (v.floor ? c.floor === v.floor : true)) ?? null, [activeColumns]);
+  const studyOfPlace = useCallback((placeId: string, d: RosterDayKind) =>
+    versionsOnDate(studyVersions, baseDate).filter(v => v.day_kind === d && studyColumnOf(v)?.id === placeId)
+      .sort((a, b) => studyStartMin(a) - studyStartMin(b)), [studyVersions, baseDate, studyColumnOf]);
+  const studyItemsOf = useCallback((placeId: string, d: RosterDayKind): KidsItem[] =>
+    studyOfPlace(placeId, d).map(v => ({
+      ...emptyItem('study'), start: minText(studyStartMin(v)), end: minText(studyEndMin(v)),
+      people: v.members.map(u => ({ user_id: u, role: 'lead' as const, start: '', end: '' })),
+    })), [studyOfPlace]);
   // 「3F・5F で動ける人」（共通の人）の置き場所（校ごとに1つ・2026-10-06。いまは四条本校だけ）
   const poolPlaces = useMemo(() => places.filter(p => p.kind === 'pool' && p.active), [places]);
   const poolOfSchool = useCallback((school: string | null) => poolPlaces.find(p => p.school === school) ?? null, [poolPlaces]);
@@ -221,14 +241,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     return {
       poolPlace,
       poolItem: cell.find(it => it.kind === 'pool') ?? null,
-      sources: activeColumns.map(p => ({ place: p, items: cellOf(p.id, d) })),
+      sources: activeColumns.map(p => ({ place: p, items: [...cellOf(p.id, d), ...studyItemsOf(p.id, d)] })),
       poolColumnIds: new Set(activeColumns.filter(p => p.school === poolPlace.school && isPoolColumn(p)).map(p => p.id)),
       isClass: isClassItem,
-      kindLabel: (k: string) => data?.rowKinds.find(r => r.key === k)?.label ?? k,
+      kindLabel: (k: string) => (k === 'study' ? '勉強会' : data?.rowKinds.find(r => r.key === k)?.label ?? k),
       defaultMinutes: (k: string) => data?.rowKinds.find(r => r.key === k)?.default_minutes ?? 50,
       requiredOf: (it: KidsItem) => it.required ?? (data ? defaultsForGroups(data.settings, it.groups).required : 0),
     };
-  }, [shownCell, activeColumns, isPoolColumn, isClassItem, data]);
+  }, [shownCell, activeColumns, isPoolColumn, isClassItem, data, studyItemsOf]);
 
   const hasContent = useCallback((placeId: string, d: string) => shownCell(placeId, d).length > 0, [shownCell]);
   const [extraColumns, setExtraColumns] = useState<Set<string>>(new Set());
@@ -468,7 +488,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     const bandsOf = (d: RosterDayKind): KidsBand[] => {
       let b = bandCache.get(d);
       if (!b) {
-        b = bandsOfDay(colsOf(d).map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem);
+        b = bandsOfDay(colsOf(d).map(c => ({ placeId: c.id, items: [...shownCell(c.id, d), ...studyItemsOf(c.id, d)] })), isClassItem);
         if (b.length === 0) b = [{ from: 0, to: null, label: '' }];
         bandCache.set(d, b);
       }
@@ -482,9 +502,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       notes: (data.notes ?? []).filter(n => n.active).map(n => n.body),
       columnsOf: colsOf,
       bandsOf,
+      // 🚨 勉強会の行は、いまの文字と比べる先の文字の両方に同じものを足す（勉強会で変わった所の印を付けない）
       cellOf: (placeId, d, bi) => ({
-        lines: linesOfItems(placeId, itemsByBand(shownCell(placeId, d), bandsOf(d))[bi] ?? [], pdfBlank),
-        base: linesOfItems(placeId, itemsByBand(baseCell(placeId, d), bandsOf(d))[bi] ?? [], pdfBlank),
+        lines: [...linesOfItems(placeId, itemsByBand(shownCell(placeId, d), bandsOf(d))[bi] ?? [], pdfBlank), ...studyLinesOf(placeId, d, bandsOf(d), bi)],
+        base: [...linesOfItems(placeId, itemsByBand(baseCell(placeId, d), bandsOf(d))[bi] ?? [], pdfBlank), ...studyLinesOf(placeId, d, bandsOf(d), bi)],
       }),
       poolOf: (d, bi) => {
         const cs = colsOf(d);
@@ -532,11 +553,27 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       const grid = XLSX.utils.aoa_to_sheet(kidsGridSheet(
         KIDS_WEEK, d => ROSTER_DAY_LABEL[d], places, d => columnsOfDay(d),
         (placeId, d) => cellLinesOf(placeId, d),
+        // 共通の行（2026-10-07）。本校 3F・5F の最後の列のすぐ下に、時刻ごとに1行
+        poolPlaces.map(pp => {
+          const last = activeColumns.filter(c => c.school === pp.school && isPoolColumn(c)).at(-1);
+          return {
+            afterPlaceId: last?.id ?? '',
+            label: `${pp.school} 3F・5F 共通`,
+            linesOf: (d: RosterDayKind) => {
+              const ctx = poolCtxOf(d, pp);
+              const bands = bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: [...shownCell(c.id, d), ...studyItemsOf(c.id, d)] })), isClassItem);
+              return bands.map(b => ({ b, r: poolRowOfBand(b, ctx) })).filter(x => x.r.show).map(({ b, r }) =>
+                `${b.label} 共通：${r.common.map(x => `${nameOf(x.userId)}${x.note}`).join('・') || 'なし'}`
+                + (r.other.length > 0 ? `／他業務：${r.other.map(o => `${nameOf(o.userId)}${o.where ? `（${o.where}）` : ''}`).join('・')}` : ''));
+            },
+          };
+        }),
       ));
       grid['!cols'] = [{ wch: 16 }, ...KIDS_WEEK.map(() => ({ wch: 26 }))];
       XLSX.utils.book_append_sheet(wb, grid, '表');
       const list = XLSX.utils.aoa_to_sheet(kidsListSheet(
-        KIDS_WEEK, d => ROSTER_DAY_LABEL[d], d => columnsOfDay(d),
+        // 🚨 「3F・5F で動ける人」も一覧に出す（人ごとに何時から何時まで）
+        KIDS_WEEK, d => ROSTER_DAY_LABEL[d], d => [...columnsOfDay(d), ...poolPlaces.filter(pp => shownCell(pp.id, d).length > 0)],
         (placeId, d) => shownCell(placeId, d), kindLabel, roleLabel, nameOf,
       ));
       list['!cols'] = [6, 12, 6, 16, 12, 7, 7, 14, 5, 12, 10, 24].map(wch => ({ wch }));
@@ -662,7 +699,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
               {kind?.has_groups && (
                 <button type="button" style={linkBtn}
                   onClick={() => setItem({ required: (it.required ?? def.required) + 1 })}>
-                  {'＋（　）追加必要をひとつ増やす'}
+                  {'＋（\u3000）追加必要をひとつ増やす'}
                 </button>
               )}
             </div>
@@ -739,7 +776,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       if (pool) lines[0] = `${lines[0]}\u3000共通`;
       return lines;
     });
-  const cellLinesOf = (placeId: string, d: RosterDayKind): string[] => linesOfItems(placeId, shownCell(placeId, d));
+  const cellLinesOf = (placeId: string, d: RosterDayKind): string[] =>
+    [...linesOfItems(placeId, shownCell(placeId, d)), ...studyLinesOf(placeId, d, null, null)];
+  /** 勉強会の行の文字（「14:00(15)鈴木・幾田［勉］」）。帯を渡すとその帯の分だけ */
+  const studyNames = new Map(data.staff.map(s => [s.id, nameOf(s.id)]));
+  function studyLinesOf(placeId: string, d: RosterDayKind, bands: KidsBand[] | null, bi: number | null): string[] {
+    return studyOfPlace(placeId, d)
+      .filter(v => bands == null || bi == null || bandIndexOf({ ...emptyItem('study'), start: minText(studyStartMin(v)) }, bands) === bi)
+      .map(v => `${studyLabel(v, studyNames)}［勉］`);
+  }
   /** 1行を、変わった所だけ濃いピンクにして出す */
   const renderMarked = (parts: { text: string; hit: boolean }[]) =>
     parts.map((p, i) => (p.hit ? <span key={i} style={CHANGE_MARK_SPAN}>{p.text}</span> : <React.Fragment key={i}>{p.text}</React.Fragment>));
@@ -754,7 +799,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const headBySchool = (school: string) => heads.find(h => h.school === school) ?? null;
   // 時刻の帯（その曜日のクラスの開始時刻から自動で作る）。中身が無い日は1本だけ
   const bandsNow: KidsBand[] = (() => {
-    const b = bandsOfDay(cols.map(c => ({ placeId: c.id, items: shownCell(c.id, day) })), isClassItem);
+    const b = bandsOfDay(cols.map(c => ({ placeId: c.id, items: [...shownCell(c.id, day), ...studyItemsOf(c.id, day)] })), isClassItem);
     return b.length > 0 ? b : [{ from: 0, to: null, label: '' }];
   })();
   // 共通の行。🚨 その校の 3F・5F が表に並んで出ているときだけ（並んでいないと1行にまとめられない）
@@ -1005,6 +1050,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         })}
       </div>
 
+      {studyErr && <div style={{ ...warnCard, marginBottom: 6 }}>{studyErr}</div>}
       {/* 表（左に時刻の列・全校を時刻の帯でそろえる・2026-10-06 ユーザー確定 案E）。
           本校 3F・5F の帯のすぐ下に「共通 ○人／要る ○：…｜他業務：…」。組み立ては lib/kidsShiftBands.ts（PDF と同じ） */}
       <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
@@ -1062,6 +1108,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                           {lines.length === 0 && bi === 0 && shownCell(c.id, day).length === 0 && <span style={{ color: subText }}>—</span>}
                           {lines.map((l, i) => <div key={i}>{marked ? renderMarked(marked.lines[i]) : l}</div>)}
                           {marked && renderRemoved(marked.removed, true)}
+                          {studyLinesOf(c.id, day, bandsNow, bi).map((l, i) => (
+                            <div key={`s${i}`} style={{ color: subText }} title="勉強会の表から自動で出ています（ここでは直せません）">{l}</div>
+                          ))}
                         </td>
                       );
                     })}
