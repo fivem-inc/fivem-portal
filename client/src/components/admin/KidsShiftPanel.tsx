@@ -15,6 +15,7 @@ import {
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
 } from '../../lib/kidsShiftApi';
 import { buildKidsPrintHtml } from '../../lib/kidsShiftPrint';
+import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
 
 // ⑤ こどもシフト表（2026-09-16・段階1の1回目）。設計・決めたことは docs/計画-管理画面の開放.md の 5-9〜5-9-3。
 // ・置き場所（列・校の見出し・曜日の書き添え）×曜日のマスを「いつから」で版にする（変えたマスだけ・先の版は残す）
@@ -74,7 +75,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [decideState, setDecideState] = useState<{ conflicts: { place_id: string; day_kind: string; label: string }[]; keptCount: number; changeCount: number; choices: Record<string, 'plan' | 'decided'> } | null>(null);
   const decideBoxRef = useScrollIntoViewWhen<HTMLDivElement>(decideState);
   const [guard, setGuard] = useState<{ text: string; go: () => void } | null>(null);
-  const [pdfRed, setPdfRed] = useState(true);
+  // 変わった所の印（ピンク・2026-10-06）。画面と PDF で別々に外せる（大きく変わったとき・初回の PDF は外す）
+  const [markScreen, setMarkScreen] = useState(true);
+  const [pdfMark, setPdfMark] = useState(true);
   const [pdfBlank, setPdfBlank] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -427,6 +430,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   /** PDF。onlySchool を渡すとその校だけ出す（校ごとの PDF・2026-09-22） */
   const printPdf = (onlySchool?: string) => {
     if (!data) return;
+    // 🚨 いまのマスと比べる先のマスを、同じ作り方で文字にする（作り方が違うと、変わっていない所まで印が付く）
+    const printLines = (cell: KidsCellValue) => cell.flatMap(it => {
+      const s = shortfallOf(it, data.settings, canLesson, inactive);
+      return (pdfBlank ? itemTextWithBlanks(it, nameOf, s, k => data.roleKinds.find(r => r.key === k)?.label ?? k)
+        : itemText(it, nameOf, k => data.roleKinds.find(r => r.key === k)?.label ?? k)).split('\n');
+    });
     const changed = new Set<string>();
     for (const d of KIDS_WEEK) for (const p of activeColumns) {
       if (!cellEquals(shownCell(p.id, d), baseCell(p.id, d))) changed.add(cellKey(p.id, d));
@@ -443,17 +452,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       notes: (data.notes ?? []).filter(n => n.active).map(n => n.body),
       places: onlySchool ? places.filter(p => p.school === onlySchool) : places,
       columnsOf: d => columnsOfDay(d).filter(c => !onlySchool || c.school === onlySchool),
-      linesOf: (placeId, d) => shownCell(placeId, d).flatMap(it => {
-        const s = shortfallOf(it, data.settings, canLesson, inactive);
-        return (pdfBlank ? itemTextWithBlanks(it, nameOf, s, k => data.roleKinds.find(r => r.key === k)?.label ?? k)
-          : itemText(it, nameOf, k => data.roleKinds.find(r => r.key === k)?.label ?? k)).split('\n');
-      }),
+      linesOf: (placeId, d) => printLines(shownCell(placeId, d)),
+      baseLinesOf: (placeId, d) => printLines(baseCell(placeId, d)),
       headOf: (school, d) => {
         const head = heads.find(h => h.school === school);
         if (!head) return [];
         return shownCell(head.id, d).map(it => itemText(it, nameOf, k => data.roleKinds.find(r => r.key === k)?.label ?? k));
       },
-      changed, redChanges: pdfRed, offStaff: off, dayNotes,
+      changed, markChanges: pdfMark, offStaff: off, dayNotes,
     });
     setPanelErr(openRosterPrint(html) ?? '');
   };
@@ -659,11 +665,23 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     );
   };
 
-  const cellLinesOf = (placeId: string, d: RosterDayKind): string[] =>
-    shownCell(placeId, d).flatMap(it => {
+  const linesOfCell = (cell: KidsCellValue): string[] =>
+    cell.flatMap(it => {
       const s = shortfallOf(it, data.settings, canLesson, inactive);
       return itemTextWithBlanks(it, nameOf, s, roleLabel).split('\n');
     });
+  const cellLinesOf = (placeId: string, d: RosterDayKind): string[] => linesOfCell(shownCell(placeId, d));
+  /** 比べる先（前の日・決定済みの表）のマスの文字。変わった所の印に使う */
+  const baseLinesOf = (placeId: string, d: RosterDayKind): string[] => linesOfCell(baseCell(placeId, d));
+  /** 1行を、変わった所だけ濃いピンクにして出す */
+  const renderMarked = (parts: { text: string; hit: boolean }[]) =>
+    parts.map((p, i) => (p.hit ? <span key={i} style={CHANGE_MARK_SPAN}>{p.text}</span> : <React.Fragment key={i}>{p.text}</React.Fragment>));
+  /** 前にはあって、いまは無いもの（抜けた名前など）。取り消し線で出す */
+  const renderRemoved = (removed: string[], block = false) => (removed.length === 0 ? null : (
+    <span style={{ display: block ? 'block' : 'inline', marginLeft: block ? 0 : 6 }}>
+      前：{removed.map((r, i) => <React.Fragment key={i}>{i > 0 ? '・' : ''}<span style={{ ...CHANGE_MARK_SPAN, textDecoration: 'line-through' }}>{r}</span></React.Fragment>)}
+    </span>
+  ));
 
   const cols = columnsOfDay(day);
   const headBySchool = (school: string) => heads.find(h => h.school === school) ?? null;
@@ -751,10 +769,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
             <span style={{ fontSize: 13, color: text }}>適用開始日</span>
             <input type="date" value={applyFrom} style={inputStyle}
               onChange={e => e.target.value && guarded('別の日付', () => setApplyFrom(e.target.value))} />
-            <span style={{ fontSize: 12, color: subText }}>赤字＝{md(prevDate(applyFrom))} と違うマス</span>
           </>
         )}
-        {plan && <span style={{ fontSize: 12, color: subText }}>赤字＝決定済みの表（{md(plan.apply_from)} 時点）と違うマス</span>}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: subText, cursor: 'pointer' }}>
+          <input type="checkbox" checked={markScreen} onChange={e => setMarkScreen(e.target.checked)} />
+          変わった所に印
+          <span style={{ ...changeCellStyle(true), padding: '0 4px', borderRadius: 3 }}>違うマス</span>
+          <span style={CHANGE_MARK_SPAN}>違う名前・時刻</span>
+          {plan ? `（決定済みの表 ${md(plan.apply_from)} 時点と比べて）` : `（${md(prevDate(applyFrom))} と比べて）`}
+        </label>
       </div>
 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -779,10 +802,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           if (!h) return null;
           const lines = shownCell(h.id, day).map(it => itemText(it, nameOf, roleLabel));
           const isRed = !cellEquals(shownCell(h.id, day), baseCell(h.id, day));
+          const mark = isRed && markScreen;
+          const marked = mark ? diffLines(lines, baseCell(h.id, day).map(it => itemText(it, nameOf, roleLabel))) : null;
           return (
             <button key={school} type="button" onClick={() => setOpenKey(o => (o === cellKey(h.id, day) ? null : cellKey(h.id, day)))}
-              style={{ ...inputStyle, cursor: 'pointer', textAlign: 'left', color: isRed ? red : text, fontWeight: isRed ? 'bold' : 'normal' }}>
-              <b>{school}</b>{lines.length > 0 ? `\u3000${lines.join('\u3000')}` : '\u3000（見出しの役割を入れる）'}
+              style={{ ...inputStyle, cursor: 'pointer', textAlign: 'left', color: text, ...changeCellStyle(mark) }}>
+              <b>{school}</b>{marked
+                ? <>{marked.lines.map((ln, i) => <React.Fragment key={i}>{'\u3000'}{renderMarked(ln)}</React.Fragment>)}{renderRemoved(marked.removed)}</>
+                : lines.length > 0 ? `\u3000${lines.join('\u3000')}` : '\u3000（見出しの役割を入れる）'}
             </button>
           );
         })}
@@ -815,12 +842,25 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                   <td key={c.id} onClick={() => setOpenKey(o => (o === k ? null : k))}
                     style={{
                       padding: '5px 4px', borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
-                      fontSize: 12, color: isRed ? red : text, fontWeight: isRed ? 'bold' : 'normal',
+                      fontSize: 12, color: text, ...changeCellStyle(isRed && markScreen),
                       outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
                     }}>
-                    {lines.length === 0
-                      ? <span style={{ color: subText }}>{diff ? '≠ ' : ''}—</span>
-                      : lines.map((l, i) => <div key={i}>{i === 0 ? `${diff ? '≠' : ''}${warn > 0 ? '⚠️' : ''}` : ''}{l}</div>)}
+                    {(() => {
+                      // 変わった所（名前・時刻など）だけ濃いピンク。抜けたものは最後に「前：」で出す
+                      const marked = isRed && markScreen ? diffLines(lines, baseLinesOf(c.id, day)) : null;
+                      if (lines.length === 0) {
+                        return <>
+                          <span style={{ color: marked ? '#000' : subText }}>{diff ? '≠ ' : ''}—</span>
+                          {marked && renderRemoved(marked.removed, true)}
+                        </>;
+                      }
+                      return <>
+                        {lines.map((l, i) => (
+                          <div key={i}>{i === 0 ? `${diff ? '≠' : ''}${warn > 0 ? '⚠️' : ''}` : ''}{marked ? renderMarked(marked.lines[i]) : l}</div>
+                        ))}
+                        {marked && renderRemoved(marked.removed, true)}
+                      </>;
+                    })()}
                   </td>
                 );
               })}
@@ -1018,7 +1058,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           <b>PDF（全校・A4横1枚）</b>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input type="checkbox" checked={pdfRed} onChange={e => setPdfRed(e.target.checked)} />変わった所を赤字にする
+              <input type="checkbox" checked={pdfMark} onChange={e => setPdfMark(e.target.checked)} />変わった所に印（ピンク）を付ける
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input type="checkbox" checked={pdfBlank} onChange={e => setPdfBlank(e.target.checked)} />{'追加必要を「（　）」で刷る'}

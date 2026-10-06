@@ -8,6 +8,7 @@ import { isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffSt
 import { supabase } from './supabaseClient';
 import { normTime } from './shiftRoster';
 import type {
+  ShiftBoard,
   KidsCellValue, KidsCellVersion, KidsItem, KidsPerson, KidsPlace, KidsPlan, KidsPlanCell,
   KidsRoleKind, KidsRowKind, KidsSettings, KidsStaffLite,
 } from './kidsShift';
@@ -40,11 +41,13 @@ interface RawItem {
   start_time: string | null; end_time: string | null; class_name: string | null;
   groups: number | null; required: number | null; min_lesson: number | null;
   role_key: string | null; is_none: boolean; note: string | null; sort_order: number;
+  split_time: string | null; video: string | null; use_pool: boolean | null;
   kids_shift_item_people: RawPerson[] | null;
 }
 
 const ITEM_COLS =
   'id, cell_id, plan_cell_id, kind_key, start_time, end_time, class_name, groups, required, min_lesson, role_key, is_none, note, sort_order,'
+  + ' split_time, video, use_pool,'
   + ' kids_shift_item_people(user_id, role, start_time, end_time, sort_order)';
 
 function toItems(rows: RawItem[]): KidsCellValue {
@@ -61,10 +64,14 @@ function toItems(rows: RawItem[]): KidsCellValue {
     note: r.note ?? '',
     people: [...(r.kids_shift_item_people ?? [])].sort((a, b) => a.sort_order - b.sort_order).map<KidsPerson>(p => ({
       user_id: p.user_id,
-      role: (p.role === 'onduty' || p.role === 'support') ? p.role : 'lead',
+      // 🚨 知らない役割も 'lead' に変えずにそのまま持つ（大人の役割を読んだときに書き換えないため・2026-10-06）
+      role: (p.role || 'lead') as KidsPerson['role'],
       start: normTime(p.start_time),
       end: normTime(p.end_time),
     })),
+    split_time: normTime(r.split_time),
+    video: r.video === 'first' || r.video === 'second' ? r.video : null,
+    use_pool: r.use_pool === true,
   }));
 }
 
@@ -75,20 +82,26 @@ const DEFAULT_SETTINGS: KidsSettings = {
   plan_limit: 10,
 };
 
-/** 表の中身（決定済みの版・案・一覧・設定）。sinceDate は「赤字の比べ先」の日 */
-export async function loadKidsData(sinceDate: string): Promise<{ data: KidsData | null; error: string | null }> {
+/**
+ * 表の中身（決定済みの版・案・一覧・設定）。sinceDate は「赤字の比べ先」の日。
+ * 🚨 board でその表の分だけ読む（2026-10-06：大人シフト表も同じ表で持つため。絞らないと大人の列がこどもの表に出る）
+ */
+export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'): Promise<{ data: KidsData | null; error: string | null }> {
   const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes, ackRes] = await Promise.all([
-    supabase.from('kids_shift_places').select('id, kind, school, floor, label, sort_order, active').order('sort_order'),
-    supabase.from('kids_shift_row_kinds').select('key, label, has_class, has_groups, has_people, issue_mode, sort_order, active').order('sort_order'),
+    supabase.from('kids_shift_places').select('id, board, kind, school, floor, label, sort_order, active').eq('board', board).order('sort_order'),
+    supabase.from('kids_shift_row_kinds').select('key, label, has_class, has_groups, has_people, issue_mode, sort_order, active, boards, default_minutes')
+      .contains('boards', [board]).order('sort_order'),
     supabase.from('kids_shift_role_kinds').select('key, label, sort_order, active').order('sort_order'),
     supabase.from('kids_shift_cells')
-      .select(`id, place_id, day_kind, valid_from, valid_to, kids_shift_items(${ITEM_COLS})`)
+      .select(`id, place_id, day_kind, valid_from, valid_to, kids_shift_items(${ITEM_COLS}), kids_shift_places!inner(board)`)
+      .eq('kids_shift_places.board', board)
       .or(`valid_to.is.null,valid_to.gte.${sinceDate}`)
       .order('valid_from'),
     supabase.from('kids_shift_plans')
-      .select('id, name, apply_from, status, archived_reason, archived_at, decided_from, revision, updated_by, updated_at')
+      .select('id, board, name, apply_from, status, archived_reason, archived_at, decided_from, revision, updated_by, updated_at')
+      .eq('board', board)
       .order('updated_at', { ascending: false }),
-    supabase.from('kids_shift_notes').select('id, body, sort_order, active').order('sort_order'),
+    supabase.from('kids_shift_notes').select('id, body, sort_order, active').eq('board', board).order('sort_order'),
     supabase.from('kids_shift_settings').select('lesson_check, required_by_groups, min_lesson_by_groups, plan_limit').maybeSingle(),
     supabase.from('kids_shift_staff_flags').select('user_id, can_lesson'),
     supabase.from('staff_display_names').select('user_id, label'),
@@ -161,8 +174,9 @@ export async function loadPlanCells(planId: string): Promise<{ cells: KidsPlanCe
   };
 }
 
-export async function loadKidsToken(): Promise<{ token: string | null; error: string | null }> {
-  const { data, error } = await supabase.rpc('kids_shift_token');
+export async function loadKidsToken(board: ShiftBoard = 'kids'): Promise<{ token: string | null; error: string | null }> {
+  // 🚨 表ごとの token（こどもを保存しても大人の画面は「ほかの人が変えました」にならない）
+  const { data, error } = await supabase.rpc('kids_shift_token', { p_board: board });
   if (error) return { token: null, error: error.message };
   return { token: (data as string) ?? null, error: null };
 }
@@ -183,6 +197,9 @@ export function toPayloadCells(cells: { placeId: string; day: string; items: Kid
       role_key: it.role_key || null,
       is_none: it.is_none,
       note: it.note || null,
+      split_time: normTime(it.split_time) || null,
+      video: it.video,
+      use_pool: it.use_pool,
       people: (it.people ?? []).map(p => ({
         user_id: p.user_id,
         role: p.role,
@@ -213,6 +230,8 @@ async function callRpc(fn: string, payload: unknown): Promise<KidsSaveResult> {
 
 /** 決定済みの表を保存する */
 export function saveKidsCells(payload: {
+  /** 省略＝こども（DB の既定） */
+  board?: ShiftBoard;
   apply_from: string; base_token: string; confirm_past?: boolean;
   cells: ReturnType<typeof toPayloadCells>;
 }): Promise<KidsSaveResult> {

@@ -12,11 +12,20 @@ import { toMin, normTime, shiftTimeIssue } from './shiftRoster';
 
 export const KIDS_WEEK: RosterDayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
-export type KidsPlaceKind = 'column' | 'head' | 'daynote';
-export type KidsPersonRole = 'lead' | 'onduty' | 'support';
+/** どの表か（2026-10-06：大人シフト表も同じ表で持つ。DB の board 列） */
+export type ShiftBoard = 'kids' | 'adult';
+/** pool＝本校の「3F・5F 共通の人」（こどもだけ）／trip＝出張の細い列（大人だけ） */
+export type KidsPlaceKind = 'column' | 'head' | 'daynote' | 'pool' | 'trip';
+/**
+ * 人の役割。こども：lead＝担当・onduty＝（勤務中）・support＝（サポート）。
+ * 大人：lead＝前半の担当・support＝前半のサポート・second＝後半の担当・second_support＝後半のサポート・assist＝補助。
+ * 🚨 知らない役割を読んでも 'lead' に変えない（変えると保存したときに役割が書き換わる）
+ */
+export type KidsPersonRole = 'lead' | 'onduty' | 'support' | 'second' | 'second_support' | 'assist';
 
 export interface KidsPlace {
   id: string;
+  board: ShiftBoard;
   kind: KidsPlaceKind;
   school: string | null;
   floor: string | null;
@@ -34,6 +43,10 @@ export interface KidsRowKind {
   issue_mode: 'full' | 'day_only';
   sort_order: number;
   active: boolean;
+  /** この種類を使える表 */
+  boards: ShiftBoard[];
+  /** 終わりの時刻が無い行の長さ（分）。空＝時刻だけ */
+  default_minutes: number | null;
 }
 
 export interface KidsRoleKind {
@@ -62,6 +75,12 @@ export interface KidsItem {
   is_none: boolean;        // 「なし」（フロント：なし）
   note: string;
   people: KidsPerson[];
+  /** 大人：前半と後半の境（空＝ちょうど半分） */
+  split_time: string;
+  /** 大人：映像の授業（first＝前半／second＝後半／null＝映像ではない） */
+  video: 'first' | 'second' | null;
+  /** こども：本校の「3F・5F 共通の人」で回すクラス */
+  use_pool: boolean;
 }
 
 export type KidsCellValue = KidsItem[];
@@ -86,6 +105,7 @@ export interface KidsPlanCell {
 
 export interface KidsPlan {
   id: string;
+  board: ShiftBoard;
   name: string;
   apply_from: string;
   status: 'open' | 'archived';
@@ -110,6 +130,7 @@ export function emptyItem(kind: string): KidsItem {
   return {
     kind, start: '', end: '', class_name: '', groups: null, required: null, min_lesson: null,
     role_key: kind === 'role' ? '' : null, is_none: false, note: '', people: [],
+    split_time: '', video: null, use_pool: false,
   };
 }
 
@@ -130,7 +151,11 @@ export function sigOfItems(items: KidsCellValue): string {
     it.is_none ? 'true' : 'false',
     (it.note ?? '').trim(),
     (it.people ?? []).map(p => `${p.user_id}:${p.role || 'lead'}:${normTime(p.start)}-${normTime(p.end)}`).join(','),
-  ].join('/')).join('|');
+  ].join('/')
+    // 🚨 2026-10-06：境・映像・共通の印は「値があるときだけ」末尾に足す（DB と同じ。今の署名を変えないため）
+    + (normTime(it.split_time) || it.video || it.use_pool
+      ? `/+${normTime(it.split_time)}:${it.video ?? ''}:${it.use_pool ? 'true' : 'false'}`
+      : '')).join('|');
 }
 
 export function cellEquals(a: KidsCellValue, b: KidsCellValue): boolean {

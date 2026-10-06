@@ -2,11 +2,12 @@
 // 🚨 supabase を読まない。別の窓に書き出してブラウザの印刷で「PDF に保存」する（勤務表・掃除担当表と同じ openRosterPrint）
 // ・紙と同じ A4横1枚。段は「月・火」「水・木」「金・土・日」
 // ・その曜日に中身がある列だけ出す（ユーザー確定 案A）。校の見出しの役割は列の上に、曜日の書き添えと社員休みは段の下に
-// ・赤字（前の日から変わったマス）と 追加必要の「（ ）」は出すときに選ぶ
-// 🚨 新しい色は足さない（赤字だけ・地の色は付けない）
+// ・変わったマス（前の日・決定済みの表から）の印と 追加必要の「（ ）」は出すときに選ぶ
+// 🚨 変わった所の印はピンクの塗り（2026-10-06 ユーザー確定・lib/changeMark.ts 1か所）。赤い字はやめた
 
 import { KIDS_WEEK, type KidsCellValue, type KidsPlace } from './kidsShift';
 import { ROSTER_DAY_LABEL, type RosterDayKind } from './shiftRoster';
+import { CHANGE_MARK_PRINT_CSS, diffLines } from './changeMark';
 
 export interface KidsPrintOptions {
   title: string;                       // 例：2026年10月～ こどもシフト表 案2
@@ -15,9 +16,12 @@ export interface KidsPrintOptions {
   places: KidsPlace[];                 // 有効な置き場所（列・見出し）すべて
   columnsOf: (day: RosterDayKind) => KidsPlace[];              // その曜日に出す列
   linesOf: (placeId: string, day: RosterDayKind) => string[];  // マスの文字（すでに「（ ）」込み）
+  /** 比べる先のマスの文字（変わった所の印に使う。linesOf と同じ作り方で） */
+  baseLinesOf: (placeId: string, day: RosterDayKind) => string[];
   headOf: (school: string, day: RosterDayKind) => string[];    // 校の見出しの役割
   changed: Set<string>;                // `${placeId}|${day}`
-  redChanges: boolean;
+  /** 変わった所に印（ピンク）を付けるか */
+  markChanges: boolean;
   offStaff: Partial<Record<RosterDayKind, string[]>>;          // 社員休み
   dayNotes: Partial<Record<RosterDayKind, string[]>>;          // 曜日の書き添え
 }
@@ -53,8 +57,14 @@ export function buildKidsPrintHtml(o: KidsPrintOptions): string {
     const sub = cols.map(c => `<th class="sub">${esc(c.floor ?? '')}</th>`).join('');
     const body = cols.map(c => {
       const lines = o.linesOf(c.id, day);
-      const red = o.redChanges && o.changed.has(`${c.id}|${day}`);
-      return `<td class="${red ? 'red' : ''}">${lines.map(l => `<div>${esc(l)}</div>`).join('') || '&nbsp;'}</td>`;
+      const mark = o.markChanges && o.changed.has(`${c.id}|${day}`);
+      if (!mark) return `<td>${lines.map(l => `<div>${esc(l)}</div>`).join('') || '&nbsp;'}</td>`;
+      // 変わったマス＝薄い黄色、マスの中で変わった所＝濃いピンク、抜けたもの・前の時刻＝「前：」に取り消し線
+      const m = diffLines(lines, o.baseLinesOf(c.id, day));
+      const body = m.lines.map(ps => `<div>${ps.map(p => (p.hit ? `<span class="chg">${esc(p.text)}</span>` : esc(p.text))).join('')}</div>`).join('');
+      const gone = m.removed.length > 0
+        ? `<div>前：${m.removed.map(r => `<span class="chg gone">${esc(r)}</span>`).join('・')}</div>` : '';
+      return `<td class="chgcell">${body || (gone ? '' : '—')}${gone}</td>`;
     }).join('');
     const off = (o.offStaff[day] ?? []);
     const notes = (o.dayNotes[day] ?? []);
@@ -92,7 +102,7 @@ export function buildKidsPrintHtml(o: KidsPrintOptions): string {
   th.sub { font-weight: normal; }
   .role { display: block; font-weight: normal; font-size: 5.8pt; }
   .foot { font-size: 6.2pt; margin-top: 0.8mm; }
-  .red { color: #d32f2f; }
+  ${CHANGE_MARK_PRINT_CSS}
   @media screen { body { padding: 10px; background: #fff; } .hint { font-size: 12px; color: #555; margin-bottom: 8px; } }
   @media print { .hint { display: none; } }
 </style></head><body>
