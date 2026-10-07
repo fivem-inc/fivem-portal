@@ -44,6 +44,10 @@ export default function MasterOptionList({ items, isDarkMode, canRename, onRenam
   const [endingId, setEndingId] = useState<string | null>(null);
   const [endDate, setEndDate] = useState('');
   const [busy, setBusy] = useState(false);
+  // 終了したものは下にまとめて、押したときだけ開く（2026-10-07 ユーザー指示：並んでいると邪魔）
+  const [showEnded, setShowEnded] = useState(false);
+  const activeItems = items.filter(i => !i.ended_at);
+  const endedItems = items.filter(i => !!i.ended_at).sort((a, b) => (b.ended_at ?? '').localeCompare(a.ended_at ?? ''));
 
   const smallBtn = (bg: string, fg: string): React.CSSProperties => ({
     padding: '3px 8px', background: bg, color: fg, border: 'none', borderRadius: 4, cursor: busy ? 'default' : 'pointer', fontSize: 12, whiteSpace: 'nowrap',
@@ -59,8 +63,9 @@ export default function MasterOptionList({ items, isDarkMode, canRename, onRenam
 
   const move = async (idx: number, dir: -1 | 1) => {
     const to = idx + dir;
-    if (busy || to < 0 || to >= items.length) return;
-    const ids = items.map(i => String(i.id));
+    // 🚨 並び替えは使っているものの中だけ（終了したものは選択肢に出ないので並びに関係しない）
+    if (busy || to < 0 || to >= activeItems.length) return;
+    const ids = activeItems.map(i => String(i.id));
     [ids[idx], ids[to]] = [ids[to], ids[idx]];
     setBusy(true); setErr(null);
     const { error } = await supabase.rpc('master_options_reorder', { p_ids: ids });
@@ -99,17 +104,19 @@ export default function MasterOptionList({ items, isDarkMode, canRename, onRenam
     await onChanged();
   };
 
-  return (
-    <>
-      {items.map((item, idx) => {
+  const renderRow = (item: MasterOptionItem, idx: number) => {
         const id = String(item.id);
         const ended = !!item.ended_at;
         const rowBg = ended ? (isDarkMode ? '#3a3f44' : '#eceff1') : (isDarkMode ? '#495057' : '#f8f9fa');
         return (
           <div key={id} style={{ marginBottom: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: rowBg, borderRadius: 6 }}>
-              <button type="button" aria-label="上へ" onClick={() => move(idx, -1)} disabled={idx === 0 || busy} style={arrowBtn(idx === 0)}>▲</button>
-              <button type="button" aria-label="下へ" onClick={() => move(idx, 1)} disabled={idx === items.length - 1 || busy} style={arrowBtn(idx === items.length - 1)}>▼</button>
+              {!ended && (
+                <>
+                  <button type="button" aria-label="上へ" onClick={() => move(idx, -1)} disabled={idx === 0 || busy} style={arrowBtn(idx === 0)}>▲</button>
+                  <button type="button" aria-label="下へ" onClick={() => move(idx, 1)} disabled={idx === activeItems.length - 1 || busy} style={arrowBtn(idx === activeItems.length - 1)}>▼</button>
+                </>
+              )}
               {renamingId === id ? (
                 <>
                   <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
@@ -156,7 +163,20 @@ export default function MasterOptionList({ items, isDarkMode, canRename, onRenam
             )}
           </div>
         );
-      })}
+  };
+
+  return (
+    <>
+      {activeItems.map((item, idx) => renderRow(item, idx))}
+      {endedItems.length > 0 && (
+        <div style={{ marginTop: 4, marginBottom: 4 }}>
+          <button type="button" onClick={() => setShowEnded(v => !v)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>
+            {showEnded ? '▼' : '▶'} 終了したもの（{endedItems.length}）
+          </button>
+          {showEnded && <div style={{ marginTop: 4 }}>{endedItems.map((item, idx) => renderRow(item, idx))}</div>}
+        </div>
+      )}
       {err && <div style={{ color: isDarkMode ? '#ff8a80' : '#c62828', fontSize: 12, margin: '4px 0' }}>{err}</div>}
     </>
   );
