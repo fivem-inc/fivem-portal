@@ -21,7 +21,13 @@ export type KidsPlaceKind = 'column' | 'head' | 'daynote' | 'pool' | 'trip';
  * 大人：lead＝前半の担当・support＝前半のサポート・second＝後半の担当・second_support＝後半のサポート・assist＝補助。
  * 🚨 知らない役割を読んでも 'lead' に変えない（変えると保存したときに役割が書き換わる）
  */
-export type KidsPersonRole = 'lead' | 'onduty' | 'support' | 'second' | 'second_support' | 'assist';
+export type KidsPersonRole = 'lead' | 'onduty' | 'support' | 'second' | 'second_support' | 'assist' | 'watch';
+
+/** 人の役割の呼び名（入れる画面・Excel の一覧で使う）。watch＝見守り（紙の【 】・2026-10-07） */
+export const PERSON_ROLE_LABEL: Record<KidsPersonRole, string> = {
+  lead: '担当', onduty: '（ ）出勤・レッスンに入らない', support: 'サポート', watch: '【 】見守り',
+  second: '後半の担当', second_support: '後半のサポート', assist: '補助',
+};
 
 export interface KidsPlace {
   id: string;
@@ -281,6 +287,7 @@ export function itemText(item: KidsItem, name: (userId: string) => string, roleL
   const leads = people.filter(p => p.role === 'lead');
   const onduty = people.filter(p => p.role === 'onduty');
   const support = people.filter(p => p.role === 'support');
+  const watch = people.filter(p => p.role === 'watch');
   const nameOf = (p: KidsPerson) => {
     const base = name(p.user_id);
     const from = normTime(p.start);
@@ -303,6 +310,8 @@ export function itemText(item: KidsItem, name: (userId: string) => string, roleL
   if (item.class_name) head.push(item.class_name);
   if (item.groups != null) head.push(`${item.groups}班`);
   if (onduty.length > 0) head.push(`（${onduty.map(nameOf).join('・')}）`);
+  // 見守り（紙と同じ【森本】の形・2026-10-07）
+  if (watch.length > 0) head.push(`【${watch.map(nameOf).join('・')}】`);
   const lines = [head.join(' ')];
   const second = [...leads.map(nameOf), ...support.map(p => `（${nameOf(p)}）`)];
   if (second.length > 0) lines.push(second.join('・'));

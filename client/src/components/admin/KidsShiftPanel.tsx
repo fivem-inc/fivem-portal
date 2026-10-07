@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { todayJstStr } from '../../lib/breakCalc';
-import { ROSTER_DAY_LABEL, minText, normTime, prevDate, shiftDayOn, type RosterDayKind } from '../../lib/shiftRoster';
+import { ROSTER_DAY_LABEL, compareRosterStaff, minText, normTime, prevDate, shiftDayOn, toMin, type RosterDayKind } from '../../lib/shiftRoster';
+import { useRoles } from '../../hooks/useRoles';
+import { rankOf } from '../../lib/roleAttrs';
 import { studyEndMin, studyLabel, studyStartMin, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
 import { loadStudyData } from '../../lib/studySessionsApi';
 import { bandIndexOf, bandsOfDay, itemsByBand, poolRowOfBand, type KidsBand } from '../../lib/kidsShiftBands';
@@ -9,7 +11,7 @@ import { loadRosterData, type RosterData, type RosterPatternRow } from '../../li
 import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
-  KIDS_WEEK, sigOfItems, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
+  KIDS_WEEK, PERSON_ROLE_LABEL, sigOfItems, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
   kidsCellIssues, kidsGridSheet, kidsListSheet, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell,
 } from '../../lib/kidsShift';
@@ -54,6 +56,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [data, setData] = useState<KidsData | null>(null);
   const [roster, setRoster] = useState<RosterData | null>(null);
   const [planCells, setPlanCells] = useState<KidsPlanCell[]>([]);
+  // ［曜日で見る］［人ごとに見る］（2026-10-07）。人ごとは見るだけ
+  const [viewMode, setViewMode] = useState<'day' | 'person'>('day');
+  const roles = useRoles();
   // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
   const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
   const [studyErr, setStudyErr] = useState('');
@@ -574,7 +579,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       const list = XLSX.utils.aoa_to_sheet(kidsListSheet(
         // 🚨 「3F・5F で動ける人」も一覧に出す（人ごとに何時から何時まで）
         KIDS_WEEK, d => ROSTER_DAY_LABEL[d], d => [...columnsOfDay(d), ...poolPlaces.filter(pp => shownCell(pp.id, d).length > 0)],
-        (placeId, d) => shownCell(placeId, d), kindLabel, roleLabel, nameOf,
+        // 🚨 人の役割の呼び名（担当・（ ）・見守り…）。見出しの役割の呼び名（roleLabel）とは別
+        (placeId, d) => shownCell(placeId, d), kindLabel, k => PERSON_ROLE_LABEL[k as KidsPerson['role']] ?? k, nameOf,
       ));
       list['!cols'] = [6, 12, 6, 16, 12, 7, 7, 14, 5, 12, 10, 24].map(wch => ({ wch }));
       XLSX.utils.book_append_sheet(wb, list, '一覧');
@@ -676,6 +682,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                   <option value="lead">担当</option>
                   <option value="onduty">（ ）出勤・レッスンに入らない（事務など）</option>
                   <option value="support">サポート</option>
+                  <option value="watch">【 】見守り（レッスンに入らない）</option>
                 </select>
                 <input type="time" step={300} value={p.start} style={{ ...inputStyle, width: 110 }} onChange={e => setPerson(pi, { start: e.target.value })} />
                 <span style={{ color: subText, fontSize: 12 }}>〜</span>
@@ -765,7 +772,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
    */
   const displayItem = (placeId: string, it: KidsItem): { it: KidsItem; pool: boolean } => {
     const pool = it.use_pool && isPoolColumn(places.find(p => p.id === placeId));
-    return pool ? { it: { ...it, people: it.people.filter(p => p.role !== 'onduty') }, pool } : { it, pool };
+    return pool ? { it: { ...it, people: it.people.filter(p => p.role !== 'onduty' && p.role !== 'watch') }, pool } : { it, pool };
   };
   const linesOfItems = (placeId: string, items: KidsItem[], blanks = true): string[] =>
     items.flatMap(raw => {
@@ -819,6 +826,105 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     }
     return null;
   })();
+
+  // ─── 人ごとの表（2026-10-07・ユーザー確定：見るだけ。押すとその曜日の表のマスが開く） ───
+  // 縦＝その週に出てくる人（勤務表と同じ並び）、横＝月〜日。マスの先頭に校（役割があれば添える）、その下に予定を時刻順
+  // 🚨 予定の中身はこどもの表のマス・共通の人・勉強会から作る（ここで書き直さない＝画面の表と同じ材料）
+  const personTable = () => {
+    type Entry = { min: number; text: string; placeId: string; school: string };
+    type DayCell = { entries: Entry[]; roles: string[] };
+    const byUser = new Map<string, Partial<Record<RosterDayKind, DayCell>>>();
+    const cellFor = (uid: string, d: RosterDayKind): DayCell => {
+      const m = byUser.get(uid) ?? {};
+      if (!m[d]) m[d] = { entries: [], roles: [] };
+      byUser.set(uid, m);
+      return m[d]!;
+    };
+    for (const d of KIDS_WEEK) {
+      for (const c of activeColumns) {
+        const school = c.school ?? c.label;
+        const fl = activeColumns.filter(x => x.school === c.school).length > 1 && c.floor ? `${c.floor} ` : '';
+        for (const it of shownCell(c.id, d)) {
+          if (it.kind === 'role' || it.kind === 'daynote' || it.is_none) continue;
+          for (const p of it.people) {
+            if (!p.user_id) continue;
+            const st = normTime(it.start);
+            let t: string;
+            if (it.kind === 'private') t = `P${st}`;
+            else if (it.kind === 'meeting') t = `打合せ ${st}`;
+            else if (it.kind === 'garden') t = `園指導 ${it.class_name}`;
+            else if (isClassItem(it)) t = `${st} ${fl}${it.class_name}${it.groups != null ? `${it.groups}班` : ''}`;
+            else t = `${st}${it.end ? `〜${normTime(it.end)}` : ''} ${fl}${it.class_name || kindLabel(it.kind)}`;
+            if (p.role === 'onduty') t += '（ ）';
+            if (p.role === 'support') t += '（サポート）';
+            if (p.role === 'watch') t += '【見守り】';
+            if (normTime(p.start) && normTime(p.start) !== st) t += ` ${normTime(p.start)}〜`;
+            if (normTime(p.end)) t += ` 〜${normTime(p.end)}`;
+            cellFor(p.user_id, d).entries.push({ min: toMin(normTime(p.start) || st) ?? 0, text: t.trim(), placeId: c.id, school });
+          }
+        }
+        for (const v of studyOfPlace(c.id, d)) {
+          for (const u of v.members) cellFor(u, d).entries.push({ min: studyStartMin(v), text: `${minText(studyStartMin(v))} 勉強会［勉］`, placeId: c.id, school });
+        }
+      }
+      for (const pp of poolPlaces) {
+        for (const p of shownCell(pp.id, d).find(it => it.kind === 'pool')?.people ?? []) {
+          if (!p.user_id) continue;
+          cellFor(p.user_id, d).entries.push({
+            min: toMin(normTime(p.start)) ?? 0, text: `共通 ${normTime(p.start)}〜${normTime(p.end)}`, placeId: pp.id, school: pp.school ?? '',
+          });
+        }
+      }
+      for (const h of heads) {
+        for (const it of shownCell(h.id, d)) {
+          if (it.kind !== 'role' || it.is_none) continue;
+          for (const p of it.people) if (p.user_id) cellFor(p.user_id, d).roles.push(`${h.school}（${roleLabel(it.role_key ?? '')}）`);
+        }
+      }
+    }
+    const areaOrder = (userId: string) => roster.areas.find(a => a.id === roster.mainAreas[userId])?.sort_order ?? 999;
+    const people = [...byUser.keys()]
+      .map(id => roster.staff.find(s => s.id === id) ?? { id, name: data.staff.find(s => s.id === id)?.name ?? '', role_title: null })
+      .sort((a, b) => compareRosterStaff(a, b, areaOrder, t => rankOf(roles, t) ?? 99));
+    if (people.length === 0) return <p style={{ color: subText, fontSize: 13 }}>この表には、まだだれも入っていません</p>;
+    return (
+      <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900, tableLayout: 'fixed' }}>
+          <thead>
+            <tr style={{ background: innerBg }}>
+              <th style={{ width: 90, padding: '6px 4px', fontSize: 12.5, color: text }}>人</th>
+              {KIDS_WEEK.map(d => <th key={d} style={{ padding: '6px 4px', borderLeft: `1px solid ${borderColor}`, fontSize: 12.5, color: text }}>{ROSTER_DAY_LABEL[d]}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {people.map(p => (
+              <tr key={p.id} style={{ borderTop: `1px solid ${borderColor}` }}>
+                <td style={{ padding: '4px', fontSize: 12.5, fontWeight: 'bold', color: text, verticalAlign: 'top', background: innerBg }}>{nameOf(p.id)}</td>
+                {KIDS_WEEK.map(d => {
+                  const cell = byUser.get(p.id)?.[d];
+                  const entries = [...(cell?.entries ?? [])].sort((a, b) => a.min - b.min);
+                  const schools = [...new Set(entries.map(e => e.school))];
+                  const roleText = cell?.roles ?? [];
+                  const head = [...schools.filter(s => !roleText.some(r => r.startsWith(s))), ...roleText].join('・');
+                  const off = entries.length === 0 && roleText.length === 0 && (shiftDayOn(rowsByUser.get(p.id) ?? [], d, baseDate)?.segments.length ?? 0) === 0;
+                  const first = entries[0];
+                  return (
+                    <td key={d}
+                      onClick={() => { if (!first) return; setViewMode('day'); setDay(d); setOpenKey(cellKey(first.placeId, d)); }}
+                      style={{ padding: '4px', borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 12, color: text, cursor: first ? 'pointer' : 'default', lineHeight: 1.55 }}>
+                      {head && <div style={{ fontWeight: 'bold' }}>{head}</div>}
+                      {entries.map((e, i) => <div key={i}>{e.text}</div>)}
+                      {off && <span style={{ color: subText }}>休み</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   // ─── 「3F・5F で動ける人」の入力（2026-10-06 ユーザー確定：人・何時から・何時まで だけ） ───
   const poolEditor = (placeId: string, d: RosterDayKind) => {
@@ -1015,6 +1121,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         </label>
       </div>
 
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+        <button type="button" style={toggle(viewMode === 'day')} onClick={() => setViewMode('day')}>曜日で見る</button>
+        <button type="button" style={toggle(viewMode === 'person')} onClick={() => { setViewMode('person'); setOpenKey(null); }}>人ごとに見る</button>
+        {viewMode === 'person' && <span style={{ fontSize: 12, color: subText }}>見るだけです。マスを押すと、その曜日の表のマスが開きます</span>}
+      </div>
+      {viewMode === 'person' && personTable()}
+      {viewMode === 'day' && (<>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
         {KIDS_WEEK.map(d => (
           <button key={d} type="button" style={toggle(day === d)} onClick={() => { setDay(d); setOpenKey(null); }}>
@@ -1187,6 +1300,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       </div>
 
       {openKey && openKey.endsWith(`|${day}`) && cellEditor(openKey.split('|')[0], day)}
+      </>)}
 
       {/* 追加必要・重なり */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>

@@ -153,12 +153,17 @@ export function poolRowOfBand(band: KidsBand, ctx: PoolContext): PoolRow {
         // 🚨 「帯の始まりの時刻に入っているか」で見る（帯の終わりに少し掛かるだけの P などで共通から外さない・紙と同じ）。
         //    （ ）の人は、その帯に始まるクラスの（ ）なら他業務に出す
         const atStart = sp.s <= bandSpan.s && bandSpan.s < sp.e;
-        if (!atStart && !(p.role === 'onduty' && clsInBand)) continue;
+        if (!atStart && !((p.role === 'onduty' || p.role === 'watch') && clsInBand)) continue;
         const where = isCls
           ? (src.place.school === ctx.poolPlace.school ? (src.place.floor ?? src.place.label) : (src.place.school ?? src.place.label))
           : ctx.kindLabel(it.kind);
         const prev = busyAt.get(p.user_id);
-        const info = { where, inPoolClass: inPoolCols && isCls && p.role !== 'onduty', onduty: inPoolCols && isCls && p.role === 'onduty' };
+        // 🚨 （ ）と見守りは「クラスにいるがレッスンを担当しない」人＝他業務に出す（見守りは行き先に「見守り」）
+        const notLesson = p.role === 'onduty' || p.role === 'watch';
+        const info = {
+          where: p.role === 'watch' && inPoolCols && isCls ? '見守り' : where,
+          inPoolClass: inPoolCols && isCls && !notLesson, onduty: inPoolCols && isCls && notLesson,
+        };
         // 本校 3F・5F のクラスの担当（・サポート）を優先して覚える（その人は他業務に出さない）
         if (!prev || info.inPoolClass) busyAt.set(p.user_id, info);
       }
@@ -176,7 +181,7 @@ export function poolRowOfBand(band: KidsBand, ctx: PoolContext): PoolRow {
     const busy = busyAt.get(p.user_id);
     if (busy) {
       if (!busy.inPoolClass && !seenOther.has(p.user_id)) {
-        other.push({ userId: p.user_id, where: busy.onduty ? '' : busy.where });
+        other.push({ userId: p.user_id, where: busy.onduty && busy.where !== '見守り' ? '' : busy.where });
         seenOther.add(p.user_id);
       }
       continue;
@@ -188,7 +193,7 @@ export function poolRowOfBand(band: KidsBand, ctx: PoolContext): PoolRow {
   }
   // （ ）の人は「3F・5F で動ける人」に入っていなくても他業務に出す
   for (const [uid, b] of busyAt) {
-    if (b.onduty && !seenOther.has(uid)) { other.push({ userId: uid, where: '' }); seenOther.add(uid); }
+    if (b.onduty && !seenOther.has(uid)) { other.push({ userId: uid, where: b.where === '見守り' ? '見守り' : '' }); seenOther.add(uid); }
   }
   return { common, other, need, show: poolClassHere || common.length > 0 };
 }
