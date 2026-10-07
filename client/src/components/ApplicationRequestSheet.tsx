@@ -29,7 +29,7 @@ const KIND_LABEL: Record<Kind, string> = {
 //    詳しい理由を書かせる例文を置かない（例文は手本として真似されるため）。
 const MEMO_PLACEHOLDER: Record<Kind, string> = {
   overtime: '例：お客様対応が延びたため、18:00まで勤務',
-  leave: '例：私用のため有給を取得',
+  leave: '例：私用のため有休を取得',
 };
 
 // 🚨 その申請を実際に使える人にしか依頼できないようにする（2026-09-09 実機指摘）。

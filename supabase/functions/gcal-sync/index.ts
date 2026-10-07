@@ -9,8 +9,9 @@ const CORS_HEADERS = {
 
 // 休暇種別 → タイトル・色
 const LEAVE_CONFIG: Record<string, { label: string; colorId: string }> = {
-  '有給休暇':           { label: '有給',  colorId: '4' }, // Flamingo（ピンク）
-  'バースデー休暇（有給）': { label: '有給',  colorId: '4' },
+  // 見出しの略は「有休」（2026-10-07 ユーザー確定。種類名「有給休暇」「バースデー休暇（有給）」は保存の値なので変えない）
+  '有給休暇':           { label: '有休',  colorId: '4' }, // Flamingo（ピンク）
+  'バースデー休暇（有給）': { label: '有休',  colorId: '4' },
   '慶弔休暇':           { label: '休み',  colorId: '4' },
   '調整休':             { label: '調整休', colorId: '4' },
   'その他':             { label: '休み',  colorId: '4' },

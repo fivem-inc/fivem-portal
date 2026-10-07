@@ -2449,7 +2449,7 @@ const Dashboard: React.FC = () => {
         >
           <span style={{ fontSize: 24 }}>📨</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 'bold', fontSize: 15 }}>有給申請を送信してください</div>
+            <div style={{ fontWeight: 'bold', fontSize: 15 }}>有休申請を送信してください</div>
           </div>
           <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: 'nowrap', flexShrink: 0 }}>タップして申請する →</div>
         </div>

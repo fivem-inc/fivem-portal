@@ -495,7 +495,7 @@ const ReportsTab: React.FC = () => {
                   <tr>
                     <th style={{ ...thS(isDarkMode), width: '54px' }}>ステータス</th>
                     {paidCols.map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
-                    {paidCols.length > 0 && <th style={{ ...thN(isDarkMode), backgroundColor: subtotalBgL }}>有給{'\n'}小計</th>}
+                    {paidCols.length > 0 && <th style={{ ...thN(isDarkMode), backgroundColor: subtotalBgL }}>有休{'\n'}小計</th>}
                     {[...otherCols, ...unknownCols].map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
                     <th style={{ ...thS(isDarkMode), width: '44px' }}>合計</th>
                     <th style={{ ...thS(isDarkMode), borderLeft: abBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b', width: '40px' }}>欠勤</th>
@@ -583,7 +583,7 @@ const ReportsTab: React.FC = () => {
                         <th style={thS(isDarkMode, { width: '36px' })}>受理</th>
                         <th style={thS(isDarkMode, { width: '40px' })}>申請中</th>
                         {paidCols.map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
-                        {paidCols.length > 0 && <th style={{ ...thN(isDarkMode), backgroundColor: subtotalBgL }}>有給{'\n'}小計</th>}
+                        {paidCols.length > 0 && <th style={{ ...thN(isDarkMode), backgroundColor: subtotalBgL }}>有休{'\n'}小計</th>}
                         {[...otherCols, ...unknownCols].map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
                         <th style={thS(isDarkMode, { width: '40px' })}>合計</th>
                         <th style={{ ...thS(isDarkMode, { width: '38px' }), borderLeft: absenceBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b' }}>欠勤</th>

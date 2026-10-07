@@ -1135,7 +1135,7 @@ const LeaveRequestsTab: React.FC = () => {
                       if (!userId) { setErrorMsg('パートを選択してください'); return; }
                       const target = partUsers.find(u => u.id === userId);
                       if (!target) return;
-                      setConfirmDialog({ message: `「${target.name || target.email}」さんに有給申請フォームを送信しますか？`, onConfirm: async () => {
+                      setConfirmDialog({ message: `「${target.name || target.email}」さんに有休申請フォームを送信しますか？`, onConfirm: async () => {
                         // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
                         //    リーダー・マネージャーからも呼べる RPC 経由にする（2026-08-10）
                         const { error } = await supabase.rpc('set_leave_request_enabled', { p_user_id: userId, p_enabled: true });
@@ -1220,7 +1220,7 @@ const LeaveRequestsTab: React.FC = () => {
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6 }}>
                                 {encDeleteId === d.id ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: 1 }}>
-                                    <span style={{ fontSize: 11, color: '#dc3545', fontWeight: 'bold' }}>削除しますか？対象者・回答・承認済みの有給申請もすべて消えます（元に戻せません）</span>
+                                    <span style={{ fontSize: 11, color: '#dc3545', fontWeight: 'bold' }}>削除しますか？対象者・回答・承認済みの有休申請もすべて消えます（元に戻せません）</span>
                                     <button onClick={() => handleDeleteEncDay(d)} disabled={encDeleting}
                                       style={{ padding: '3px 10px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: encDeleting ? 'default' : 'pointer', fontWeight: 'bold' }}>
                                       {encDeleting ? '削除中...' : '削除する'}</button>

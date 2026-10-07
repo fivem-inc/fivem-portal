@@ -975,7 +975,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
           <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
-          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>有給・慶弔休・調整休などを申請できます</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>有休・慶弔休・調整休などを申請できます</span>
         </div>
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
       </div>
@@ -1904,13 +1904,13 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   </button>
                   {isOpen && (
                     <div style={{ padding: '10px 12px', background: bg }}>
-                      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#28a745', marginBottom: 4 }}>【有給】</div>
+                      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#28a745', marginBottom: 4 }}>【有休】</div>
                       {colHeader}
                       {Object.entries(yukyu)
                         .sort(([a], [b]) => { if (a === '有給休暇') return -1; if (b === '有給休暇') return 1; if (a.startsWith('その他')) return 1; if (b.startsWith('その他')) return -1; return 0; })
                         .map(([typeName, data]) => <Row key={typeName} label={typeName} data={data} />)}
                       <div style={{ display: 'flex', fontSize: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 4, marginTop: 2, marginBottom: Object.keys(keicho).length > 0 ? 10 : 0 }}>
-                        <div style={{ flex: 3, color: text, fontWeight: 'bold', fontSize: 11 }}>有給 合計</div>
+                        <div style={{ flex: 3, color: text, fontWeight: 'bold', fontSize: 11 }}>有休 合計</div>
                         <div style={{ flex: 1, textAlign: 'center', color: yukyuTotal.pending > 0 ? '#e67e22' : subText, fontWeight: 'bold' }}>{yukyuTotal.pending > 0 ? `${yukyuTotal.pending}日` : '—'}</div>
                         <div style={{ flex: 1, textAlign: 'center', color: yukyuTotal.approved > 0 ? '#28a745' : subText, fontWeight: 'bold' }}>{yukyuTotal.approved > 0 ? `${yukyuTotal.approved}日` : '—'}</div>
                         <div style={{ flex: 1, textAlign: 'center', color: text, fontWeight: 'bold' }}>{yukyuTotal.pending + yukyuTotal.approved > 0 ? `${yukyuTotal.pending + yukyuTotal.approved}日` : '—'}</div>
@@ -1989,7 +1989,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   });
                   return (
                     <div style={{ marginTop: 8, padding: '10px 14px', background: isDark ? '#1a2e1a' : '#f0fff4', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, borderRadius: 8, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#75d475' : '#155724' }}>🌿 有給取得状況（{selectedFY}年度）</span>
+                      <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#75d475' : '#155724' }}>🌿 有休取得状況（{selectedFY}年度）</span>
                       <span style={{ fontSize: 12, color: isDark ? '#d0e8d0' : '#1e5631' }}>確認中：<strong>{pending}日</strong></span>
                       <span style={{ fontSize: 12, color: isDark ? '#d0e8d0' : '#1e5631' }}>受理済み：<strong>{approved}日</strong></span>
                       <span style={{ fontSize: 12, color: isDark ? '#d0e8d0' : '#1e5631' }}>合計：<strong>{pending + approved}日</strong></span>

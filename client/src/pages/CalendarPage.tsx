@@ -291,7 +291,7 @@ const LEAVE_TYPE_COLOR: Record<string, { bg: string; text: string }> = {
 const PENDING_COLOR = { bg: '#fef9e7', text: '#b7770d', border: '#f39c12' };
 
 const LEAVE_TYPE_SHORT: Record<string, string> = {
-  '有給休暇':              '有給',
+  '有給休暇':              '有休',
   'バースデー休暇（有給）': 'BD休暇',
   '慶弔休暇':             '慶弔休',
   '調整休':               '調整休',
@@ -2188,7 +2188,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
           </div>
         ))}
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '8px 0 0' }}>※Googleカレンダーに自動登録されます。</p>
-        <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※有給の申請はできません。</p>
+        <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※有休の申請はできません。</p>
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※ここでの登録は予定の共有用です。給与に関わる勤務時間の報告は「勤務変更」で行います。</p>
       </div>
 
@@ -2291,7 +2291,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
               //    （濃い緑・濃いアンバー・濃紺のままだと背景に沈んで読めない）
               show: showLeave, title: '休暇・欠勤', titleColor: isDark ? CAT_COLOR.leave.dark : CAT_COLOR.leave.light,
               items: [
-                { label: '有給（受理）', bg: '#d5f5e3' },
+                { label: '有休（受理）', bg: '#d5f5e3' },
                 { label: '調整休・振休', bg: '#f4ecf7' },
                 { label: '慶弔・その他', bg: '#fdedec' },
                 { label: '申請中', bg: '#fef9e7', border: '#f39c12' },
