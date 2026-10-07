@@ -109,6 +109,8 @@ export interface PoolContext {
   defaultMinutes: (kind: string) => number;
   /** 必要な人数（班の数から・行に入っていればそちら） */
   requiredOf: (it: KidsItem) => number;
+  /** その人のその曜日の勤務の時間（分）。null＝週のシフトが無い（切らない）／空＝休み（2026-10-07） */
+  shiftOf?: (userId: string) => { s: number; e: number }[] | null;
 }
 
 interface Span { s: number; e: number }
@@ -174,8 +176,16 @@ export function poolRowOfBand(band: KidsBand, ctx: PoolContext): PoolRow {
   const other: PoolRow['other'] = [];
   const seenOther = new Set<string>();
   for (const p of ctx.poolItem?.people ?? []) {
-    const s = toMin(normTime(p.start)) ?? 0;
-    const e = toMin(normTime(p.end)) ?? 24 * 60;
+    let s = toMin(normTime(p.start)) ?? 0;
+    let e = toMin(normTime(p.end)) ?? 24 * 60;
+    // 🚨 週のシフトの時間で切る（2026-10-07 ユーザー確定：勤務の外の時間は共通に出さない。帰る時刻を「17:30まで」と添える）。
+    //    休憩をはさむ日は、その帯に掛かる最初の勤務の区切りで見る
+    const segs = ctx.shiftOf?.(p.user_id) ?? null;
+    if (segs) {
+      const hit = segs.map(g => ({ s: Math.max(s, g.s), e: Math.min(e, g.e) })).filter(x => x.e > x.s && overlaps(x, bandSpan));
+      if (hit.length === 0) continue;
+      ({ s, e } = hit[0]);
+    }
     const here: Span = { s, e };
     if (!overlaps(here, bandSpan)) continue;
     const busy = busyAt.get(p.user_id);

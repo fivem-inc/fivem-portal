@@ -279,6 +279,9 @@ function minToText(m: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
+/** 時刻の前に付ける札（2026-10-07 ユーザー確定 案C「［P］16:00〜」）。何の時間か分かるように */
+export const KIDS_KIND_TAG: Record<string, string> = { private: '［P］', meeting: '［打合せ］' };
+
 /** 紙と同じ書き方の1行（画面・PDF・Excel が同じものを使う） */
 export function itemText(item: KidsItem, name: (userId: string) => string, roleLabel?: (key: string) => string): string {
   const t = normTime(item.start);
@@ -306,7 +309,9 @@ export function itemText(item: KidsItem, name: (userId: string) => string, roleL
   }
   if (item.kind === 'daynote') return item.note ?? '';
   const head: string[] = [];
-  if (t) head.push(t2 ? `${t}〜${t2}` : `${t}〜`);
+  const tag = KIDS_KIND_TAG[item.kind] ?? '';
+  if (t) head.push(`${tag}${t2 ? `${t}〜${t2}` : `${t}〜`}`);
+  else if (tag) head.push(tag);
   if (item.class_name) head.push(item.class_name);
   if (item.groups != null) head.push(`${item.groups}班`);
   if (onduty.length > 0) head.push(`（${onduty.map(nameOf).join('・')}）`);

@@ -300,8 +300,18 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const adult6FOf = useCallback((d: string): KidsCellValue => (adultMainOfOther ? otherCellOf(adultMainOfOther.id, d) : []), [adultMainOfOther, otherCellOf]);
   // 勉強会（2026-10-07）。その曜日に効いている版を、同じ校・同じ階の列に出す（階が無い勉強会はその校の最初の列）。
   // 🚨 kind='study' の仮の行にして、帯・共通の人の判定に使う（保存はしない・マスの中身にも入れない）
-  const studyColumnOf = useCallback((v: StudyVersion) =>
-    activeColumns.find(c => c.school === v.location && (v.floor ? c.floor === v.floor : true)) ?? null, [activeColumns]);
+  // 🚨 2026-10-07 担当の依頼：大人の部門の勉強会は、参加者が全員大人の部門なら出さない（記載不要）。
+  //    こどもの先生が入っているものは、階が無ければ「本校 6F」の列に出す（3F で勉強会をしているように見えないように）
+  const adultAreaId = useMemo(() => roster?.areas.find(a => a.name === '大人')?.id ?? null, [roster]);
+  const mainAreaOf = useMemo(() => new Map((data?.staff ?? []).map(s => [s.id, s.main_area ?? ''])), [data]);
+  const studyColumnOf = useCallback((v: StudyVersion) => {
+    const ofSchool = activeColumns.filter(c => c.school === v.location);
+    if (!isAdult && adultAreaId != null && v.area_id === adultAreaId) {
+      if (v.members.length > 0 && v.members.every(u => mainAreaOf.get(u) === '大人')) return null;
+      return ofSchool.find(c => (v.floor ? c.floor === v.floor : c.floor === '6F')) ?? ofSchool[0] ?? null;
+    }
+    return ofSchool.find(c => (v.floor ? c.floor === v.floor : true)) ?? null;
+  }, [activeColumns, isAdult, adultAreaId, mainAreaOf]);
   const studyOfPlace = useCallback((placeId: string, d: RosterDayKind) =>
     versionsOnDate(studyVersions, baseDate).filter(v => v.day_kind === d && studyColumnOf(v)?.id === placeId)
       .sort((a, b) => studyStartMin(a) - studyStartMin(b)), [studyVersions, baseDate, studyColumnOf]);
@@ -330,11 +340,17 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
       kindLabel: (k: string) => (k === 'study' ? '勉強会' : data?.rowKinds.find(r => r.key === k)?.label ?? k),
       defaultMinutes: (k: string) => data?.rowKinds.find(r => r.key === k)?.default_minutes ?? 50,
       requiredOf: (it: KidsItem) => it.required ?? (data ? defaultsForGroups(data.settings, it.groups).required : 0),
+      shiftOf: (uid: string) => {
+        const day = shiftDayOn(rowsByUser.get(uid) ?? [], d, baseDate);
+        if (!day) return null;
+        return day.segments.map(g => ({ s: toMin(normTime(g.start)) ?? 0, e: toMin(normTime(g.end)) ?? 0 })).filter(x => x.e > x.s);
+      },
     };
-  }, [shownCell, activeColumns, isPoolColumn, isClassItem, data, studyItemsOf]);
+  }, [shownCell, activeColumns, isPoolColumn, isClassItem, data, studyItemsOf, rowsByUser, baseDate]);
 
   const hasContent = useCallback((placeId: string, d: string) =>
-    shownCell(placeId, d).length > 0 || (placeId === kids6F?.id && adult6FOf(d).length > 0), [shownCell, kids6F, adult6FOf]);
+    shownCell(placeId, d).length > 0 || (placeId === kids6F?.id && adult6FOf(d).length > 0)
+    || (!isAdult && studyOfPlace(placeId, d as RosterDayKind).length > 0), [shownCell, kids6F, adult6FOf, isAdult, studyOfPlace]);
   const [extraColumns, setExtraColumns] = useState<Set<string>>(new Set());
   const columnsOfDay = useCallback((d: RosterDayKind) =>
     activeColumns.filter(p => hasContent(p.id, d) || extraColumns.has(`${p.id}|${d}`)), [activeColumns, hasContent, extraColumns]);
@@ -991,8 +1007,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
             if (!p.user_id) continue;
             const st = normTime(it.start);
             let t: string;
-            if (it.kind === 'private') t = `P${st}`;
-            else if (it.kind === 'meeting') t = `打合せ ${st}`;
+            if (it.kind === 'private') t = `［P］${st}`;
+            else if (it.kind === 'meeting') t = `［打合せ］${st}`;
             else if (it.kind === 'garden') t = `園指導 ${it.class_name}`;
             else if (isClassItem(it)) t = `${st} ${fl}${it.class_name}${it.groups != null ? `${it.groups}班` : ''}`;
             else t = `${st}${it.end ? `〜${normTime(it.end)}` : ''} ${fl}${it.class_name || kindLabel(it.kind)}`;
