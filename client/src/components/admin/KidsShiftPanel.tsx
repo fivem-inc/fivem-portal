@@ -16,6 +16,8 @@ import {
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell, type ShiftBoard,
 } from '../../lib/kidsShift';
 import { ADULT_CLASS_KIND, ADULT_ROLES, ADULT_TRIP_KIND, adultLines, splitMinOf, withPersonSpans, type AdultLine } from '../../lib/adultShift';
+import { crossEntriesOf, crossOverlaps, kidsRowText, type CrossEntry } from '../../lib/shiftCross';
+import { buildAdultPrintHtml } from '../../lib/adultShiftPrint';
 import {
   ackKidsIssue, decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
@@ -32,6 +34,10 @@ import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMa
 
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const cellKey = (placeId: string, day: string) => `${placeId}|${day}`;
+/** 表をまたぐ重なりに出す置き場所の短い呼び名（本校 3F・6F・出張 など） */
+const placeShort = (p: KidsPlace) => (p.kind === 'trip' ? '出張' : p.board === 'adult' ? (p.floor ?? p.label) : p.label.replace('四条本校', '本校'));
+/** 案と比べているときの薄い水色の帯（2026-10-06 ユーザー確定 B・黄色は変わったマスに使うため） */
+const compareBand = (isDark: boolean): React.CSSProperties => ({ background: isDark ? '#12363d' : '#e0f7fa' });
 
 // 🚨 board='adult' で大人シフト表（2026-10-07・docs/計画-大人シフト表.md §3）。案・保存・決定・比べる・⚠️ はこどもと同じ仕組みで、
 //    表の形（縦＝時刻・横＝曜日＋出張の細い列）と入れる欄（前半／後半・補助・映像）だけが違う。マスの読み書きは lib/adultShift.ts
@@ -67,6 +73,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
   const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
   const [studyErr, setStudyErr] = useState('');
+  // 相手の表（こどもなら大人・大人ならこども・2026-10-07）。表をまたぐ重なり・「こども」の行・こどもの 6F に使う。
+  // 🚨 読めなくても自分の表は使える（重なりを出せないことを断る）
+  const otherBoard: ShiftBoard = isAdult ? 'kids' : 'adult';
+  const otherName = isAdult ? 'こどもシフト表' : '大人シフト表';
+  const [other, setOther] = useState<KidsData | null>(null);
+  const [otherErr, setOtherErr] = useState('');
+  // 比べる相手＝相手の決定済み（初め）か作業中の案（過去の案は選べない・設計 §4）
+  const [otherWith, setOtherWith] = useState<string>('decided');
+  const [otherPlanCells, setOtherPlanCells] = useState<KidsPlanCell[]>([]);
   // ── 案を比べる（2026-09-22・2回目の c）──────────────────────────
   // 🚨 いま見ているものと、選んだもう1つを比べて**違うマスに印**を付けるだけ（設計書 5-9）。
   //    書き換えはしない。どちらを採るかは［この案で決定する］のときに選ぶ（既存の仕組み）
@@ -122,9 +137,24 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const st = await loadStudyData(since);
     setStudyVersions(st.data?.versions ?? []);
     setStudyErr(st.error ? `勉強会を読み込めませんでした（勉強会の時間を共通の人から外せません）：${st.error}` : '');
+    const o = await loadKidsData(since, otherBoard);
+    setOther(o.data);
+    setOtherErr(o.error ? `${otherName}を読み込めませんでした（表をまたぐ重なりを出せません）：${o.error}` : '');
     if (!keepDrafts) setDrafts({});
     setLoading(false);
-  }, [baseDate, board, boardName]);
+  }, [baseDate, board, boardName, otherBoard, otherName]);
+
+  // 相手の案を選んだら、その案のマスを読む
+  useEffect(() => {
+    if (otherWith === 'decided') { setOtherPlanCells([]); return; }
+    let alive = true;
+    void loadPlanCells(otherWith).then(r => {
+      if (!alive) return;
+      if (r.error) setOtherErr(`${otherName}の案を読み込めませんでした：${r.error}`);
+      setOtherPlanCells(r.error ? [] : r.cells);
+    });
+    return () => { alive = false; };
+  }, [otherWith, otherName]);
 
   useEffect(() => { void load(true); }, [load]);
 
@@ -238,6 +268,36 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   /** ⚠️・重なりの判定に渡す中身。🚨 大人は前後半と終わりの無い行の時間を埋めてから渡す（判定はこどもと同じものを使う） */
   const judgedCell = useCallback((placeId: string, d: string): KidsCellValue =>
     (isAdult ? withPersonSpans(shownCell(placeId, d), defMinOf) : shownCell(placeId, d)), [isAdult, shownCell, defMinOf]);
+
+  // ─── 相手の表（2026-10-07） ───
+  const otherPlan = useMemo(() => (otherWith === 'decided' ? null : other?.plans.find(p => p.id === otherWith && p.status === 'open') ?? null), [other, otherWith]);
+  /** 相手の表のマス。decidedOnly＝いつも決定済み（決定を止める判定はいつも相手の決定済みで見る・設計 §4） */
+  const otherCellOf = useCallback((placeId: string, d: string, decidedOnly = false): KidsCellValue => {
+    if (!other) return [];
+    if (!decidedOnly && otherPlan) return mergeCell(other.cells, otherPlanCells, placeId, d, otherPlan.apply_from);
+    return cellVersionOn(other.cells, placeId, d, baseDate)?.items ?? [];
+  }, [other, otherPlan, otherPlanCells, baseDate]);
+  /** その表の、その曜日の全員の時間（表をまたぐ重なり・「こども」の行に使う） */
+  const entriesFor = useCallback((b: ShiftBoard, d: RosterDayKind, decidedOnly = false): CrossEntry[] => {
+    const mine = b === board;
+    const src = mine ? data : other;
+    if (!src) return [];
+    const ps = src.places.filter(p => p.active && (p.kind === 'column' || p.kind === 'trip' || p.kind === 'pool'));
+    const cellFn = (pid: string) => (mine ? shownCell(pid, d) : otherCellOf(pid, d, decidedOnly));
+    const isCls = (it: KidsItem) => (b === 'adult' ? it.kind === ADULT_CLASS_KIND : !!src.rowKinds.find(k => k.key === it.kind)?.has_groups);
+    const def = (k: string) => src.rowKinds.find(r => r.key === k)?.default_minutes ?? (b === 'adult' ? 30 : 50);
+    return crossEntriesOf(b, ps.map(p => ({ place: p, items: cellFn(p.id) })), isCls, def, placeShort);
+  }, [board, data, other, shownCell, otherCellOf]);
+  const crossOf = useCallback((decidedOnly: boolean) => KIDS_WEEK.flatMap(d =>
+    crossOverlaps(entriesFor('kids', d, decidedOnly), entriesFor('adult', d, decidedOnly)).map(o => ({ ...o, day: d }))), [entriesFor]);
+  /** こども×大人の重なり（いま選んでいる相手と） */
+  const cross = useMemo(() => (other ? crossOf(false) : []), [other, crossOf]);
+  /** 大人を決定してよいか：こどもの決定済みとの 🔴 の数（設計 §4「大人はこどもとの 🔴 で決定できない」） */
+  const crossRedVsDecided = useMemo(() => (other && isAdult ? crossOf(true).filter(o => o.level === 'red').length : 0), [other, isAdult, crossOf]);
+  // こどもの表の「本校 6F」＝大人シフト表から自動で出す（6F は大人シフト表だけに入れる決まり・設計 §4）
+  const kids6F = useMemo(() => (isAdult ? null : activeColumns.find(c => c.school === '四条本校' && c.floor === '6F') ?? null), [isAdult, activeColumns]);
+  const adultMainOfOther = useMemo(() => (isAdult ? null : other?.places.find(p => p.kind === 'column' && p.active) ?? null), [isAdult, other]);
+  const adult6FOf = useCallback((d: string): KidsCellValue => (adultMainOfOther ? otherCellOf(adultMainOfOther.id, d) : []), [adultMainOfOther, otherCellOf]);
   // 勉強会（2026-10-07）。その曜日に効いている版を、同じ校・同じ階の列に出す（階が無い勉強会はその校の最初の列）。
   // 🚨 kind='study' の仮の行にして、帯・共通の人の判定に使う（保存はしない・マスの中身にも入れない）
   const studyColumnOf = useCallback((v: StudyVersion) =>
@@ -273,7 +333,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     };
   }, [shownCell, activeColumns, isPoolColumn, isClassItem, data, studyItemsOf]);
 
-  const hasContent = useCallback((placeId: string, d: string) => shownCell(placeId, d).length > 0, [shownCell]);
+  const hasContent = useCallback((placeId: string, d: string) =>
+    shownCell(placeId, d).length > 0 || (placeId === kids6F?.id && adult6FOf(d).length > 0), [shownCell, kids6F, adult6FOf]);
   const [extraColumns, setExtraColumns] = useState<Set<string>>(new Set());
   const columnsOfDay = useCallback((d: RosterDayKind) =>
     activeColumns.filter(p => hasContent(p.id, d) || extraColumns.has(`${p.id}|${d}`)), [activeColumns, hasContent, extraColumns]);
@@ -473,6 +534,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
 
   const startDecide = async () => {
     if (!plan || token == null) return;
+    // 🚨 大人はこどもの決定済みとの 🔴 があると決定できない（案の保存はできる・設計 §4。決める順番＝こども→大人）
+    if (isAdult && crossRedVsDecided > 0) {
+      setSaveErr(`こどもシフト表（決定済み）と 🔴 の重なりが ${crossRedVsDecided} 件あります。直してから決定してください（案の保存はできます）。`);
+      return;
+    }
     setSaving(true); setSaveErr('');
     const r = await decidePlan({ plan_id: plan.id, revision: plan.revision, apply_from: plan.apply_from, confirm: false, base_token: token });
     setSaving(false);
@@ -881,7 +947,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const headBySchool = (school: string) => heads.find(h => h.school === school) ?? null;
   // 時刻の帯（その曜日のクラスの開始時刻から自動で作る）。中身が無い日は1本だけ
   const bandsNow: KidsBand[] = (() => {
-    const b = bandsOfDay(cols.map(c => ({ placeId: c.id, items: [...shownCell(c.id, day), ...studyItemsOf(c.id, day)] })), isClassItem);
+    const b = bandsOfDay(cols.map(c => ({ placeId: c.id, items: [...shownCell(c.id, day), ...studyItemsOf(c.id, day), ...(c.id === kids6F?.id ? adult6FOf(day) : [])] })), isClassItem);
     return b.length > 0 ? b : [{ from: 0, to: null, label: '' }];
   })();
   // 共通の行。🚨 その校の 3F・5F が表に並んで出ているときだけ（並んでいないと1行にまとめられない）
@@ -1106,16 +1172,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   // 縦＝時刻の帯（その週のクラスの開始時刻から自動・近い時刻はまとめる）、横＝月〜土（日は中身があるときだけ）＋曜日ごとに出張の細い列。
   // マス＝上 時刻とクラス名／担当（大きい字「前半(サポート)/後半」）／補助、下 別の仕事［P］［映］［事］と勉強会［勉］（自動）。
   // Jr合同は灰色の帯。🚨 マスの文字は lib/adultShift.ts の adultLines 1つ（PDF も同じものを使う）
-  const adultGrid = () => {
+  /** 大人シフト表の組み立て（画面と PDF で同じもの）。🚨 曜日・時刻の帯・勉強会・こどもの行をここ1つで決める */
+  const adultLayout = (withSunday = false) => {
     const main = activeColumns[0] ?? null;
-    if (!main) return <p style={{ color: subText, fontSize: 13 }}>大人シフト表の列がまだありません（「列の一覧」を確かめてください）</p>;
+    if (!main) return null;
     const trip = tripPlaces[0] ?? null;
     const has = (pid: string | null, d: RosterDayKind) => !!pid && shownCell(pid, d).length > 0;
-    const days = KIDS_WEEK.filter(d => d !== 'sun' || has(main.id, d) || has(trip?.id ?? null, d) || !!openKey?.endsWith('|sun'));
+    const days = KIDS_WEEK.filter(d => d !== 'sun' || has(main.id, d) || has(trip?.id ?? null, d) || withSunday);
     let bands = bandsOfDay(days.map(d => ({ placeId: d, items: shownCell(main.id, d) })), it => it.kind === ADULT_CLASS_KIND);
     if (bands.length === 0) bands = [{ from: 0, to: null, label: '' }];
-    const jrBg = isDarkMode ? '#4a4a46' : '#e4e3df';
-    const jrText = isDarkMode ? '#e8e6df' : '#444441';
     // 勉強会：部門が大人のもの＋その曜日に大人シフト表に入っている人が入るもの（自動・ここでは直せない）
     const adultArea = roster.areas.find(a => a.name === '大人')?.id ?? null;
     const studiesOf = (d: RosterDayKind) => {
@@ -1127,6 +1192,50 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const studyLinesAt = (d: RosterDayKind, bi: number) => studiesOf(d)
       .filter(v => bandIndexOf({ ...emptyItem('study'), start: minText(studyStartMin(v)) }, bands) === bi)
       .map(v => `${studyLabel(v, studyNames)}［勉］`);
+    // 「こども」の行：その曜日にこどもの担当がある大人シフト表の先生（メインの部門が大人の人＋その日に大人の表に入っている人）
+    const kidsRowOf = (d: RosterDayKind): { userId: string; text: string }[] => {
+      const teachers = new Set([...entriesFor('adult', d).map(e => e.userId), ...data.staff.filter(s => s.is_active && s.main_area === '大人').map(s => s.id)]);
+      const by = new Map<string, CrossEntry[]>();
+      for (const e of entriesFor('kids', d)) if (teachers.has(e.userId)) by.set(e.userId, [...(by.get(e.userId) ?? []), e]);
+      return [...by.entries()].sort((a, b) => Math.min(...a[1].map(x => x.s)) - Math.min(...b[1].map(x => x.s)))
+        .map(([u, es]) => ({ userId: u, text: kidsRowText(es) }));
+    };
+    return { main, trip, days, bands, studyLinesAt, kidsRowOf };
+  };
+
+  /** 大人シフト表の PDF（A4 横 1枚）。🚨 画面と同じ adultLayout・adultLines を使う */
+  const printAdultPdf = () => {
+    const L = adultLayout();
+    if (!L) return;
+    const { main, trip, days, bands } = L;
+    const html = buildAdultPrintHtml({
+      title: `${md(baseDate)}〜 大人シフト表${plan ? ` ${plan.name}` : ''}`,
+      asOf: today,
+      notes: (data.notes ?? []).filter(n => n.active).map(n => n.body),
+      days, bands, hasTrip: !!trip,
+      cellOf: (d, bi) => ({
+        lines: adultLines(itemsByBand(shownCell(main.id, d), bands)[bi] ?? [], nameOf),
+        base: adultLines(itemsByBand(baseCell(main.id, d), bands)[bi] ?? [], nameOf),
+        study: L.studyLinesAt(d, bi),
+      }),
+      tripOf: (d, bi) => (trip ? {
+        lines: adultLines(itemsByBand(shownCell(trip.id, d), bands)[bi] ?? [], nameOf),
+        base: adultLines(itemsByBand(baseCell(trip.id, d), bands)[bi] ?? [], nameOf),
+      } : { lines: [], base: [] }),
+      kidsRow: d => L.kidsRowOf(d).map(x => `${nameOf(x.userId)} ${x.text}`),
+      offRow: d => offOfDay(d).map(s => nameOf(s.id)),
+      dayNotes: d => (dayNotePlace ? shownCell(dayNotePlace.id, d).map(i => i.note).filter(Boolean) : []),
+      markChanges: pdfMark,
+    });
+    setPanelErr(openRosterPrint(html) ?? '');
+  };
+
+  const adultGrid = () => {
+    const L = adultLayout(!!openKey?.endsWith('|sun'));
+    if (!L) return <p style={{ color: subText, fontSize: 13 }}>大人シフト表の列がまだありません（「列の一覧」を確かめてください）</p>;
+    const { main, trip, days, bands, studyLinesAt } = L;
+    const jrBg = isDarkMode ? '#4a4a46' : '#e4e3df';
+    const jrText = isDarkMode ? '#e8e6df' : '#444441';
     const open = (pid: string, d: RosterDayKind, bi: number | null) => {
       const k = cellKey(pid, d);
       if (openKey === k && openBand === bi) { setOpenKey(null); return; }
@@ -1262,6 +1371,20 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                   })}
                 </tr>
               )}
+              {/* 「こども」の行（2026-10-06 ユーザー確定）：その曜日にこどもの担当がある大人シフト表の先生と時間・校（こどもの決定済み・または選んだ案から自動） */}
+              <tr>
+                <td style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, fontSize: 11.5, color: subText, background: innerBg }}>こども{otherPlan ? '（案）' : ''}</td>
+                {days.map(d => {
+                  const list = L.kidsRowOf(d);
+                  return (
+                    <td key={d} colSpan={trip ? 2 : 1}
+                      style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 11.5, color: text, verticalAlign: 'top', ...(otherPlan ? compareBand(isDarkMode) : {}) }}>
+                      {list.map(x => <div key={x.userId}>{nameOf(x.userId)} {x.text}</div>)}
+                      {list.length === 0 && <span style={{ color: subText }}>{other ? '—' : '（読めません）'}</span>}
+                    </td>
+                  );
+                })}
+              </tr>
               <tr>
                 <td style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, fontSize: 11.5, color: subText, background: innerBg }}>休み</td>
                 {days.map(d => (
@@ -1485,6 +1608,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                           {studyLinesOf(c.id, day, bandsNow, bi).map((l, i) => (
                             <div key={`s${i}`} style={{ color: subText }} title="勉強会の表から自動で出ています（ここでは直せません）">{l}</div>
                           ))}
+                          {/* 大人の 6F（大人シフト表から自動・ここでは直せない） */}
+                          {c.id === kids6F?.id && adultLines(itemsByBand(adult6FOf(day), bandsNow)[bi] ?? [], nameOf).map((l, i) => (
+                            <div key={`a${i}`} title={`大人シフト表から自動で出ています（${otherPlan ? `${otherPlan.name}` : '決定済み'}・ここでは直せません）`}
+                              style={{ color: subText, fontSize: l.kind === 'staff' ? 12.5 : 11.5, fontWeight: l.kind === 'staff' ? 'bold' : 'normal', ...(otherPlan ? compareBand(isDarkMode) : {}) }}>
+                              {i === 0 && <span style={{ fontSize: 10.5, padding: '0 4px', marginRight: 3, borderRadius: 3, border: `1px solid ${borderColor}` }}>大人</span>}
+                              {l.text}
+                            </div>
+                          ))}
                         </td>
                       );
                     })}
@@ -1601,6 +1732,42 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           ))}
           {overlaps.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {overlaps.length - 12} 件</div>}
         </div>
+        {/* 表をまたぐ重なり（2026-10-07・設計 §4） */}
+        <div style={{ flex: 1, minWidth: 300, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, ...(otherPlan ? compareBand(isDarkMode) : {}) }}>
+          <b style={{ fontSize: 13, color: text }}>
+            {otherName}との重なり 🔴 {cross.filter(o => o.level === 'red').length} 件 ／ ⚠️ {cross.filter(o => o.level === 'warn').length} 件
+          </b>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, color: subText, marginTop: 4 }}>
+            比べる相手
+            <select style={inputStyle} value={otherWith} onChange={e => setOtherWith(e.target.value)}>
+              <option value="decided">{otherName}の決定済みの表</option>
+              {(other?.plans ?? []).filter(p => p.status === 'open').map(p => <option key={p.id} value={p.id}>{p.name}（作業中の案）</option>)}
+            </select>
+            {otherPlan && <span>（{otherPlan.name}と比べた場合）</span>}
+          </div>
+          <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>
+            🔴＝直す（担当どうし・出張が絡むもの・担当と別の校）／⚠️＝確かめる（そのほか）。
+            {isAdult ? ' 🔴 があると決定できません（こどもの決定済みと比べます）。' : ' 大人との重なりでは保存・決定を止めません（大人の表で直します）。'}
+          </div>
+          {otherErr && <div style={{ fontSize: 12.5, color: red, marginTop: 4 }}>{otherErr}</div>}
+          {isAdult && otherPlan && crossRedVsDecided > 0 && (
+            <div style={{ fontSize: 12.5, color: text, marginTop: 4 }}>※ こどもの決定済みとの 🔴：{crossRedVsDecided} 件（決定できるかはこちらで見ます）</div>
+          )}
+          {cross.slice(0, 15).map((o, i) => {
+            const mine = isAdult ? o.adult : o.kids;
+            return (
+              <div key={i} style={{ fontSize: 12.5, color: text, marginTop: 3 }}>
+                <button type="button" style={linkBtn}
+                  onClick={() => { if (!isAdult) { setViewMode('day'); setDay(o.day); } setOpenBand(null); setBandFor(null); setOpenKey(cellKey(mine.placeId, o.day)); }}>
+                  {o.level === 'red' ? '🔴' : '⚠️'} {ROSTER_DAY_LABEL[o.day]} {nameOf(o.userId)} {minText(o.s)}〜{minText(o.e)}
+                </button>
+                {' '}{o.kids.label} ／ {o.adult.label}
+              </div>
+            );
+          })}
+          {cross.length > 15 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {cross.length - 15} 件</div>}
+          {other && cross.length === 0 && <div style={{ fontSize: 12.5, color: subText, marginTop: 4 }}>ありません</div>}
+        </div>
       </div>
 
       {/* ⚠️（出勤していない）。🚨 保存は止めない。印を出すだけ（設計書 5-9） */}
@@ -1652,7 +1819,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         )}
         {changedKeys.length > 0 && <span style={{ fontSize: 12.5, color: '#e65100' }}>未保存のマス {changedKeys.length}</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {!isAdult && <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'pdf' ? 'none' : 'pdf'))}>PDF</button>}
+          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'pdf' ? 'none' : 'pdf'))}>PDF</button>
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'places' ? 'none' : 'places'))}>列の一覧</button>
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'kinds' ? 'none' : 'kinds'))}>行の種類・書き添え</button>
           {!isAdult && <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'people' ? 'none' : 'people'))}>レッスンできる人</button>}
@@ -1737,7 +1904,21 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
       )}
 
       {/* PDF */}
-      {panel === 'pdf' && (
+      {panel === 'pdf' && isAdult && (
+        <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, fontSize: 13, color: text }}>
+          <b>PDF（A4横1枚）</b>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input type="checkbox" checked={pdfMark} onChange={e => setPdfMark(e.target.checked)} />変わった所に印（ピンク）を付ける
+            </label>
+            <button type="button" style={primaryBtn} onClick={printAdultPdf}>別の窓に出す</button>
+          </div>
+          <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>
+            「こども」の行は{otherPlan ? `${otherPlan.name}（こどもの作業中の案）` : 'こどもシフト表の決定済みの表'}から出します（上の「比べる相手」で切り替え）。Excel は次の段階で作ります。
+          </div>
+        </div>
+      )}
+      {panel === 'pdf' && !isAdult && (
         <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, fontSize: 13, color: text }}>
           <b>PDF（全校・A4横1枚）</b>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
