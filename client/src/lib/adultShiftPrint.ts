@@ -114,3 +114,25 @@ ${footRow('休み', o.offRow, '・')}
 </tbody></table>
 </body></html>`;
 }
+
+/**
+ * Excel の「表」シート（紙と同じ並び・2026-10-07）。PDF と同じ options から作る（同じ組み立てを2つ書かない）。
+ * 1行目＝時刻・曜日（出張の列つき）、帯ごとに1行、最後に書き添え・こども・休み
+ */
+export function adultGridSheet(o: AdultPrintOptions): string[][] {
+  const text = (ls: AdultLine[]) => ls.map(l => l.text).join('\n');
+  const rows: string[][] = [['時刻', ...o.days.flatMap(d => (o.hasTrip ? [ROSTER_DAY_LABEL[d], '出張'] : [ROSTER_DAY_LABEL[d]]))]];
+  o.bands.forEach((b, bi) => {
+    rows.push([b.label, ...o.days.flatMap(d => {
+      const c = o.cellOf(d, bi);
+      const main = [text(c.lines), ...c.study].filter(Boolean).join('\n');
+      return o.hasTrip ? [main, text(o.tripOf(d, bi).lines)] : [main];
+    })]);
+  });
+  const foot = (label: string, f: (d: RosterDayKind) => string[]) =>
+    [label, ...o.days.flatMap(d => (o.hasTrip ? [f(d).join('\n'), ''] : [f(d).join('\n')]))];
+  if (o.days.some(d => o.dayNotes(d).length > 0)) rows.push(foot('書き添え', o.dayNotes));
+  rows.push(foot('こども', o.kidsRow));
+  rows.push(foot('休み', o.offRow));
+  return rows;
+}
