@@ -121,6 +121,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   // こどもの PDF の 本校 6F（大人シフト表から）。出すたびに選ぶ（設計 §4：決定済み／作業中の案（調整中）／出さない）
   const [pdf6F, setPdf6F] = useState<'decided' | 'plan' | 'none'>('decided');
   const [showArchived, setShowArchived] = useState(false);
+  // 大人シフト表の勉強会：［すべて］［部門が大人のものだけ］（設計 §3）
+  const [studyScope, setStudyScope] = useState<'all' | 'adult'>('all');
 
   const plan: KidsPlan | null = useMemo(
     () => (view === 'decided' ? null : (data?.plans ?? []).find(p => p.id === view) ?? null),
@@ -1266,7 +1268,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const studiesOf = (d: RosterDayKind) => {
       const people = new Set([...shownCell(main.id, d), ...(trip ? shownCell(trip.id, d) : [])].flatMap(it => it.people.map(p => p.user_id)));
       return versionsOnDate(studyVersions, baseDate)
-        .filter(v => v.day_kind === d && ((adultArea != null && v.area_id === adultArea) || v.members.some(u => people.has(u))))
+        .filter(v => v.day_kind === d && ((adultArea != null && v.area_id === adultArea)
+          || (studyScope === 'all' && v.members.some(u => people.has(u)))))
         .sort((a, b) => studyStartMin(a) - studyStartMin(b));
     };
     const studyLinesAt = (d: RosterDayKind, bi: number) => studiesOf(d)
@@ -1383,6 +1386,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
           マスを押すと、その曜日・その時刻の帯の行を入れられます（曜日の見出しを押すと、その曜日のすべて）。
           勉強会［勉］は勉強会の表から自動で出ます（ここでは直せません）。
+        </div>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6, fontSize: 12, color: subText }}>
+          勉強会：
+          <button type="button" style={toggle(studyScope === 'all')} onClick={() => setStudyScope('all')}>すべて</button>
+          <button type="button" style={toggle(studyScope === 'adult')} onClick={() => setStudyScope('adult')}>部門が大人のものだけ</button>
+          <span>（すべて＝部門が大人のもの＋その日に大人の表に入っている人が入るもの）</span>
         </div>
         <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 56 + days.length * (dayW + (trip ? tripW : 0)), tableLayout: 'fixed' }}>
@@ -1577,6 +1586,27 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           </div>
         </div>
       )}
+
+      {/* こどもシフト表が大人より新しく決定されたら知らせる（設計 §4・自動では案を作らない。押すと新しい案の欄が開く） */}
+      {isAdult && other && !newPlan && (() => {
+        const kidsLatest = other.cells.map(c => c.valid_from).sort().at(-1);
+        if (!kidsLatest) return null;
+        const adultLatest = data.cells.map(c => c.valid_from).sort().at(-1) ?? '';
+        if (kidsLatest <= adultLatest) return null;
+        if (data.plans.some(p => p.status === 'open' && p.apply_from >= kidsLatest)) return null;
+        const list = crossOf(true);
+        const from = kidsLatest < today ? today : kidsLatest;
+        return (
+          <div style={{ ...warnCard, marginBottom: 8 }}>
+            こどもシフト表が {md(kidsLatest)} から決定されています（大人シフト表の決定済みより新しい）。
+            こどもとの重なり 🔴 {list.filter(o => o.level === 'red').length} 件／⚠️ {list.filter(o => o.level === 'warn').length} 件。
+            <button type="button" style={{ ...primaryBtn, marginLeft: 8 }}
+              onClick={() => setNewPlan({ name: `${md(from)} からの案`, from, copy: '' })}>
+              {md(from)} からの案を作る
+            </button>
+          </div>
+        );
+      })()}
 
       {plan && (
         <div style={{ ...warnCard, marginBottom: 8 }}>
