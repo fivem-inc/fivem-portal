@@ -90,10 +90,10 @@ const ShiftManagementTab: React.FC = () => {
   const [areasOpen, setAreasOpen] = useState(false);
   const [areaErr, setAreaErr] = useState('');
   const [newArea, setNewArea] = useState({ name: '', short_name: '', color: 'gray' });
-  const [view, setView] = useState<'roster' | 'study' | 'cleaning' | 'kids'>('roster');
+  const [view, setView] = useState<'roster' | 'study' | 'cleaning' | 'kids' | 'adult'>('roster');
   // 🚨 いちど開いた画面は画面から外さずに隠すだけにする（外すと未保存の入力が消えるため・2026-09-16 レビュー U1）
   const [visited, setVisited] = useState<Set<string>>(new Set(['roster']));
-  const goView = (v: 'roster' | 'study' | 'cleaning' | 'kids') => {
+  const goView = (v: 'roster' | 'study' | 'cleaning' | 'kids' | 'adult') => {
     setVisited(prev => new Set([...prev, v]));
     setView(v);
   };
@@ -544,6 +544,7 @@ const ShiftManagementTab: React.FC = () => {
         <button type="button" onClick={() => goView('study')} style={toggle(view === 'study')}>勉強会</button>
         <button type="button" onClick={() => goView('cleaning')} style={toggle(view === 'cleaning')}>掃除担当表</button>
         <button type="button" onClick={() => goView('kids')} style={toggle(view === 'kids')}>こどもシフト表</button>
+        <button type="button" onClick={() => goView('adult')} style={toggle(view === 'adult')}>大人シフト表</button>
       </div>
     </>
   );
@@ -570,6 +571,12 @@ const ShiftManagementTab: React.FC = () => {
       {visited.has('kids') && (
         <div style={{ display: view === 'kids' ? 'block' : 'none' }}>
           <KidsShiftPanel isDarkMode={isDarkMode} />
+        </div>
+      )}
+      {/* 大人シフト表（2026-10-07）。こどもシフト表と同じ部品・同じ表（board='adult'）。案と決定はこどもと別々 */}
+      {visited.has('adult') && (
+        <div style={{ display: view === 'adult' ? 'block' : 'none' }}>
+          <KidsShiftPanel isDarkMode={isDarkMode} board="adult" />
         </div>
       )}
     </>

@@ -13,8 +13,9 @@ import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
   KIDS_WEEK, PERSON_ROLE_LABEL, sigOfItems, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
   kidsCellIssues, kidsGridSheet, kidsListSheet, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
-  type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell,
+  type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell, type ShiftBoard,
 } from '../../lib/kidsShift';
+import { ADULT_CLASS_KIND, ADULT_ROLES, ADULT_TRIP_KIND, adultLines, splitMinOf, withPersonSpans, type AdultLine } from '../../lib/adultShift';
 import {
   ackKidsIssue, decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
@@ -32,7 +33,11 @@ import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMa
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const cellKey = (placeId: string, day: string) => `${placeId}|${day}`;
 
-const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
+// 🚨 board='adult' で大人シフト表（2026-10-07・docs/計画-大人シフト表.md §3）。案・保存・決定・比べる・⚠️ はこどもと同じ仕組みで、
+//    表の形（縦＝時刻・横＝曜日＋出張の細い列）と入れる欄（前半／後半・補助・映像）だけが違う。マスの読み書きは lib/adultShift.ts
+const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({ isDarkMode, board = 'kids' }) => {
+  const isAdult = board === 'adult';
+  const boardName = isAdult ? '大人シフト表' : 'こどもシフト表';
   const text = isDarkMode ? '#f8f9fa' : '#212529';
   const subText = isDarkMode ? '#adb5bd' : '#6c757d';
   const borderColor = isDarkMode ? '#495057' : '#dee2e6';
@@ -73,6 +78,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [loadErr, setLoadErr] = useState('');
   const [drafts, setDrafts] = useState<Record<string, Record<string, KidsCellValue>>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // 大人シフト表：押した帯（その曜日の行のうち、その時刻の帯のものだけを入力に出す）。null＝その曜日のすべて
+  const [openBand, setOpenBand] = useState<number | null>(null);
+  // 🚨 帯で絞るときは「開いたときにその帯にあった行」を覚えておく（時刻を直して別の帯に移っても、入力中に消えないように）
+  const [bandIdx, setBandIdx] = useState<number[] | null>(null);
+  // 🚨 帯で絞っているマス（ほかの所からマスを開いたときは絞らない）
+  const [bandFor, setBandFor] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   // 🚨 保存の確認は表の下に出るので、開いたらそこまで動かす（2026-09-25・［保存する］が画面の外に出ないように）
   const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(confirming);
@@ -103,8 +114,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const load = useCallback(async (keepDrafts: boolean) => {
     setLoading(true); setLoadErr('');
     const since = prevDate(baseDate);
-    const [k, r, t] = await Promise.all([loadKidsData(since), loadRosterData(since), loadKidsToken()]);
-    if (k.error || !k.data) { setLoadErr(k.error ?? 'こどもシフト表を読み込めませんでした'); setLoading(false); return; }
+    const [k, r, t] = await Promise.all([loadKidsData(since, board), loadRosterData(since), loadKidsToken(board)]);
+    if (k.error || !k.data) { setLoadErr(k.error ?? `${boardName}を読み込めませんでした`); setLoading(false); return; }
     if (r.error || !r.data) { setLoadErr(r.error ?? '週のシフトを読み込めませんでした'); setLoading(false); return; }
     if (t.error || t.token == null) { setLoadErr(`保存の準備ができませんでした：${t.error ?? ''}`); setLoading(false); return; }
     setData(k.data); setRoster(r.data); setToken(t.token); setStale(false);
@@ -113,7 +124,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     setStudyErr(st.error ? `勉強会を読み込めませんでした（勉強会の時間を共通の人から外せません）：${st.error}` : '');
     if (!keepDrafts) setDrafts({});
     setLoading(false);
-  }, [baseDate]);
+  }, [baseDate, board, boardName]);
 
   useEffect(() => { void load(true); }, [load]);
 
@@ -220,6 +231,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const activeColumns = useMemo(() => places.filter(p => p.kind === 'column' && p.active).sort((a, b) => a.sort_order - b.sort_order), [places]);
   const heads = useMemo(() => places.filter(p => p.kind === 'head' && p.active).sort((a, b) => a.sort_order - b.sort_order), [places]);
   const dayNotePlace = useMemo(() => places.find(p => p.kind === 'daynote' && p.active) ?? null, [places]);
+  // 大人シフト表の出張の細い列（kind='trip'・大人だけ）
+  const tripPlaces = useMemo(() => places.filter(p => p.kind === 'trip' && p.active), [places]);
+  /** 終わりが無い行の長さ（行の種類ごと・管理画面で直せる） */
+  const defMinOf = useCallback((k: string) => data?.rowKinds.find(r => r.key === k)?.default_minutes ?? (isAdult ? 30 : 50), [data, isAdult]);
+  /** ⚠️・重なりの判定に渡す中身。🚨 大人は前後半と終わりの無い行の時間を埋めてから渡す（判定はこどもと同じものを使う） */
+  const judgedCell = useCallback((placeId: string, d: string): KidsCellValue =>
+    (isAdult ? withPersonSpans(shownCell(placeId, d), defMinOf) : shownCell(placeId, d)), [isAdult, shownCell, defMinOf]);
   // 勉強会（2026-10-07）。その曜日に効いている版を、同じ校・同じ階の列に出す（階が無い勉強会はその校の最初の列）。
   // 🚨 kind='study' の仮の行にして、帯・共通の人の判定に使う（保存はしない・マスの中身にも入れない）
   const studyColumnOf = useCallback((v: StudyVersion) =>
@@ -282,14 +300,19 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     if (!data) return [];
     const place = data.places.find(p => p.id === placeId);
     return kidsCellIssues(
-      placeId, d, shownCell(placeId, d),
+      placeId, d, judgedCell(placeId, d),
       uid => shiftDayOn(rowsByUser.get(uid) ?? [], d, baseDate) ?? null,
       k => data.rowKinds.find(r => r.key === k)?.issue_mode ?? 'full',
       new Map(data.staff.map(s => [s.id, data.labels.get(s.id) || s.name])),
       inactive,
       place?.school ?? null,
     );
-  }, [data, shownCell, rowsByUser, baseDate, inactive]);
+  }, [data, judgedCell, rowsByUser, baseDate, inactive]);
+
+  /** ⚠️ を見る置き場所（こども＝列・校の見出し・共通の人／大人＝クラスの列・出張） */
+  const issuePlaces = useMemo(() => (isAdult
+    ? [...activeColumns, ...tripPlaces]
+    : activeColumns.concat(heads, poolPlaces)), [isAdult, activeColumns, tripPlaces, heads, poolPlaces]);
 
   /** その ⚠️ が「確認した」になっているか。
    *  🚨 案を見ているときは案のマス、決定済みの表を見ているときはそのマスに付く（別々に数える） */
@@ -313,13 +336,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   /** ⚠️ の数（確認済みを除いたもの／確認済みの数）。見出しの「⚠️ 5件（確認済み 3）」に使う */
   const issueCount = useMemo(() => {
     let open = 0, acked = 0;
-    for (const d of KIDS_WEEK) for (const p of activeColumns.concat(data?.places.filter(x => x.kind === 'head' && x.active) ?? [], poolPlaces)) {
+    for (const d of KIDS_WEEK) for (const p of issuePlaces) {
       for (const i of issuesOf(p.id, d)) {
         if (isAcked(p.id, d, i.key)) acked++; else open++;
       }
     }
     return { open, acked };
-  }, [activeColumns, data, issuesOf, isAcked, poolPlaces]);
+  }, [issuePlaces, issuesOf, isAcked]);
 
   const ackIssue = async (placeId: string, d: RosterDayKind, key: string) => {
     const o = ackOwner(placeId, d);
@@ -334,28 +357,38 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const diffCount = useMemo(() => {
     if (!compareWith) return 0;
     let n = 0;
-    for (const d of KIDS_WEEK) for (const p of activeColumns) if (isDiff(p.id, d)) n++;
+    for (const d of KIDS_WEEK) for (const p of (isAdult ? [...activeColumns, ...tripPlaces] : activeColumns)) if (isDiff(p.id, d)) n++;
     return n;
-  }, [compareWith, activeColumns, isDiff]);
-  const overlaps = useMemo(() => {
+  }, [compareWith, activeColumns, tripPlaces, isAdult, isDiff]);
+  // 重なり。names＝相手の呼び名（大人は同じ列の中の行どうしも比べるので、行ごとに名前を付ける）
+  const overlapData = useMemo(() => {
     const out: { day: RosterDayKind; userId: string; a: string; b: string; start: string; end: string }[] = [];
+    const names = new Map<string, string>();
     for (const d of KIDS_WEEK) {
-      const sources = activeColumns.map(p => ({ placeId: p.id, items: shownCell(p.id, d) }));
+      // 🚨 大人は1つの列（6F）にすべてのクラスが入るので、行ごとに分けて渡す（同じ列の中の掛け持ちも重なり）。
+      //    前半と後半の人は personSpanOf の時間で比べる（同じ人が前半サポート・後半担当でも重ならない）
+      const sources = isAdult
+        ? [...activeColumns, ...tripPlaces].flatMap(p => judgedCell(p.id, d).map((it, i) => {
+          const id = `${p.id}#${i}`;
+          names.set(id, `${normTime(it.start)} ${it.class_name || (data?.rowKinds.find(r => r.key === it.kind)?.label ?? '')}`.trim());
+          return { placeId: id, items: [it] };
+        }))
+        : activeColumns.map(p => ({ placeId: p.id, items: shownCell(p.id, d) }));
       for (const o of overlapsOfDay(d, sources)) {
         out.push({ day: d, userId: o.userId, a: o.aPlaceId, b: o.bPlaceId, start: o.start, end: o.end });
       }
     }
-    return out;
-  }, [activeColumns, shownCell]);
-
+    return { list: out, names };
+  }, [activeColumns, tripPlaces, isAdult, judgedCell, shownCell, data]);
+  const overlaps = overlapData.list;
 
   const offOfDay = useCallback((d: RosterDayKind) => {
     if (!data) return [];
-    return offStaffOfDay(data.staff, uid => {
-      const rows = rowsByUser.get(uid) ?? [];
-      return !!shiftDayOn(rows, d, baseDate)?.segments?.length;
-    });
-  }, [data, rowsByUser, baseDate]);
+    const has = (uid: string) => !!shiftDayOn(rowsByUser.get(uid) ?? [], d, baseDate)?.segments?.length;
+    // 🚨 大人の休みの行＝メインの部門が大人の人（正社員もパートも・2026-10-06 ユーザー確定）で、その曜日に勤務予定がない人
+    if (isAdult) return data.staff.filter(s => s.is_active && (s.main_area ?? '') === '大人' && !has(s.id));
+    return offStaffOfDay(data.staff, has);
+  }, [data, rowsByUser, baseDate, isAdult]);
 
   // ─── 保存 ───
   const isPast = !plan && applyFrom < today;
@@ -372,7 +405,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     if (token == null) return;
     setSaving(true); setSaveErr(''); setSaveMsg('');
     const r = await saveKidsCells({
-      apply_from: applyFrom, base_token: token, confirm_past: isPast,
+      board, apply_from: applyFrom, base_token: token, confirm_past: isPast,
       cells: toPayloadCells(changedKeys.map(k => {
         const [placeId, d] = k.split('|');
         return { placeId, day: d, items: viewDrafts[k] };
@@ -382,7 +415,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     if (r.error) { setSaveErr(`保存できませんでした：${r.error}`); return; }
     if (!r.ok && r.reason === 'stale') {
       setStale(true); setConfirming(false);
-      setSaveErr('開いたあとに、別の人がこどもシフト表を保存しました。上書きしないよう保存を止めました。「読み込み直す」を押すと、直した内容は残したまま最新の状態と比べ直せます。');
+      setSaveErr(`開いたあとに、別の人が${boardName}を保存しました。上書きしないよう保存を止めました。「読み込み直す」を押すと、直した内容は残したまま最新の状態と比べ直せます。`);
       return;
     }
     if (!r.ok) { setSaveErr('保存できませんでした（今日より前の日付の確認が必要です）'); return; }
@@ -421,7 +454,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     if (!newPlan) return;
     if (!newPlan.name.trim()) { setPanelErr('案の名前を入れてください'); return; }
     setPanelErr('');
-    const r = await savePlan({ op: 'create', name: newPlan.name.trim(), apply_from: newPlan.from, copy_from: newPlan.copy || null });
+    const r = await savePlan({ op: 'create', board, name: newPlan.name.trim(), apply_from: newPlan.from, copy_from: newPlan.copy || null });
     if (r.error) { setPanelErr(`作れませんでした：${r.error}`); return; }
     if (!r.ok && r.reason === 'plan_limit') { setPanelErr(`作業中の案が${r.limit}個あります。使わない案を［この案を使わない］で過去の案に移してから、新しい案を作ってください。`); return; }
     if (!r.ok) { setPanelErr(`作れませんでした（${r.reason ?? ''}）`); return; }
@@ -625,8 +658,26 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
             </>
           )}
           {kind?.has_class && (
-            <input type="text" value={it.class_name} maxLength={30} placeholder="クラス名（例：リトル）" style={{ ...inputStyle, width: 140 }}
+            <input type="text" value={it.class_name} maxLength={30}
+              placeholder={it.kind === ADULT_TRIP_KIND ? '出張先（例：上牧）' : isAdult ? 'クラス名（例：中級）' : 'クラス名（例：リトル）'}
+              style={{ ...inputStyle, width: 140 }}
               onChange={e => setItem({ class_name: e.target.value })} />
+          )}
+          {/* 大人のクラス：前後半の境（空ならちょうど半分）・映像（2026-10-06 ユーザー確定） */}
+          {isAdult && it.kind === ADULT_CLASS_KIND && (
+            <>
+              <span style={{ fontSize: 12, color: subText }}>
+                前後半の境
+                <input type="time" step={300} value={it.split_time} style={{ ...inputStyle, width: 104, marginLeft: 4 }}
+                  onChange={e => setItem({ split_time: e.target.value })} />
+                {!it.split_time && splitMinOf(it) != null && `（空＝${minText(splitMinOf(it)!)}）`}
+              </span>
+              <select value={it.video ?? ''} style={inputStyle} onChange={e => setItem({ video: (e.target.value || null) as KidsItem['video'] })}>
+                <option value="">映像なし</option>
+                <option value="first">映像（前半）</option>
+                <option value="second">映像（後半）</option>
+              </select>
+            </>
           )}
           {kind?.has_groups && (
             <>
@@ -656,12 +707,17 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
             </label>
           )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-            <button type="button" style={linkBtn} disabled={i === 0}
-              onClick={() => setCell(placeId, d, all.map((x, j) => (j === i - 1 ? all[i] : j === i ? all[i - 1] : x)))}>▲</button>
-            <button type="button" style={linkBtn} disabled={i === all.length - 1}
-              onClick={() => setCell(placeId, d, all.map((x, j) => (j === i + 1 ? all[i] : j === i ? all[i + 1] : x)))}>▼</button>
+            {/* 大人は表に時刻の順で出るので、並べ替えは出さない */}
+            {!isAdult && (
+              <>
+                <button type="button" style={linkBtn} disabled={i === 0}
+                  onClick={() => setCell(placeId, d, all.map((x, j) => (j === i - 1 ? all[i] : j === i ? all[i - 1] : x)))}>▲</button>
+                <button type="button" style={linkBtn} disabled={i === all.length - 1}
+                  onClick={() => setCell(placeId, d, all.map((x, j) => (j === i + 1 ? all[i] : j === i ? all[i + 1] : x)))}>▼</button>
+              </>
+            )}
             <button type="button" aria-label="この行を消す" style={{ ...linkBtn, color: red }}
-              onClick={() => setCell(placeId, d, all.filter((_, j) => j !== i))}>✕ 消す</button>
+              onClick={() => { setCell(placeId, d, all.filter((_, j) => j !== i)); setBandIdx(prev => (prev ? prev.filter(j => j !== i).map(j => (j > i ? j - 1 : j)) : prev)); }}>✕ 消す</button>
           </span>
         </div>
 
@@ -679,10 +735,17 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                   ))}
                 </select>
                 <select value={p.role} style={inputStyle} onChange={e => setPerson(pi, { role: e.target.value as KidsPerson['role'] })}>
-                  <option value="lead">担当</option>
-                  <option value="onduty">（ ）出勤・レッスンに入らない（事務など）</option>
-                  <option value="support">サポート</option>
-                  <option value="watch">【 】見守り（レッスンに入らない）</option>
+                  {isAdult ? (
+                    // 大人：クラスは前半／後半・補助。P・映像・事務・出張は担当だけ
+                    (it.kind === ADULT_CLASS_KIND ? ADULT_ROLES : ADULT_ROLES.slice(0, 1)).map(r => <option key={r.key} value={r.key}>{r.label}</option>)
+                  ) : (
+                    <>
+                      <option value="lead">担当</option>
+                      <option value="onduty">（ ）出勤・レッスンに入らない（事務など）</option>
+                      <option value="support">サポート</option>
+                      <option value="watch">【 】見守り（レッスンに入らない）</option>
+                    </>
+                  )}
                 </select>
                 <input type="time" step={300} value={p.start} style={{ ...inputStyle, width: 110 }} onChange={e => setPerson(pi, { start: e.target.value })} />
                 <span style={{ color: subText, fontSize: 12 }}>〜</span>
@@ -694,7 +757,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
             ))}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button type="button" disabled={it.people.length >= 12}
-                onClick={() => setItem({ people: [...it.people, { user_id: '', role: 'lead', start: '', end: '' }] })}
+                onClick={() => setItem({
+                  // 大人のクラスは、前半の担当がもういれば次は後半の担当を初めに選んでおく
+                  people: [...it.people, { user_id: '', role: isAdult && it.kind === ADULT_CLASS_KIND && it.people.some(p => p.role === 'lead') && !it.people.some(p => p.role === 'second') ? 'second' : 'lead', start: '', end: '' }],
+                })}
                 style={{ background: 'none', border: `1px dashed ${borderColor}`, borderRadius: 6, cursor: 'pointer', padding: '3px 8px', fontSize: 12, color: '#0d6efd' }}>
                 ＋ 人を足す
               </button>
@@ -713,7 +779,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           </div>
         )}
 
-        <input type="text" value={it.note} maxLength={200} placeholder={isNote ? '書き添え（例：今田・奥村ー誰か休みの時、各校に午前中出勤可能）' : '書き添え（例：（月1回）・定員5・打合せ4階）'}
+        <input type="text" value={it.note} maxLength={200} placeholder={isNote ? '書き添え（例：今田・奥村ー誰か休みの時、各校に午前中出勤可能）' : isAdult ? '書き添え' : '書き添え（例：（月1回）・定員5・打合せ4階）'}
           style={{ ...inputStyle, width: '100%', marginTop: 6 }} onChange={e => setItem({ note: e.target.value })} />
         {place?.kind === 'column' && (kind?.has_groups ?? false) && (() => {
           if (it.use_pool && isPoolColumn(place)) {
@@ -731,23 +797,32 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     );
   };
 
-  const cellEditor = (placeId: string, d: RosterDayKind) => {
+  /** マスの入力。bands と band を渡すと（大人シフト表）、その時刻の帯の行だけを出し、足す行の時刻をその帯にする */
+  const cellEditor = (placeId: string, d: RosterDayKind, bands: KidsBand[] = [], band: number | null = null) => {
     const place = places.find(p => p.id === placeId);
     if (place?.kind === 'pool') return poolEditor(placeId, d);
     const v = shownCell(placeId, d);
     const k = cellKey(placeId, d);
     const kinds = place?.kind === 'head' ? [{ key: 'role', label: '見出しの役割' }]
       : place?.kind === 'daynote' ? [{ key: 'daynote', label: '曜日の書き添え' }]
-      : data.rowKinds.filter(r => r.active).map(r => ({ key: r.key, label: r.label }));
+      : place?.kind === 'trip' ? data.rowKinds.filter(r => r.active && r.key === ADULT_TRIP_KIND).map(r => ({ key: r.key, label: r.label }))
+      : data.rowKinds.filter(r => r.active && !(isAdult && r.key === ADULT_TRIP_KIND)).map(r => ({ key: r.key, label: r.label }));
+    const useBand = band != null && bands[band] != null && bandIdx != null && bandFor === k && place?.kind !== 'daynote';
+    const inBand = (i: number) => !useBand || bandIdx!.includes(i);
+    const bandStart = useBand ? normTime(minText(bands[band!].from)) : '';
+    const shownCount = v.filter((_, i) => inBand(i)).length;
     return (
       <div style={{ padding: '10px 12px', borderRadius: 10, border: '2px solid #1976d2', background: cardBg, textAlign: 'left', fontSize: 13, color: text, marginTop: 10 }}>
-        <b>{place?.label}（{ROSTER_DAY_LABEL[d]}）</b>
+        <b>{place?.label}（{ROSTER_DAY_LABEL[d]}）{useBand ? ` ・${bands[band!].label} の帯` : ''}</b>
+        {useBand && v.length > shownCount && (
+          <button type="button" style={{ ...linkBtn, marginLeft: 8 }} onClick={() => { setOpenBand(null); setBandIdx(null); }}>この曜日のすべてを出す（{v.length}）</button>
+        )}
         <div style={{ marginTop: 8 }}>
-          {v.length === 0 && <div style={{ color: subText, marginBottom: 6 }}>まだ何も入っていません</div>}
-          {v.map((it, i) => itemEditor(placeId, d, it, i, v))}
+          {shownCount === 0 && <div style={{ color: subText, marginBottom: 6 }}>まだ何も入っていません</div>}
+          {v.map((it, i) => (inBand(i) ? itemEditor(placeId, d, it, i, v) : null))}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
             {kinds.map(kd => (
-              <button key={kd.key} type="button" onClick={() => setCell(placeId, d, [...v, emptyItem(kd.key)])}
+              <button key={kd.key} type="button" onClick={() => { setCell(placeId, d, [...v, { ...emptyItem(kd.key), start: bandStart }]); if (useBand) setBandIdx(prev => (prev ? [...prev, v.length] : prev)); }}
                 style={{ background: 'none', border: `1px dashed ${borderColor}`, borderRadius: 6, cursor: 'pointer', padding: '3px 8px', fontSize: 12, color: '#0d6efd' }}>
                 ＋ {kd.label}
               </button>
@@ -1027,6 +1102,191 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     );
   };
 
+  // ─── 大人シフト表の表（2026-10-07・docs/計画-大人シフト表.md §3） ───
+  // 縦＝時刻の帯（その週のクラスの開始時刻から自動・近い時刻はまとめる）、横＝月〜土（日は中身があるときだけ）＋曜日ごとに出張の細い列。
+  // マス＝上 時刻とクラス名／担当（大きい字「前半(サポート)/後半」）／補助、下 別の仕事［P］［映］［事］と勉強会［勉］（自動）。
+  // Jr合同は灰色の帯。🚨 マスの文字は lib/adultShift.ts の adultLines 1つ（PDF も同じものを使う）
+  const adultGrid = () => {
+    const main = activeColumns[0] ?? null;
+    if (!main) return <p style={{ color: subText, fontSize: 13 }}>大人シフト表の列がまだありません（「列の一覧」を確かめてください）</p>;
+    const trip = tripPlaces[0] ?? null;
+    const has = (pid: string | null, d: RosterDayKind) => !!pid && shownCell(pid, d).length > 0;
+    const days = KIDS_WEEK.filter(d => d !== 'sun' || has(main.id, d) || has(trip?.id ?? null, d) || !!openKey?.endsWith('|sun'));
+    let bands = bandsOfDay(days.map(d => ({ placeId: d, items: shownCell(main.id, d) })), it => it.kind === ADULT_CLASS_KIND);
+    if (bands.length === 0) bands = [{ from: 0, to: null, label: '' }];
+    const jrBg = isDarkMode ? '#4a4a46' : '#e4e3df';
+    const jrText = isDarkMode ? '#e8e6df' : '#444441';
+    // 勉強会：部門が大人のもの＋その曜日に大人シフト表に入っている人が入るもの（自動・ここでは直せない）
+    const adultArea = roster.areas.find(a => a.name === '大人')?.id ?? null;
+    const studiesOf = (d: RosterDayKind) => {
+      const people = new Set([...shownCell(main.id, d), ...(trip ? shownCell(trip.id, d) : [])].flatMap(it => it.people.map(p => p.user_id)));
+      return versionsOnDate(studyVersions, baseDate)
+        .filter(v => v.day_kind === d && ((adultArea != null && v.area_id === adultArea) || v.members.some(u => people.has(u))))
+        .sort((a, b) => studyStartMin(a) - studyStartMin(b));
+    };
+    const studyLinesAt = (d: RosterDayKind, bi: number) => studiesOf(d)
+      .filter(v => bandIndexOf({ ...emptyItem('study'), start: minText(studyStartMin(v)) }, bands) === bi)
+      .map(v => `${studyLabel(v, studyNames)}［勉］`);
+    const open = (pid: string, d: RosterDayKind, bi: number | null) => {
+      const k = cellKey(pid, d);
+      if (openKey === k && openBand === bi) { setOpenKey(null); return; }
+      setOpenKey(k); setOpenBand(bi); setBandFor(bi == null ? null : k);
+      setBandIdx(bi == null ? null : shownCell(pid, d).map((it, i) => ({ it, i })).filter(x => bandIndexOf(x.it, bands) === bi).map(x => x.i));
+    };
+    const lineStyle = (l: AdultLine, i: number, lines: AdultLine[]): React.CSSProperties => ({
+      fontSize: l.kind === 'staff' ? 14 : l.kind === 'head' || l.kind === 'trip' ? 11.5 : l.kind === 'note' ? 11 : 12,
+      fontWeight: l.kind === 'staff' || (l.jr && l.kind === 'head') ? 'bold' : 'normal',
+      color: l.jr ? jrText : l.kind === 'head' || l.kind === 'note' ? subText : text,
+      background: l.jr ? jrBg : undefined,
+      padding: l.jr ? '0 3px' : undefined,
+      lineHeight: 1.4,
+      // 下の段（別の仕事）の始まりに点線
+      borderTop: l.kind === 'job' && i > 0 && lines[i - 1].kind !== 'job' && lines[i - 1].kind !== 'note' ? `1px dashed ${borderColor}` : undefined,
+      marginTop: l.kind === 'head' && i > 0 ? 3 : undefined,
+    });
+    const cellBody = (lines: AdultLine[], baseLines: AdultLine[], changed: boolean) => {
+      const marked = changed ? diffLines(lines.map(l => l.text), baseLines.map(l => l.text)) : null;
+      return (
+        <>
+          {lines.map((l, i) => <div key={i} style={lineStyle(l, i, lines)}>{marked ? renderMarked(marked.lines[i]) : l.text}</div>)}
+          {marked && renderRemoved(marked.removed, true)}
+        </>
+      );
+    };
+    const outline = (k: string, bi: number | null) => (openKey === k && openBand === bi ? '2px solid #1976d2' : 'none');
+    const dayW = 150;
+    const tripW = 64;
+    return (
+      <>
+        {stale && (
+          <div style={{ ...warnCard, marginBottom: 8 }}>
+            {saveErr}
+            <button type="button" style={{ ...primaryBtn, marginLeft: 8 }} onClick={() => void load(true)}>読み込み直す</button>
+          </div>
+        )}
+        {studyErr && <div style={{ ...warnCard, marginBottom: 6 }}>{studyErr}</div>}
+        <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
+          マスを押すと、その曜日・その時刻の帯の行を入れられます（曜日の見出しを押すと、その曜日のすべて）。
+          勉強会［勉］は勉強会の表から自動で出ます（ここでは直せません）。
+        </div>
+        <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 56 + days.length * (dayW + (trip ? tripW : 0)), tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 56 }} />
+              {days.map(d => (
+                <React.Fragment key={d}>
+                  <col style={{ width: dayW }} />
+                  {trip && <col style={{ width: tripW }} />}
+                </React.Fragment>
+              ))}
+            </colgroup>
+            <thead>
+              <tr style={{ background: innerBg }}>
+                <th style={{ padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, fontSize: 12, color: subText }}>時刻</th>
+                {days.map(d => {
+                  const ids = [main.id, ...(trip ? [trip.id] : [])];
+                  const warn = ids.reduce((n, id) => n + issuesOf(id, d).filter(i => !isAcked(id, d, i.key)).length, 0);
+                  const diff = ids.some(id => isDiff(id, d));
+                  const dirty = ids.some(id => changedKeys.includes(cellKey(id, d)));
+                  return (
+                    <React.Fragment key={d}>
+                      <th onClick={() => open(main.id, d, null)}
+                        style={{
+                          padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 12.5, color: text, cursor: 'pointer',
+                          outline: dirty ? '2px solid #e65100' : outline(cellKey(main.id, d), null), outlineOffset: -2,
+                        }}>
+                        {ROSTER_DAY_LABEL[d]}{warn > 0 ? ' ⚠️' : ''}{diff ? ' ≠' : ''}
+                      </th>
+                      {trip && (
+                        <th onClick={() => open(trip.id, d, null)}
+                          style={{ padding: '6px 2px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px dashed ${borderColor}`, fontSize: 11, color: subText, cursor: 'pointer', outline: outline(cellKey(trip.id, d), null), outlineOffset: -2 }}>
+                          出張
+                        </th>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {bands.map((b, bi) => (
+                <tr key={bi}>
+                  <td style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 12.5, fontWeight: 'bold', color: text, background: innerBg }}>{b.label}</td>
+                  {days.map(d => {
+                    const items = itemsByBand(shownCell(main.id, d), bands)[bi] ?? [];
+                    const baseItems = itemsByBand(baseCell(main.id, d), bands)[bi] ?? [];
+                    const changed = markScreen && sigOfItems(items) !== sigOfItems(baseItems);
+                    const study = studyLinesAt(d, bi);
+                    const tItems = trip ? itemsByBand(shownCell(trip.id, d), bands)[bi] ?? [] : [];
+                    const tBase = trip ? itemsByBand(baseCell(trip.id, d), bands)[bi] ?? [] : [];
+                    const tChanged = markScreen && sigOfItems(tItems) !== sigOfItems(tBase);
+                    return (
+                      <React.Fragment key={d}>
+                        <td onClick={() => open(main.id, d, bi)}
+                          style={{
+                            padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
+                            color: text, ...changeCellStyle(changed), outline: outline(cellKey(main.id, d), bi), outlineOffset: -2,
+                          }}>
+                          {cellBody(adultLines(items, nameOf), adultLines(baseItems, nameOf), changed)}
+                          {study.map((l, i) => (
+                            <div key={`s${i}`} style={{ fontSize: 11.5, color: subText, borderTop: i === 0 && items.length > 0 ? `1px dashed ${borderColor}` : undefined }}
+                              title="勉強会の表から自動で出ています（ここでは直せません）">{l}</div>
+                          ))}
+                        </td>
+                        {trip && (
+                          <td onClick={() => open(trip.id, d, bi)}
+                            style={{
+                              padding: '3px 2px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px dashed ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
+                              color: text, ...changeCellStyle(tChanged), outline: outline(cellKey(trip.id, d), bi), outlineOffset: -2,
+                            }}>
+                            {cellBody(adultLines(tItems, nameOf), adultLines(tBase, nameOf), tChanged)}
+                          </td>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+              {dayNotePlace && (
+                <tr>
+                  <td style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, fontSize: 11.5, color: subText, background: innerBg }}>書き添え</td>
+                  {days.map(d => {
+                    const notes = shownCell(dayNotePlace.id, d).map(i => i.note).filter(Boolean);
+                    const changed = markScreen && !cellEquals(shownCell(dayNotePlace.id, d), baseCell(dayNotePlace.id, d));
+                    return (
+                      <td key={d} colSpan={trip ? 2 : 1} onClick={() => open(dayNotePlace.id, d, null)}
+                        style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 11.5, color: notes.length ? text : subText, cursor: 'pointer', ...changeCellStyle(changed), outline: outline(cellKey(dayNotePlace.id, d), null), outlineOffset: -2 }}>
+                        {notes.join('／') || '＋'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              )}
+              <tr>
+                <td style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, fontSize: 11.5, color: subText, background: innerBg }}>休み</td>
+                {days.map(d => (
+                  <td key={d} colSpan={trip ? 2 : 1} style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 11.5, color: text }}>
+                    {offOfDay(d).map(s => nameOf(s.id)).join('・') || <span style={{ color: subText }}>—</span>}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6, fontSize: 12, color: subText }}>
+          <span>休み＝メインの部門が大人の人で、その曜日に勤務予定がない人（週のシフトから自動）</span>
+          {!days.includes('sun') && (
+            <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => open(main.id, 'sun', null)}>＋ 日曜に入れる</button>
+          )}
+        </div>
+        {openKey && (() => {
+          const [pid, d] = openKey.split('|');
+          return cellEditor(pid, d as RosterDayKind, bands, openBand);
+        })()}
+      </>
+    );
+  };
+
   return (
     <div>
       {/* 表・案の切り替え */}
@@ -1121,13 +1381,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         </label>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+      {!isAdult && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
         <button type="button" style={toggle(viewMode === 'day')} onClick={() => setViewMode('day')}>曜日で見る</button>
         <button type="button" style={toggle(viewMode === 'person')} onClick={() => { setViewMode('person'); setOpenKey(null); }}>人ごとに見る</button>
         {viewMode === 'person' && <span style={{ fontSize: 12, color: subText }}>見るだけです。マスを押すと、その曜日の表のマスが開きます</span>}
-      </div>
-      {viewMode === 'person' && personTable()}
-      {viewMode === 'day' && (<>
+      </div>}
+      {!isAdult && viewMode === 'person' && personTable()}
+      {isAdult && adultGrid()}
+      {!isAdult && viewMode === 'day' && (<>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
         {KIDS_WEEK.map(d => (
           <button key={d} type="button" style={toggle(day === d)} onClick={() => { setDay(d); setOpenKey(null); }}>
@@ -1304,7 +1565,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
 
       {/* 追加必要・重なり */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-        <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
+        {!isAdult && <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
           <b style={{ fontSize: 13, color: text }}>追加必要 {shortfalls.length} 件</b>
           <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>レッスンが回るのに足りない人数です。</div>
           {shortfalls.slice(0, 12).map((s, i) => (
@@ -1329,13 +1590,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
               {'\u3000あと '}{x.r.need - x.r.common.length} 人（共通 {x.r.common.length}人／要る {x.r.need}）
             </div>
           ))}
-        </div>
+        </div>}
         <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
           <b style={{ fontSize: 13, color: text }}>重なり {overlaps.length} 件</b>
           <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>同じ人が同じ時間に2か所へ入っています。</div>
           {overlaps.slice(0, 12).map((o, i) => (
             <div key={i} style={{ fontSize: 12.5, color: text, marginTop: 3 }}>
-              {ROSTER_DAY_LABEL[o.day]} {nameOf(o.userId)} {o.start}〜{o.end}（{placeLabel(o.a)}・{placeLabel(o.b)}）
+              {ROSTER_DAY_LABEL[o.day]} {nameOf(o.userId)} {o.start}〜{o.end}（{overlapData.names.get(o.a) ?? placeLabel(o.a)}・{overlapData.names.get(o.b) ?? placeLabel(o.b)}）
             </div>
           ))}
           {overlaps.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {overlaps.length - 12} 件</div>}
@@ -1354,7 +1615,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         </div>
         {(() => {
           const all = KIDS_WEEK.flatMap(d =>
-            (activeColumns.concat((data?.places ?? []).filter(x => x.kind === 'head' && x.active), poolPlaces))
+            issuePlaces
               .flatMap(p => issuesOf(p.id, d).map(i => ({ d, p, i, acked: isAcked(p.id, d, i.key) }))));
           const open = all.filter(x => !x.acked);
           if (all.length === 0) return <div style={{ fontSize: 12.5, color: subText, marginTop: 4 }}>ありません</div>;
@@ -1391,10 +1652,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         )}
         {changedKeys.length > 0 && <span style={{ fontSize: 12.5, color: '#e65100' }}>未保存のマス {changedKeys.length}</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'pdf' ? 'none' : 'pdf'))}>PDF</button>
+          {!isAdult && <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'pdf' ? 'none' : 'pdf'))}>PDF</button>}
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'places' ? 'none' : 'places'))}>列の一覧</button>
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'kinds' ? 'none' : 'kinds'))}>行の種類・書き添え</button>
-          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'people' ? 'none' : 'people'))}>レッスンできる人</button>
+          {!isAdult && <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'people' ? 'none' : 'people'))}>レッスンできる人</button>}
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'settings' ? 'none' : 'settings'))}>設定</button>
         </span>
       </div>
@@ -1518,7 +1779,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>🚨 マスが入っている列の校・階は変えられません（新しい列を足して、この列を隠してください）。</div>
           {places.map(p => (
             <div key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-              <span style={{ width: 90, color: subText, fontSize: 12 }}>{p.kind === 'column' ? '列' : p.kind === 'head' ? '校の見出し' : '曜日の書き添え'}</span>
+              <span style={{ width: 90, color: subText, fontSize: 12 }}>{p.kind === 'column' ? '列' : p.kind === 'head' ? '校の見出し' : p.kind === 'trip' ? '出張の列' : p.kind === 'pool' ? '共通の人' : '曜日の書き添え'}</span>
               <input type="text" defaultValue={p.label} maxLength={30} style={inputStyle}
                 onBlur={e => { if (e.target.value.trim() && e.target.value !== p.label) void savePlace({ id: p.id, label: e.target.value.trim() }).then(er => { setPanelErr(er ?? ''); return load(true); }); }} />
               <button type="button" style={linkBtn}
@@ -1588,6 +1849,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       {panel === 'settings' && (
         <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, fontSize: 13, color: text }}>
           <b>設定</b>
+          {!isAdult && <>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
             <span>レッスンできる人の確かめ</span>
             <button type="button" style={toggle(data.settings.lesson_check)}
@@ -1610,8 +1872,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
               <span>人</span>
             </div>
           ))}
+          </>}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
-            <span>作業中の案の上限</span>
+            <span>作業中の案の上限{isAdult ? '（こども・大人それぞれ）' : ''}</span>
             <input type="number" min={1} max={50} defaultValue={data.settings.plan_limit} style={{ ...inputStyle, width: 70 }}
               onBlur={e => void saveKidsSettings({ plan_limit: Number(e.target.value) }).then(er => { setPanelErr(er ?? ''); return load(true); })} />
             <span>個</span>
