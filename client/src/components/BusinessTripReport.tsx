@@ -175,8 +175,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
 
   useEffect(() => {
     Promise.all([
-      supabase.from('master_options').select('value, sort_order').eq('category', 'trip_category').order('sort_order'),
-      supabase.from('master_options').select('category, value, sort_order').like('category', 'trip_location_%').order('sort_order'),
+      // 終了にした区分・場所は選択肢に出さない（管理画面の［終了］・2026-10-07。これまでの報告は名前を文字で持つのでそのまま）
+      supabase.from('master_options').select('value, sort_order').eq('category', 'trip_category').is('ended_at', null).order('sort_order'),
+      supabase.from('master_options').select('category, value, sort_order').like('category', 'trip_location_%').is('ended_at', null).order('sort_order'),
     ]).then(([catRes, locRes]) => {
       if (catRes.data && catRes.data.length > 0) {
         setCategories(catRes.data.map(r => r.value));

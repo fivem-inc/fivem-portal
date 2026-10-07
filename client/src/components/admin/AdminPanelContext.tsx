@@ -178,24 +178,25 @@ export interface AdminPanelContextType {
   expandedTripYearMonths: Set<string>; setExpandedTripYearMonths: React.Dispatch<React.SetStateAction<Set<string>>>;
   tripReportFilter: 'all' | '到着' | '終了'; setTripReportFilter: React.Dispatch<React.SetStateAction<'all' | '到着' | '終了'>>;
   showLocationEditor: boolean; setShowLocationEditor: React.Dispatch<React.SetStateAction<boolean>>;
-  tripCategories: { id: number; value: string; sort_order: number }[];
-  locationOptions: { id: number; category: string; value: string; sort_order: number }[];
+  tripCategories: { id: number; value: string; sort_order: number; ended_at?: string | null }[];
+  locationOptions: { id: number; category: string; value: string; sort_order: number; ended_at?: string | null }[];
   newLocationByCategory: Record<string, string>; setNewLocationByCategory: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   newCategoryName: string; setNewCategoryName: React.Dispatch<React.SetStateAction<string>>;
   renamingCategoryId: number | null; setRenamingCategoryId: React.Dispatch<React.SetStateAction<number | null>>;
   renamingCategoryValue: string; setRenamingCategoryValue: React.Dispatch<React.SetStateAction<string>>;
   fetchTripReports: () => Promise<void>;
   fetchLocationEditor: () => Promise<void>;
+  renameTripCategory: (id: string, oldName: string, newName: string) => Promise<string | null>;
   handleAddCategory: () => Promise<void>;
   handleDeleteCategory: (id: number, name: string) => Promise<void>;
   handleRenameCategory: (id: number, oldName: string) => Promise<void>;
   handleAddLocation: (categoryName: string) => Promise<void>;
   handleDeleteLocation: (id: number) => Promise<void>;
-  workplaceOptions: { id: number; value: string; sort_order: number }[];
+  workplaceOptions: { id: number; value: string; sort_order: number; ended_at?: string | null }[];
   newWorkplaceName: string; setNewWorkplaceName: React.Dispatch<React.SetStateAction<string>>;
   handleAddWorkplace: () => Promise<void>;
   handleDeleteWorkplace: (id: number) => Promise<void>;
-  customExpenseTypes: { id: number; value: string; sort_order: number }[];
+  customExpenseTypes: { id: number; value: string; sort_order: number; ended_at?: string | null }[];
   newExpenseTypeName: string; setNewExpenseTypeName: React.Dispatch<React.SetStateAction<string>>;
   handleAddExpenseType: () => Promise<void>;
   handleDeleteExpenseType: (id: number) => Promise<void>;
@@ -340,15 +341,15 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [tripReportFilter, setTripReportFilter] = useState<'all' | '到着' | '終了'>('all');
 
   const [showLocationEditor, setShowLocationEditor] = useState(false);
-  const [tripCategories, setTripCategories] = useState<{ id: number; value: string; sort_order: number }[]>([]);
-  const [locationOptions, setLocationOptions] = useState<{ id: number; category: string; value: string; sort_order: number }[]>([]);
+  const [tripCategories, setTripCategories] = useState<{ id: number; value: string; sort_order: number; ended_at?: string | null }[]>([]);
+  const [locationOptions, setLocationOptions] = useState<{ id: number; category: string; value: string; sort_order: number; ended_at?: string | null }[]>([]);
   const [newLocationByCategory, setNewLocationByCategory] = useState<Record<string, string>>({});
   const [newCategoryName, setNewCategoryName] = useState('');
   const [renamingCategoryId, setRenamingCategoryId] = useState<number | null>(null);
   const [renamingCategoryValue, setRenamingCategoryValue] = useState('');
-  const [workplaceOptions, setWorkplaceOptions] = useState<{ id: number; value: string; sort_order: number }[]>([]);
+  const [workplaceOptions, setWorkplaceOptions] = useState<{ id: number; value: string; sort_order: number; ended_at?: string | null }[]>([]);
   const [newWorkplaceName, setNewWorkplaceName] = useState('');
-  const [customExpenseTypes, setCustomExpenseTypes] = useState<{ id: number; value: string; sort_order: number }[]>([]);
+  const [customExpenseTypes, setCustomExpenseTypes] = useState<{ id: number; value: string; sort_order: number; ended_at?: string | null }[]>([]);
   const [newExpenseTypeName, setNewExpenseTypeName] = useState('');
   const [expenseTypeLabels, setExpenseTypeLabels] = useState<{ id: number; value: string; sort_order: number }[]>([]);
   const [renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId] = useState<number | null>(null);
@@ -391,10 +392,10 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
 
   const fetchLocationEditor = async () => {
     const [catRes, locRes, wpRes, etRes, elRes] = await Promise.all([
-      supabase.from('master_options').select('id, value, sort_order').eq('category', 'trip_category').order('sort_order'),
-      supabase.from('master_options').select('id, category, value, sort_order').like('category', 'trip_location_%').order('category').order('sort_order'),
-      supabase.from('master_options').select('id, value, sort_order').eq('category', 'workplace').order('sort_order'),
-      supabase.from('master_options').select('id, value, sort_order').eq('category', 'expense_type').order('sort_order'),
+      supabase.from('master_options').select('id, value, sort_order, ended_at').eq('category', 'trip_category').order('sort_order'),
+      supabase.from('master_options').select('id, category, value, sort_order, ended_at').like('category', 'trip_location_%').order('category').order('sort_order'),
+      supabase.from('master_options').select('id, value, sort_order, ended_at').eq('category', 'workplace').order('sort_order'),
+      supabase.from('master_options').select('id, value, sort_order, ended_at').eq('category', 'expense_type').order('sort_order'),
       supabase.from('master_options').select('id, value, sort_order').eq('category', 'expense_type_label').order('sort_order'),
     ]);
     if (catRes.data) setTripCategories(catRes.data);
@@ -509,6 +510,12 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (error) { setErrorMsg('追加に失敗しました: ' + error.message); return; }
     setNewLocationByCategory(prev => ({ ...prev, [categoryName]: '' }));
     await fetchLocationEditor();
+  };
+
+  /** 区分の名前変更（MasterOptionList から呼ぶ・失敗したら理由を返す）。場所リストも1つのトランザクションで付け替える */
+  const renameTripCategory = async (id: string, oldName: string, newName: string): Promise<string | null> => {
+    const { error } = await supabase.rpc('rename_trip_category', { p_id: id, p_old_name: oldName, p_new_name: newName });
+    return error ? error.message : null;
   };
 
   const handleDeleteLocation = async (id: number) => {
@@ -1465,7 +1472,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,
       newCategoryName, setNewCategoryName, renamingCategoryId, setRenamingCategoryId,
       renamingCategoryValue, setRenamingCategoryValue,
-      fetchTripReports, fetchLocationEditor,
+      fetchTripReports, fetchLocationEditor, renameTripCategory,
       handleAddCategory, handleDeleteCategory, handleRenameCategory, handleAddLocation, handleDeleteLocation,
       workplaceOptions, newWorkplaceName, setNewWorkplaceName, handleAddWorkplace, handleDeleteWorkplace,
       customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,

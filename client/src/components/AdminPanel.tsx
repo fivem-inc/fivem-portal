@@ -25,6 +25,7 @@ import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
 // シフト管理（勤務表の一括編集・2026-09-15）。docs/計画-管理画面の開放.md の 5
 import ShiftManagementTab from './admin/ShiftManagementTab';
 import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
+import MasterOptionList from './admin/MasterOptionList';
 
 /** メール（Resend）の使用量。Edge Function resend-usage が返す形。
  *  🚨 上限（limit）も Resend から受け取る。こちらで 3,000 などと決め打ちしない（プラン変更に追従するため） */
@@ -58,9 +59,8 @@ const AdminPanelContent: React.FC = () => {
     fetchLeaveRequests, supabase,
     showLocationEditor, setShowLocationEditor,
     tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,
-    newCategoryName, setNewCategoryName, renamingCategoryId, setRenamingCategoryId,
-    renamingCategoryValue, setRenamingCategoryValue,
-    handleAddCategory, handleDeleteCategory, handleRenameCategory, handleAddLocation, handleDeleteLocation,
+    newCategoryName, setNewCategoryName, renameTripCategory, fetchLocationEditor,
+    handleAddCategory, handleDeleteCategory, handleAddLocation, handleDeleteLocation,
     workplaceOptions, newWorkplaceName, setNewWorkplaceName, handleAddWorkplace, handleDeleteWorkplace,
     customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
     expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
@@ -784,12 +784,9 @@ const AdminPanelContent: React.FC = () => {
                   )}
                 </div>
               ))}
-              {customExpenseTypes.map(et => (
-                <div key={et.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#3a4a3a' : '#e8f5e9', borderRadius: 6 }}>
-                  <span style={{ fontSize: 13 }}>＋ {et.value}</span>
-                  <button onClick={() => handleDeleteExpenseType(et.id)} style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                </div>
-              ))}
+              <MasterOptionList items={customExpenseTypes} isDarkMode={isDarkMode} canRename canEnd
+                dupMessage="同じ名前の区分がすでに存在します"
+                onDelete={it => handleDeleteExpenseType(it.id as number)} onChanged={fetchLocationEditor} />
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <input type="text" placeholder="区分名を追加（例: 研修）" value={newExpenseTypeName}
                   onChange={e => setNewExpenseTypeName(e.target.value)}
@@ -806,12 +803,9 @@ const AdminPanelContent: React.FC = () => {
                 🏫 行き先リスト
               </div>
               {workplaceOptions.length === 0 && <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>}
-              {workplaceOptions.map(wp => (
-                <div key={wp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
-                  <span style={{ fontSize: 13 }}>{wp.value}</span>
-                  <button onClick={() => handleDeleteWorkplace(wp.id)} style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                </div>
-              ))}
+              {/* 🚨 校の名前の変更・終了はここに出さない。勤務表・休暇・残業・シフト調整など多くの画面が校の名前で照合しているため */}
+              <MasterOptionList items={workplaceOptions} isDarkMode={isDarkMode}
+                onDelete={it => handleDeleteWorkplace(it.id as number)} onChanged={fetchLocationEditor} />
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <input type="text" placeholder="行き先を追加（例: 四条本校）" value={newWorkplaceName}
                   onChange={e => setNewWorkplaceName(e.target.value)}
@@ -826,31 +820,19 @@ const AdminPanelContent: React.FC = () => {
             <div style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 12, letterSpacing: 1 }}>
               ── 出張報告 ──────────────────
             </div>
+            <div style={{ fontSize: 12, color: isDarkMode ? '#ced4da' : '#6c757d', marginBottom: 12, lineHeight: 1.6 }}>
+              ▲▼で選択肢に出る順番を変えられます。［終了］にすると選択肢に出なくなります（これまでの報告はそのまま・［戻す］で元に戻せます）。
+              名前を変えても、これまでの報告は元の名前のままです。
+            </div>
 
             {/* ── 出張区分の管理 ── */}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
                 📍 出張区分の管理
               </div>
-              {tripCategories.map(cat => (
-                <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  {renamingCategoryId === cat.id ? (
-                    <>
-                      <input autoFocus value={renamingCategoryValue} onChange={e => setRenamingCategoryValue(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleRenameCategory(cat.id, cat.value); if (e.key === 'Escape') setRenamingCategoryId(null); }}
-                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '2px solid #007bff', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
-                      <button onClick={() => handleRenameCategory(cat.id, cat.value)} style={{ padding: '4px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>保存</button>
-                      <button onClick={() => setRenamingCategoryId(null)} style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>取消</button>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ flex: 1, fontSize: 14, padding: '5px 8px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>{cat.value}</span>
-                      <button onClick={() => { setRenamingCategoryId(cat.id); setRenamingCategoryValue(cat.value); }} style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>名前変更</button>
-                      <button onClick={() => handleDeleteCategory(cat.id, cat.value)} style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                    </>
-                  )}
-                </div>
-              ))}
+              <MasterOptionList items={tripCategories} isDarkMode={isDarkMode} canRename canEnd
+                onRename={renameTripCategory} dupMessage="同じ名前の区分がすでに存在します"
+                onDelete={it => handleDeleteCategory(it.id as number, it.value)} onChanged={fetchLocationEditor} />
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <input type="text" placeholder="新しい区分名を入力" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleAddCategory(); }}
@@ -868,15 +850,12 @@ const AdminPanelContent: React.FC = () => {
               return (
                 <div key={cat.id} style={{ marginBottom: 20 }}>
                   <div style={{ fontWeight: 'bold', fontSize: 14, marginBottom: 8, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 5, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>
-                    【{cat.value}】の場所リスト
+                    【{cat.value}】の場所リスト{cat.ended_at ? '（区分は終了）' : ''}
                   </div>
                   {items.length === 0 && <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>}
-                  {items.map(item => (
-                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
-                      <span style={{ fontSize: 13 }}>{item.value}</span>
-                      <button onClick={() => handleDeleteLocation(item.id)} style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                    </div>
-                  ))}
+                  <MasterOptionList items={items} isDarkMode={isDarkMode} canRename canEnd
+                    dupMessage="同じ名前の場所がすでにあります"
+                    onDelete={it => handleDeleteLocation(it.id as number)} onChanged={fetchLocationEditor} />
                   <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
                     <input type="text" placeholder={`${cat.value}の場所を追加`} value={newVal}
                       onChange={e => setNewLocationByCategory(prev => ({ ...prev, [cat.value]: e.target.value }))}

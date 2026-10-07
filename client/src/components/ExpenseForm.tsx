@@ -213,17 +213,19 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   // 区分・場所リストを取得
   useEffect(() => {
     const fetchMasterOptions = async () => {
-      const { data } = await supabase.from('master_options').select('category, value, sort_order').order('sort_order');
+      const { data } = await supabase.from('master_options').select('category, value, sort_order, ended_at').order('sort_order');
       if (data) {
         const locs: Record<string, string[]> = {};
-        data.filter(r => r.category.startsWith('trip_location_')).forEach(r => {
+        // 終了にした場所・区分は選択肢に出さない（管理画面の［終了］・2026-10-07）
+        const endedCats = new Set(data.filter(r => r.category === 'trip_category' && r.ended_at).map(r => r.value));
+        data.filter(r => r.category.startsWith('trip_location_') && !r.ended_at && !endedCats.has(r.category.replace('trip_location_', ''))).forEach(r => {
           const cat = r.category.replace('trip_location_', '');
           if (!locs[cat]) locs[cat] = [];
           locs[cat].push(r.value);
         });
         setLocationsByCategory(locs);
         setWorkplaceOptions(data.filter(r => r.category === 'workplace').map(r => r.value));
-        setCustomExpenseTypes(data.filter(r => r.category === 'expense_type').map(r => r.value));
+        setCustomExpenseTypes(data.filter(r => r.category === 'expense_type' && !r.ended_at).map(r => r.value));
         setExpenseTypeLabels(data.filter(r => r.category === 'expense_type_label').map(r => ({ sort_order: r.sort_order, value: r.value })));
       }
     };
