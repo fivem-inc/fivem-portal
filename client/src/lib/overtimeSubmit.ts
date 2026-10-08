@@ -11,8 +11,7 @@ import {
   timeToMin, minToTime, formatMin,
   payMonthPeriodLabel, payPeriodCloseCutoff, calcPayPeriodStartJst, jpDateLabel,
 } from './breakCalc';
-import type { WorkSegment, LegalCheckResult } from './breakCalc';
-import { legalBreakPlanMessage } from './breakCalc';
+import type { WorkSegment, PlanBreakCheck } from './breakCalc';
 import { normalShiftWindow } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import { isFullDayReport } from './overtimeTypes';
@@ -228,7 +227,7 @@ export interface ValidateInput {
    * 事前（予定）の申請のときだけ渡す、休憩の法律チェックの結果（2026-10-08 ユーザー確定）。
    * 足りなければ直すまで送れない。🚨 事後（実績）のときは渡さない＝本人は止めない（受理する人の画面に印が出る）
    */
-  plannedLegal?: LegalCheckResult | null;
+  plannedLegal?: PlanBreakCheck | null;
 }
 
 /**
@@ -315,7 +314,7 @@ export function validateOvertime(v: ValidateInput): string {
   if (v.breakManual && (v.breakManualMin === '' || isNaN(parseInt(v.breakManualMin, 10)) || parseInt(v.breakManualMin, 10) < 0)) {
     return '休憩時間（分）を入力してください';
   }
-  if (v.plannedLegal && !v.plannedLegal.ok) return legalBreakPlanMessage(v.plannedLegal);
+  if (v.plannedLegal && !v.plannedLegal.ok) return v.plannedLegal.message;
   if (!v.location) return '勤務地を選択してください';
   if (v.location === 'その他' && !v.locationCustom.trim()) return '勤務地を入力してください';
   if (v.location === '移動あり' && (!v.locMoveStart || !v.locMoveEnd)) return '移動元・移動先の校を選択してください';

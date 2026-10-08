@@ -534,9 +534,19 @@ const ShiftReportForm: React.FC<{
     });
   };
 
+  // 勤務の中で取る休憩（分）＝上司が勤怠カレンダーの予定に入れたもの（2026-10-08）。本人は入力しない。時刻を変えてもそのまま足す（ユーザー確定 A）。
+  // 自分の報告を直すときは、保存済みの休憩から自動の分を引いた残りを引き継ぐ（直したときに黙って消えないように）
+  const [inWorkBreak] = useState<number>(() => {
+    if (prefill?.plannedBreak) return prefill.plannedBreak;
+    if (editTarget && editTarget.break_minutes != null) {
+      const s0 = parseSegments(editTarget.actual_segments, editTarget.actual_start, editTarget.actual_end, editTarget.actual_outing_start, editTarget.actual_outing_end);
+      return Math.max(0, editTarget.break_minutes - calcSegsBreak(s0));
+    }
+    return 0;
+  });
   // 🚨 休憩は時間帯ごとに計算して合算する（残業ページと同じ）。
   // 最初〜最後の拘束で判定すると、中抜けの長い日に休憩を引きすぎる
-  const breakMin = !hasAbsence ? calcSegsBreak(actSegs) : 0;
+  const breakMin = !hasAbsence ? calcSegsBreak(actSegs) + inWorkBreak : 0;
   // 実労働＝勤務した時間帯の合計 − 休憩（時間帯の間の空き＝外出は最初から含まれない）
   const actOutingMin = Math.max(0, (actStart && actEnd ? toMin(actEnd) - toMin(actStart) : 0) - segMinutes(actSegs));
   const laborMin = !hasAbsence ? Math.max(0, segMinutes(actSegs) - breakMin) : 0;
@@ -1034,7 +1044,9 @@ const ShiftReportForm: React.FC<{
                 )}
                 {actStart && actEnd && laborMin > 0 && (
                   <div style={{ background: isDark ? '#1e3d2f' : '#dcfce7', borderRadius: 8, padding: '8px 12px' }}>
-                    <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分{actOutingMin > 0 ? `　＋　外出 ${formatMin(actOutingMin)}` : ''}　／　実労働 {formatMin(laborMin)}</div>
+                    {inWorkBreak > 0
+                      ? <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin + actOutingMin}分（勤務の中 {breakMin}分{actOutingMin > 0 ? `＋勤務と勤務の間 ${actOutingMin}分` : ''}）　／　実労働 {formatMin(laborMin)}</div>
+                      : <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分{actOutingMin > 0 ? `　＋　外出 ${formatMin(actOutingMin)}` : ''}　／　実労働 {formatMin(laborMin)}</div>}
                     {!noPlan && origMin > 0 && (
                       <div style={{ marginTop: 4 }}>
                         {types.includes('early_start') && toMin(origStart) > toMin(actStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#0891b2' }}>🌅 早出：{formatMin(toMin(origStart) - toMin(actStart))}</div>}
@@ -1838,6 +1850,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {prefill && (
               <div style={{ background: isDark ? '#1f2d3d' : '#eef6ff', border: '1px solid #90caf9', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13, color: text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span>📋 カレンダーの予定（{Number(prefill.date.slice(5, 7))}/{Number(prefill.date.slice(8, 10))} {ABSENCE_LABEL[prefill.calendarType] ?? ''}）から入れています。理由などを確かめて送ってください</span>
+                {prefill.notes && <span style={{ width: '100%', fontSize: 12, color: subText }}>予定の備考：{prefill.notes}</span>}
                 <button type="button" onClick={() => { setPrefill(null); setFormKey(k => k + 1); }} style={{ ...backBtn(isDark), marginLeft: 'auto', padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>やめる</button>
               </div>
             )}

@@ -16,6 +16,8 @@ export interface CalendarEntry {
   location: string | null;
   work_segments: { start: string; end: string; location: string }[] | null;
   notes: string | null;
+  /** 勤務の中で取る休憩（分）・2026-10-08。null＝自動の休憩だけ */
+  planned_break_minutes?: number | null;
 }
 
 export type ReportType = 'absence' | 'holiday_work' | 'location_change' | 'tardiness' | 'early_leave';
@@ -28,6 +30,10 @@ export interface TodoItem {
   reportTypes: ReportType[];
   location: string | null;
   segments: { start: string; end: string; location: string }[];
+  /** 勤務の中で取る休憩（分）。勤務変更の休憩に足す（本人は入力しない・時刻を変えてもそのまま＝ユーザー確定 A） */
+  plannedBreak: number | null;
+  /** 予定の備考（勤務の中の休憩をいつ取るか など） */
+  notes: string | null;
 }
 
 // カレンダーの種類 → 勤務変更の種類
@@ -60,6 +66,8 @@ export function buildTodo(entries: CalendarEntry[], reportedDates: Set<string>, 
       reportTypes: mapped,
       location: e.location,
       segments: Array.isArray(e.work_segments) ? e.work_segments : [],
+      plannedBreak: e.planned_break_minutes ?? null,
+      notes: e.notes ?? null,
     });
   }
   return out;

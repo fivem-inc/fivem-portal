@@ -19,7 +19,7 @@ import {
 } from '../lib/overtimeTypes';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
-import { todayJstStr, calcTotalBreak, checkLegalBreak, legalBreakPlanMessage, timeToMin } from '../lib/breakCalc';
+import { todayJstStr, calcTotalBreak, planBreakCheck, timeToMin, minToTime } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
@@ -50,6 +50,8 @@ interface AbsenceDraft {
   segmentCustoms?: string[];
   /** 時間帯ごとに「前の時間帯から移ってきた（前の終わり＝この始まり）」か。［＋ 途中で別の校へ移る］で足したもの */
   segmentMoves?: boolean[];
+  /** 勤務の中で取る休憩（分）。休憩が法律の最低に足りない予定で、勤務の時刻を変えずに足すとき（null＝なし） */
+  inWorkBreak?: number | null;
   hasLocationMove?: boolean;
   isLocationChange?: boolean;
   originalLocation?: string;
@@ -107,6 +109,7 @@ const absenceToDraft = (ab: AbsenceEvent, workplaces: string[], places: string[]
     segmentCustoms: segs.length > 0 ? segSplit.map(p => p[1]) : [''],
     // つながっている時間帯（前の終わり＝次の始まり）は「途中で移った」として戻す
     segmentMoves: segs.length > 0 ? deriveSegMoves(segs) : [false],
+    inWorkBreak: ab.planned_break_minutes ?? null,
     // 遅刻・早退で時間帯がある＝「途中で別の校に移動する」を使って登録したもの
     hasLocationMove: segs.length > 0 && (isLateType || isEarlyType),
     originalLocation: origSel,
@@ -211,6 +214,7 @@ interface AbsenceEvent {
   location: string | null; // 校（過去データはnull）。移動がある場合は '四条本校→洛西口校'
   work_segments: WorkSegment[]; // 勤務時間帯。単一勤務・全欠勤・過去データは空配列
   original_location: string | null; // 勤務地変更の「変更前の校」
+  planned_break_minutes?: number | null; // 勤務の中で取る休憩（分）・2026-10-08
 }
 
 // 残業・時間管理（/overtime）から受理された分。
@@ -617,6 +621,9 @@ const AbsenceInputSheet: React.FC<{
   const _timeM = (t: string) => t ? parseInt(t.split(':')[1], 10) : 0; void _timeM;
   const _toTimeStr = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; void _toTimeStr;
   const [notes, setNotes] = useState(absDraft?.notes ?? '');
+  // 勤務の中で取る休憩（分）。入れたときは、いつ取るかを備考に書くのが必須（2026-10-08 ユーザー確定）
+  const [inWorkBreak, setInWorkBreak] = useState<number | null>(absDraft?.inWorkBreak ?? null);
+  const [inWorkInput, setInWorkInput] = useState('');
   const [saving, setSaving] = useState(false);
   const savingRef = React.useRef(false);
   const confirmingRef = React.useRef(false);
@@ -642,10 +649,10 @@ const AbsenceInputSheet: React.FC<{
     saveDraft(DRAFT_KEYS.attendance, {
       date, userIds: [...userIds], isAbsent, targetDates: [...targetDates],
       isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations,
-      locationCustoms, isHolidayWork, segments, segmentCustoms, segmentMoves: segMoves, hasLocationMove,
+      locationCustoms, isHolidayWork, segments, segmentCustoms, segmentMoves: segMoves, inWorkBreak, hasLocationMove,
       isLocationChange, originalLocation, originalLocationCustom, isTimeChange,
     });
-  }, [date, userIds, isAbsent, targetDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, segMoves, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
+  }, [date, userIds, isAbsent, targetDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, segMoves, inWorkBreak, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
 
   // 種別が排他で押せないときの理由（グレーにするだけだと「なぜ押せないのか」が分からないため）
   const blockedReason = isHolidayWork
@@ -776,8 +783,46 @@ const AbsenceInputSheet: React.FC<{
     const ws = segments.map(s => ({ startMin: timeToMin(s.start), endMin: timeToMin(s.end) }));
     if (ws.length === 0 || ws.some(s => s.startMin == null || s.endMin == null || s.endMin <= s.startMin)) return null;
     const ok = ws as { startMin: number; endMin: number }[];
-    return checkLegalBreak(ok, calcTotalBreak(ok));
+    return planBreakCheck(ok, calcTotalBreak(ok) + (inWorkBreak ?? 0));
   })();
+  const needBreakNote = useSegments && inWorkBreak != null && inWorkBreak > 0;
+  /** 自動の休憩と、勤務と勤務の間（合わせて何分になるかの帯に出す） */
+  const breakParts = (() => {
+    if (!useSegments) return null;
+    const ws = segments.map(s => ({ startMin: timeToMin(s.start), endMin: timeToMin(s.end) }));
+    if (ws.length === 0 || ws.some(s => s.startMin == null || s.endMin == null || s.endMin <= s.startMin)) return null;
+    const ok = ws as { startMin: number; endMin: number }[];
+    const p = planBreakCheck(ok, 0);
+    return { auto: calcTotalBreak(ok), gap: p.gaps.reduce((s, g) => s + (g.end - g.start), 0) };
+  })();
+  // 足りないときに休憩を足す方法（2026-10-08 ユーザー確定）：①間をのばす ②別の時刻に休憩を入れる（時間帯が分かれる）
+  const pad2 = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+  const ORD_JA = ['1つ目', '2つ目', '3つ目', '4つ目'];
+  /** ①間をのばす：次の勤務の始まりを遅らせる（できなければ前の勤務の終わりを早める）。足りない分だけ */
+  const gapExtend = (() => {
+    if (!planLegal || planLegal.ok) return null;
+    const need = planLegal.shortfall;
+    for (const g of planLegal.gaps) {
+      const next = segments.findIndex((s, i) => !segMoves[i] && timeToMin(s.start) === g.end);
+      if (next >= 0 && (timeToMin(segments[next].end) ?? 0) > g.end + need) {
+        const n = planLegal.blocks.findIndex(b => b.startMin === g.end);
+        return { label: '間をのばす', note: `${ORD_JA[n] ?? '次'}の勤務の始まりが ${minToTime(g.end)} → ${minToTime(g.end + need)} に変わります`, apply: () => updateSegment(next, { start: pad2(g.end + need) }) };
+      }
+      const prev = segments.findIndex(s => timeToMin(s.end) === g.start);
+      if (prev >= 0 && (timeToMin(segments[prev].start) ?? 0) < g.start - need) {
+        const n = planLegal.blocks.findIndex(b => b.endMin === g.start);
+        return { label: '間をのばす', note: `${ORD_JA[n] ?? '前'}の勤務の終わりが ${minToTime(g.start)} → ${minToTime(g.start - need)} に変わります`, apply: () => updateSegment(prev, { end: pad2(g.start - need) }) };
+      }
+    }
+    return null;
+  })();
+  /** ②勤務の中で休憩を取る（勤務の時刻は変わらない・時間帯も増えない）。いつ取るかは備考に書く（必須） */
+  const addInWorkBreak = () => {
+    const n = parseInt(inWorkInput || String(planLegal?.shortfall ?? 0), 10);
+    if (!Number.isFinite(n) || n <= 0) return;
+    setInWorkBreak(Math.min(180, (inWorkBreak ?? 0) + n));
+    setInWorkInput('');
+  };
   const placeOf = (i: number): string =>
     segments[i]?.location === OTHER_LOCATION ? (segmentCustoms[i] ?? '').trim() : (segments[i]?.location ?? '');
   /**
@@ -917,7 +962,8 @@ const AbsenceInputSheet: React.FC<{
         if (sorted[i].start < sorted[i - 1].end) { setError('勤務時間が重なっています。時間帯を確認してください'); return; }
       }
       // 予定の休憩が法律の最低に足りないときは登録しない（休憩の足りない予定を組まないため・2026-10-08）
-      if (planLegal && !planLegal.ok) { setError(legalBreakPlanMessage(planLegal)); return; }
+      if (planLegal && !planLegal.ok) { setError(planLegal.message); return; }
+      if (needBreakNote && !notes.trim()) { setError('備考に、休憩をいつ取るかを書いてください'); return; }
     } else {
       // 対象日すべてで校が選ばれているか
       if ([...targetDates].some(d => !effectiveLocation(d))) { setError('すべての日付で校を選択してください'); return; }
@@ -1009,7 +1055,7 @@ const AbsenceInputSheet: React.FC<{
       return;
     }
 
-    const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string; location: string; work_segments: WorkSegment[] | null; original_location: string | null }[] = [];
+    const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string; location: string; work_segments: WorkSegment[] | null; original_location: string | null; planned_break_minutes?: number | null }[] = [];
     for (const { uid, d } of pairs) {
       if (isAbsent)         records.push({ user_id: uid, date: d, type: 'absent',          actual_time: null,                   notes, created_by: currentUserId, location: effectiveLocation(d), work_segments: null,   original_location: null });
       if (isHolidayWork)    records.push({ user_id: uid, date: d, type: 'holiday_work',    actual_time: toDbTime(segs[0]?.start), notes, created_by: currentUserId, location: segLoc,              work_segments: segCol, original_location: null });
@@ -1021,6 +1067,9 @@ const AbsenceInputSheet: React.FC<{
       if (isEarlyLeave)     records.push({ user_id: uid, date: d, type: 'early_leave',     actual_time: toDbTime(earlyTime),              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
       if (isEarlyEnd)       records.push({ user_id: uid, date: d, type: 'early_end',       actual_time: earlyTime,              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
     }
+    // 勤務の中で取る休憩（分）。時間帯のある記録にだけ付ける（2026-10-08）
+    const plannedBreak = useSegments && inWorkBreak != null && inWorkBreak > 0 ? inWorkBreak : null;
+    for (const r of records) r.planned_break_minutes = r.work_segments ? plannedBreak : null;
 
     const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, user_id, type, date, actual_time');
     if (err) {
@@ -1105,7 +1154,7 @@ const AbsenceInputSheet: React.FC<{
     setIsAbsent(false); setTargetDates(new Set([date])); setConflicts([]);
     setIsHolidayWork(false); setHasLocationMove(false);
     setIsLocationChange(false); setOriginalLocation(''); setOriginalLocationCustom(''); setIsTimeChange(false);
-    setSegments([{ start: '', end: '', location: '' }]); setSegmentCustoms(['']); setSegMoves([false]);
+    setSegments([{ start: '', end: '', location: '' }]); setSegmentCustoms(['']); setSegMoves([false]); setInWorkBreak(null);
     setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false);
     setLateTime(''); setEarlyTime(''); setNotes(''); setError('');
     clearDraft(DRAFT_KEYS.attendance);
@@ -1397,7 +1446,38 @@ const AbsenceInputSheet: React.FC<{
             })}
             {planLegal && !planLegal.ok && (
               <div style={{ margin: '4px 0 6px', padding: '8px 10px', borderRadius: 8, background: '#fff8e1', border: '1px solid #f59e0b', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
-                ⚠️ {legalBreakPlanMessage(planLegal)}。直すまで登録できません。
+                <div style={{ fontWeight: 'bold', fontSize: 13 }}>⚠️ {planLegal.title}</div>
+                {planLegal.lines.map((ln, i) => <div key={i}>{ln}</div>)}
+                {/* 授業の時刻を動かさない方を先に勧める（UI/UX レビュー）。青い塗りは1つだけ */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8, padding: '8px', borderRadius: 8, background: '#1976d2', color: '#fff' }}>
+                  <span>勤務の中で休憩を</span>
+                  <input type="text" inputMode="numeric" aria-label="勤務の中で取る休憩（分）" value={inWorkInput || String(planLegal.shortfall)}
+                    onChange={e => setInWorkInput(e.target.value.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0)).replace(/[^0-9]/g, ''))}
+                    style={{ width: 48, padding: '4px 6px', borderRadius: 6, border: 'none', fontSize: 14, textAlign: 'center' }} />
+                  <span>分</span>
+                  <button type="button" onClick={addInWorkBreak}
+                    style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 8, border: '1px solid #fff', background: '#fff', color: '#1565c0', fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}>取る</button>
+                  <div style={{ width: '100%', fontSize: 11.5 }}>（勤務の時刻は変わりません）</div>
+                </div>
+                {gapExtend && (
+                  <button type="button" onClick={gapExtend.apply}
+                    style={{ display: 'block', width: '100%', marginTop: 6, padding: '6px 8px', background: '#fff', border: '1px solid #bbb', borderRadius: 8, color: '#555', fontSize: 13, cursor: 'pointer' }}>
+                    または、{gapExtend.label}
+                    <div style={{ fontSize: 11.5 }}>（{gapExtend.note}）</div>
+                  </button>
+                )}
+              </div>
+            )}
+            {inWorkBreak != null && inWorkBreak > 0 && (
+              <div style={{ margin: '4px 0 6px', padding: '6px 10px', borderRadius: 8, background: '#e8f5e9', color: '#1b5e20', fontSize: 12.5, lineHeight: 1.6 }}>
+                勤務の中で取る休憩：{inWorkBreak}分
+                <button type="button" onClick={() => setInWorkBreak(null)}
+                  style={{ marginLeft: 8, background: 'none', border: 'none', padding: 0, color: '#1b5e20', textDecoration: 'underline', cursor: 'pointer', fontSize: 12.5 }}>✕ やめる</button>
+                {breakParts && (
+                  <div style={{ fontSize: 11.5 }}>
+                    休憩は合わせて{breakParts.auto + breakParts.gap + inWorkBreak}分（{[breakParts.gap > 0 ? `勤務と勤務の間 ${breakParts.gap}分` : '', breakParts.auto > 0 ? `自動の休憩 ${breakParts.auto}分` : '', `勤務の中 ${inWorkBreak}分`].filter(Boolean).join('＋')}）
+                  </div>
+                )}
               </div>
             )}
             {segments.length >= MAX_SEGMENTS && (
@@ -1494,8 +1574,10 @@ const AbsenceInputSheet: React.FC<{
 
         {/* 備考 */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>備考（任意）</div>
-          <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder="理由など"
+          {needBreakNote
+            ? <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 4, fontWeight: 'bold' }}>備考（必須）　休憩をいつ取るか書いてください</div>
+            : <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>備考（任意）</div>}
+          <input type="text" value={notes} onChange={e => setNotes(e.target.value)} placeholder={needBreakNote ? '例：13:30ごろ、授業の合間に40分' : '理由など'}
             style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }} />
         </div>
 
@@ -2049,7 +2131,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
 
     const { data } = await supabase
       .from('attendance_exceptions')
-      .select('id, user_id, date, type, actual_time, notes, location, work_segments, original_location')
+      .select('id, user_id, date, type, actual_time, notes, location, work_segments, original_location, planned_break_minutes')
       .gte('date', startStr)
       .lte('date', endStr)
       .order('date');

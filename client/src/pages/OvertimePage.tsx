@@ -13,7 +13,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
-  calcTotalBreak, calcPatternFields, checkLegalBreak, legalBreakPlanMessage,
+  calcTotalBreak, calcPatternFields, checkLegalBreak, planBreakCheck,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
   payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
@@ -907,6 +907,7 @@ const OvertimeForm: React.FC<{
   const hasInput = workSegments.length > 0;
   // 事前（予定）として出すか。休憩が法律の最低に足りないとき、事前は直すまで送れない／事後は本人に出さない（受理する人に印・2026-10-08）
   const isPlannedPhase = overtimePhase({ mode, isReportPhase, isResubmit, editTarget }) === 'planned';
+  const planCheck = planBreakCheck(workSegments, breakMin);
 
   // ---- 種別の自動判定 ----
   // 時刻・勤務地の入力からシステムが種別を提案する。迷いやすい「調整か遅刻/早退か」だけ2択バナーで確定。
@@ -1185,7 +1186,7 @@ const OvertimeForm: React.FC<{
     location, locationCustom, locMoveStart, locMoveEnd, effectiveLocation, normalSegs,
     isReportPhase, hasChanges, isPureZero, changeReason, typeDetect, lateChoice, earlyChoice,
     absenceReviewerOk: (!reviewerId || isSelfReview) ? undefined : reviewerIsManager(reviewerId),
-    plannedLegal: isPlannedPhase && !fullDay && !clockOnlyMode ? legal : null,
+    plannedLegal: isPlannedPhase && !fullDay && !clockOnlyMode ? planCheck : null,
   });
 
   const handleSubmit = async () => {
@@ -2097,11 +2098,15 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 法定チェック（2026-10-08）：事前（予定）は直すまで送れない。🚨 事後（実績）は本人に出さない＝直しようがないため。受理する人の一覧に印が出る */}
-      {!fullDay && !clockOnlyMode && hasInput && !legal.ok && isPlannedPhase && (
+      {!fullDay && !clockOnlyMode && hasInput && !planCheck.ok && isPlannedPhase && (
         <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
-          <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404', lineHeight: 1.7 }}>
-            ⚠️ {legalBreakPlanMessage(legal)}。直すまで送信できません。
-          </p>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 'bold', color: isDark ? '#ffd54f' : '#856404' }}>⚠️ {planCheck.title}</p>
+          {planCheck.lines.map((ln, i) => <p key={i} style={{ margin: '2px 0 0', fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404', lineHeight: 1.6 }}>{ln}</p>)}
+          {/* 休憩の分数を足して送れるようにする（休憩を取る予定にする） */}
+          <button type="button" onClick={() => { setBreakManual(true); setBreakManualMin(String(breakMin + planCheck.shortfall)); }}
+            style={{ marginTop: 8, padding: '7px 14px', borderRadius: 8, border: '1px solid #90caf9', background: isDark ? '#1e3a5f' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0', fontSize: 13, cursor: 'pointer' }}>
+            休憩を{breakMin + planCheck.shortfall}分にする
+          </button>
         </div>
       )}
 

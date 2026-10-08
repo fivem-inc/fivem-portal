@@ -3,7 +3,7 @@
 // 🚨 ここは画面の状態を持たない（検算できるように supabase も読まない）。
 // 🚨 1件フォームと同じ判定は lib/overtimeSubmit を呼ぶ（ここに書き写さない）。
 
-import { payPeriodEnd, minToTime, checkLegalBreak } from './breakCalc';
+import { payPeriodEnd, minToTime, checkLegalBreak, planBreakCheck } from './breakCalc';
 import type { WorkSegment, CalendarKind } from './breakCalc';
 import { isFullDayReport, OT_TYPE_INFO, canOfferCalendarChoice } from './overtimeTypes';
 import type { OvertimeType } from './overtimeTypes';
@@ -506,7 +506,7 @@ export function computeGridRow(a: {
     normalSegs: normalSegsOf(ns), isReportPhase, hasChanges, isPureZero, changeReason: draft.changeReason,
     typeDetect, lateChoice: draft.lateChoice, earlyChoice: draft.earlyChoice,
     // 事前（予定）は休憩が法律の最低に足りないと送れない（1件フォームと同じ・2026-10-08）
-    plannedLegal: phase === 'planned' ? legal : null,
+    plannedLegal: phase === 'planned' ? planBreakCheck(workSegments, diff.break_minutes) : null,
   });
   // 🚨 自己受理はマネージャー以上だけ（1件フォームは選択肢自体を出さない。表でも同じ判定を通す）
   const selfBlocked = !isEdit && isSelfReview && !a.canSelfReview ? '自己受理はマネージャー以上のみです' : '';

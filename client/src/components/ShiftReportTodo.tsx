@@ -61,7 +61,7 @@ const ShiftReportTodo: React.FC<{
 
   useEffect(() => {
     let alive = true;
-    supabase.from('attendance_exceptions').select('date, type, location, work_segments, notes')
+    supabase.from('attendance_exceptions').select('date, type, location, work_segments, notes, planned_break_minutes')
       .eq('user_id', targetId).gte('date', todoFromDate(today)).lte('date', today)
       .then(({ data, error }) => {
         if (!alive) return;

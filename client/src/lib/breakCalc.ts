@@ -110,14 +110,58 @@ export function checkLegalBreak(segments: WorkSegment[], breakMinutes: number): 
   return { ok: actualRest >= required, requiredMinutes: required, actualRestMinutes: actualRest };
 }
 
+/** 事前（予定）の休憩の法律チェックの結果と、本人に出す文 */
+export interface PlanBreakCheck {
+  ok: boolean;
+  /** 法律の最低（分） */
+  required: number;
+  /** 足りない分（分） */
+  shortfall: number;
+  /** 見出し（「休憩が30分足りません」） */
+  title: string;
+  /** 見出しの下の文（3行） */
+  lines: string[];
+  /** 1つにつなげた文（送信を止めるときの赤い文・表入力の行に出す） */
+  message: string;
+  /** 勤務と勤務の間（つながった時間帯は1つの勤務としてまとめたあと）。start＝前の勤務の終わり・end＝次の勤務の始まり */
+  gaps: { start: number; end: number }[];
+  /** つながった時間帯をまとめた勤務 */
+  blocks: WorkSegment[];
+}
+
 /**
- * 事前（予定）の休憩が法律の最低に足りないときの文（2026-10-08 ユーザー確定：事前は直すまで送れない）。
- * 残業の事前申請・勤怠カレンダーの予定で同じ文を使う。事後の報告では本人に出さない（受理する人の画面に印）
+ * 事前（予定）の休憩が法律の最低に足りているかと、足りないときの文（2026-10-08 ユーザー確定の文面）。
+ * 残業の事前申請（1件・まとめて申請・表入力）と勤怠カレンダーの予定で同じものを使う。
+ * 🚨 事後の報告では本人に出さない（受理する人の画面に印）。休憩を自動で多く引くこともしない
+ *   ⚠️ 休憩が30分足りません
+ *   労働基準法では、6時間を超えて働く日は、休憩が合わせて45分以上必要です。
+ *   勤務と勤務の間の、仕事から離れている時間も、休憩に数えます。
+ *   1つ目の勤務（〜19:15）と2つ目の勤務（19:30〜）の間は15分なので、あと30分足りません。
  */
-export function legalBreakPlanMessage(l: LegalCheckResult): string {
+export function planBreakCheck(segments: WorkSegment[], breakMinutes: number): PlanBreakCheck {
+  const l = checkLegalBreak(segments, breakMinutes);
+  const blocks = mergeContiguous(segments.filter(s => s.endMin > s.startMin));
+  const gaps: { start: number; end: number }[] = [];
+  for (let i = 1; i < blocks.length; i++) if (blocks[i].startMin > blocks[i - 1].endMin) gaps.push({ start: blocks[i - 1].endMin, end: blocks[i].startMin });
+  const shortfall = Math.max(0, l.requiredMinutes - l.actualRestMinutes);
   const hours = l.requiredMinutes >= 60 ? 8 : 6;
-  return `この予定だと、働く時間が${hours}時間を超えるのに休憩が${l.actualRestMinutes}分しかありません（${l.requiredMinutes}分以上が必要です）。`
-    + `時間帯の間を${l.requiredMinutes}分以上空けるか、1つの時間帯で入れて途中で休憩を取る予定にしてください`;
+  const ORD = ['1つ目', '2つ目', '3つ目', '4つ目'];
+  const gapSum = gaps.reduce((s, g) => s + (g.end - g.start), 0);
+  let what = '';
+  if (gaps.length === 1) {
+    const i = blocks.findIndex(b => b.endMin === gaps[0].start);
+    what = `${ORD[i] ?? '前'}の勤務（〜${minToTime(gaps[0].start)}）と${ORD[i + 1] ?? '次'}の勤務（${minToTime(gaps[0].end)}〜）の間は${gapSum}分`;
+  } else if (gaps.length > 1) {
+    what = `勤務と勤務の間は合わせて${gapSum}分`;
+  }
+  if (breakMinutes > 0) what = what ? `${what}、休憩は${breakMinutes}分` : `休憩は${breakMinutes}分`;
+  const title = `休憩が${shortfall}分足りません`;
+  const lines = [
+    `労働基準法では、${hours}時間を超えて働く日は、休憩が合わせて${l.requiredMinutes}分以上必要です。`,
+    '勤務と勤務の間の、仕事から離れている時間も、休憩に数えます。',
+    `${what ? `${what}なので、` : ''}あと${shortfall}分足りません。`,
+  ];
+  return { ok: l.ok, required: l.requiredMinutes, shortfall, title, lines, message: `${title}。${lines.join('')}`, gaps, blocks };
 }
 
 // ---------- 時間の表示・変換ユーティリティ ----------
