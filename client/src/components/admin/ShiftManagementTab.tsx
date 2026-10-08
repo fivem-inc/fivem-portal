@@ -7,7 +7,7 @@ import { todayJstStr } from '../../lib/breakCalc';
 import { isShiftTarget } from '../../lib/shiftExcelImport';
 import {
   AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_EXTRA, ROSTER_WEEK,
-  compareRosterStaff, dayEquals, deriveFields, minText, placeSteps, prevDate, rowOnDate, rowToDay, shortSchool, timeText, validateDay,
+  compareRosterStaff, dayEquals, deriveFields, minText, normTime, placeSteps, prevDate, rowOnDate, rowToDay, shortSchool, timeText, validateDay,
   type RosterDay, type RosterDayKind, type RosterSegment, type WorkArea,
 } from '../../lib/shiftRoster';
 import {
@@ -110,6 +110,8 @@ const ShiftManagementTab: React.FC = () => {
   const [study, setStudy] = useState<StudyData | null>(null);
   const [studyErr, setStudyErr] = useState('');
   const [pdfStudyWarn, setPdfStudyWarn] = useState(false);
+  // 「四条本校→西陣校」のように校が「→」でつながった1行を、移る時刻で2つに分ける欄（2026-10-08）。鍵＝人|曜日|何行目
+  const [splitAt, setSplitAt] = useState<Record<string, string>>({});
 
   // 勉強会（③）：勤務表の欄・保存の確認・PDF に使う。🚨 読めなくても勤務表は使えるようにする（理由だけ出す）
   const loadStudy = useCallback(async () => {
@@ -466,6 +468,31 @@ const ShiftManagementTab: React.FC = () => {
                 </select>
                 <button type="button" aria-label="この行を消す" onClick={() => setSegs(day.segments.filter((_, j) => j !== i))}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 14 }}>✕</button>
+                {/* 🚨 校が「→」でつながった行（前の Excel から入ったもの）は、何時に移るかが分からない。
+                    勉強会・掃除・こどもシフト表の ⚠️ が「移る時刻が未登録」になるので、移る時刻で2つの行に分けられるようにする（2026-10-08） */}
+                {sg.location.includes('→') && (() => {
+                  const key = `${userId}|${k}|${i}`;
+                  const at = splitAt[key] ?? '';
+                  const [from, ...rest] = sg.location.split('→').map(s => s.trim());
+                  const to = rest.join('→');
+                  const ok = !!normTime(at) && normTime(at) > normTime(sg.start) && normTime(at) < normTime(sg.end);
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', padding: '4px 6px', borderRadius: 6, background: isDarkMode ? '#4a4228' : '#fff8e1', fontSize: 12 }}>
+                      <span>{from} から {to} へ移る時刻</span>
+                      <input type="time" step={300} value={at} style={inputStyle} onChange={e => setSplitAt(p => ({ ...p, [key]: e.target.value }))} />
+                      <button type="button" disabled={!ok}
+                        onClick={() => {
+                          const m = normTime(at);
+                          setSegs(day.segments.flatMap((x, j) => (j === i
+                            ? [{ ...x, end: m, location: from }, { ...x, start: m, location: to }]
+                            : [x])));
+                          setSplitAt(p => { const n = { ...p }; delete n[key]; return n; });
+                        }}
+                        style={{ ...inputStyle, cursor: ok ? 'pointer' : 'default', opacity: ok ? 1 : 0.5 }}>2つの行に分ける</button>
+                      {!ok && at && <span style={{ color: red }}>（{sg.start}〜{sg.end} の間の時刻にしてください）</span>}
+                    </div>
+                  );
+                })()}
               </div>
             ))}
             {/* 休憩・労働は時刻のすぐ下に大きく（右端だと見えにくい・2026-09-15 ユーザー要望） */}
