@@ -111,10 +111,6 @@ function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function dow(dateStr: string): string { return DOW[new Date(dateStr + 'T00:00:00').getDay()]; }
-function origDuration(start: string | null, end: string | null): number {
-  if (!start || !end) return 0;
-  return toMin(end) - toMin(start);
-}
 
 const TYPE_INFO: Record<ApplicationType, { label: string; color: string; darkBg: string; emoji: string }> = {
   overtime:     { label: '残業',     color: '#1565c0', darkBg: '#1e3a5f', emoji: '⏰' },
@@ -1912,8 +1908,12 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 {openPeriods.has(period) && (
                   <div style={{ background: bg }}>
                     {histGrouped[period].map(r => {
-                      const oMin = origDuration(r.original_start?.slice(0, 5) ?? null, r.original_end?.slice(0, 5) ?? null);
-                      const dMin = r.labor_minutes != null ? r.labor_minutes - oMin : null;
+                      // 遅刻の時間＝実際の始まり − 予定の始まり（入力の画面と同じ計算）。
+                      // 🚨 2026-10-08 まで「実労働 − 予定の長さ」で出していて、予定の長さは休憩を引く前なので、休憩の30〜60分がそのまま遅刻に見えていた（唐橋さん 10/8 の「遅刻 0:30」）
+                      const actFirst = segFirstStart(parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)) || r.actual_start?.slice(0, 5) || '';
+                      const origFirst = segFirstStart(parseSegments(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end)) || r.original_start?.slice(0, 5) || '';
+                      const lateMin = actFirst && origFirst ? Math.max(0, toMin(actFirst) - toMin(origFirst)) : null;
+                      const isTardiness = (r.application_types?.length ? r.application_types : [r.application_type]).includes('tardiness');
                       const isFocused = highlightId === r.id;
                       // 本人が自分で直せる/取り消せるのは「未承認（承認前）」のときだけ。受理済みは修正/取消依頼へ。
                       const canSelfEdit = r.applicant_id === user.id && ['pending', 'resubmitted', 'returned'].includes(r.status);
@@ -1942,9 +1942,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                             {r.actual_start && (
                               <div style={{ fontSize: 11, color: isDark ? '#4ade80' : '#166534' }}>
                                 変更後：{r.actual_location ? `${r.actual_location}　` : ''}{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
-                                {dMin != null && oMin > 0 && r.application_type === 'tardiness' && (
+                                {lateMin != null && isTardiness && (
                                   <span style={{ marginLeft: 4, color: isDark ? '#c084fc' : '#7b1fa2', fontWeight: 'bold' }}>
-                                    ／遅刻 {formatMin(Math.abs(Math.min(0, dMin)))}
+                                    ／遅刻 {formatMin(lateMin)}
                                   </span>
                                 )}
                               </div>
