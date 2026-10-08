@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useRoles } from '../../hooks/useRoles';
+import { useSameNameStaff } from '../../hooks/useSameNameStaff';
 import { todayJstStr } from '../../lib/breakCalc';
 import { inviteStatusLabel, isPlaceholderEmail, isPrehire } from '../../lib/staffState';
 import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE } from '../../lib/buttonStyles';
@@ -86,6 +87,8 @@ const PrehireSection: React.FC = () => {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
+  // 同じ名前の人（2026-10-08・二重登録の再発防止）。止めない。入力のすぐ下と確認の画面で知らせる
+  const sameName = useSameNameStaff(name, open);
   const hasEmail = email.trim() !== '';
   const effectiveSend: SendMode = hasEmail ? send : 'none';
   const resetForm = () => { setName(''); setHireDate(''); setEmployment('正社員'); setRole('一般'); setEmail(''); setSend('hire_date'); setMainArea(''); setGroups([]); setConfirming(false); setFormErr(''); };
@@ -234,6 +237,13 @@ const PrehireSection: React.FC = () => {
             <>
               <label style={{ ...label, marginTop: 0 }}>名前 <span style={{ color: '#dc3545' }}>*</span></label>
               <input value={name} onChange={e => setName(e.target.value)} placeholder="山田 花子" style={input} />
+              {sameName.hits.length > 0 && (
+          <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 6, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
+            ⚠️ すでに同じ名前の人がいます：{sameName.hits.map(h => `${h.name}（${h.state}）`).join('・')}<br />
+            同じ人を二重に登録していないか確かめてください（同じ名前の別の人なら、そのまま登録できます）
+          </div>
+        )}
+        {sameName.error && <div style={{ marginTop: 6, fontSize: 12, color: '#856404' }}>{sameName.error}</div>}
               <label style={label}>入社日 <span style={{ color: '#dc3545' }}>*</span></label>
               <input type="date" value={hireDate} onChange={e => setHireDate(e.target.value)} style={{ ...input, fontSize: 16 }} />
               <div style={{ display: 'flex', gap: 8 }}>
@@ -260,6 +270,13 @@ const PrehireSection: React.FC = () => {
             <>
               <div style={{ fontSize: 14, color: text, lineHeight: 1.9 }}>
                 <div><strong>{name}</strong>（{employment}・{role}）</div>
+                {sameName.hits.length > 0 && (
+          <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 6, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
+            ⚠️ すでに同じ名前の人がいます：{sameName.hits.map(h => `${h.name}（${h.state}）`).join('・')}<br />
+            同じ人を二重に登録していないか確かめてください（同じ名前の別の人なら、そのまま登録できます）
+          </div>
+        )}
+        {sameName.error && <div style={{ marginTop: 6, fontSize: 12, color: '#856404' }}>{sameName.error}</div>}
                 <div>入社日：{mdWeek(hireDate)}{hireDate <= today ? ' … 今日から使えるようになります' : ''}</div>
                 <div>メインの部門：{areaName(mainArea) || 'まだ決めない'} ／ グループ：{groups.length ? groups.join('・') : 'なし'}</div>
                 {hasEmail ? (

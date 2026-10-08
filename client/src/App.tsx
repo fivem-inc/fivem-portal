@@ -561,13 +561,24 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     if (el) el.scrollIntoView({ block: 'center' });
   }, [highlightIds, notifs]);
   useEffect(() => {
-    const h = (e: MouseEvent) => {
+    const h = (e: MouseEvent | TouchEvent) => {
       const inside = (ref.current?.contains(e.target as Node)) || (portalRef.current?.contains(e.target as Node));
       if (!inside) setOpen(false);
     };
+    // 🚨 スマホは軽く触っただけだと mousedown が来ないことがあるので touchstart でも閉じる（2026-10-08）
     document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    document.addEventListener('touchstart', h, { passive: true });
+    return () => { document.removeEventListener('mousedown', h); document.removeEventListener('touchstart', h); };
   }, []);
+  // 🚨 ページが変わったら閉じる（2026-10-08）。外を押さずにページが変わったとき（プッシュ通知を押してアプリが別のページへ移った等）に、
+  //    一覧が開いたまま残っていた。プッシュから来て一覧を開くとき（?bell=1）は上の処理が開くので、ここでは閉じない
+  const location = useLocation();
+  const lastPath = useRef(location.pathname);
+  useEffect(() => {
+    if (lastPath.current === location.pathname) return;
+    lastPath.current = location.pathname;
+    if (new URLSearchParams(location.search).get('bell') !== '1') setOpen(false);
+  }, [location.pathname, location.search]);
 
   const unread = notifs.filter(n => !n.read).length;
 

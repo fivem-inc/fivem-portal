@@ -13,6 +13,7 @@ import PwRequestHistory from './PwRequestHistory';
 import DateTimeInput from '../DateTimeInput';
 import { dateTimeProblem } from '../../lib/dateTimeValue';
 import { isPrehire } from '../../lib/staffState';
+import { useSameNameStaff } from '../../hooks/useSameNameStaff';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -32,6 +33,9 @@ const AddUserModal: React.FC<{
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // 同じ名前の人（2026-10-08・二重登録の再発防止）。🚨 止めない。1回目の［登録］で知らせ、もう一度押すと登録する
+  const sameName = useSameNameStaff(name);
+  const [dupOk, setDupOk] = useState('');
 
   // メール入力時に自動でパスワードをセット（手動変更済みの場合は上書きしない）
   const handleEmailChange = (val: string) => {
@@ -53,6 +57,11 @@ const AddUserModal: React.FC<{
     }
     if (password.length < 6) {
       setError('パスワードは6文字以上が必要です');
+      return;
+    }
+    if (sameName.hits.length > 0 && dupOk !== name) {
+      setDupOk(name);
+      setError('同じ名前の人がいます。確かめたうえで、もう一度［登録］を押すと登録します');
       return;
     }
     setLoading(true);
@@ -116,6 +125,13 @@ const AddUserModal: React.FC<{
           type="text" value={name} onChange={e => setName(e.target.value)}
           placeholder="例: 田中 太郎" style={inputStyle}
         />
+        {sameName.hits.length > 0 && (
+          <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 6, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
+            ⚠️ すでに同じ名前の人がいます：{sameName.hits.map(h => `${h.name}（${h.state}）`).join('・')}<br />
+            同じ人を二重に登録していないか確かめてください（同じ名前の別の人なら、そのまま登録できます）
+          </div>
+        )}
+        {sameName.error && <div style={{ marginTop: 6, fontSize: 12, color: '#856404' }}>{sameName.error}</div>}
 
         <label style={labelStyle}>初期パスワード</label>
         <div style={{ position: 'relative' }}>
