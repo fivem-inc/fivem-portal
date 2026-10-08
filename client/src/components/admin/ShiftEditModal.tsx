@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { calcSegsBreak, parseSegments, segMinutes, formatSegs, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../../lib/shiftCalc';
+import { calcSegsBreak, shiftLegalBreak, legalBreakReviewNote, parseSegments, segMinutes, formatSegs, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../../lib/shiftCalc';
 import { errorStyle } from '../../lib/formHighlight';
 import { logFail } from '../../lib/logFail';
 
@@ -56,6 +56,14 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
     return parsed.length > 0 ? parsed : [{ start: '', end: '', location: record.actual_location ?? undefined }];
   });
   const [locOther, setLocOther] = useState<boolean[]>([]);
+  // 休憩を手で入れる（2026-10-08 ユーザー確定）。休憩は決まりどおり自動で引く（時間帯ごと）が、実際に休憩を取れなかった日などは
+  // 本人から受理する人へ伝えてもらい、ここで実際の休憩に直す（勤務変更の本人の画面は自動のまま）。
+  // 保存済みの休憩が自動の計算と違う報告（前に手で直したもの）は、手で入れた状態で開く
+  const [breakManual, setBreakManual] = useState<boolean>(() => {
+    const s0 = parseSegments(record.actual_segments ?? null, record.actual_start, record.actual_end, record.actual_outing_start, record.actual_outing_end).filter(s => s.start && s.end);
+    return record.break_minutes != null && s0.length > 0 && record.break_minutes !== calcSegsBreak(s0);
+  });
+  const [breakManualMin, setBreakManualMin] = useState<string>(record.break_minutes != null ? String(record.break_minutes) : '');
   const [reason, setReason] = useState(record.reason ?? '');
   const [changeReason, setChangeReason] = useState('');
   const [workplaces, setWorkplaces] = useState<string[]>([]);
@@ -87,9 +95,14 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   // 休憩・実労働の自動再計算（時間帯ごとに計算して合算。本人の報告画面と同じ）
   const { breakMin, laborMin } = useMemo(() => {
     if (isAbsence || validSegs.length === 0) return { breakMin: null as number | null, laborMin: null as number | null };
-    const b = calcSegsBreak(validSegs);
+    const auto = calcSegsBreak(validSegs);
+    const manual = parseInt(breakManualMin, 10);
+    const b = breakManual && Number.isFinite(manual) && manual >= 0 ? manual : auto;
     return { breakMin: b, laborMin: Math.max(0, segMinutes(validSegs) - b) };
-  }, [isAbsence, validSegs]);
+  }, [isAbsence, validSegs, breakManual, breakManualMin]);
+  const autoBreak = useMemo(() => (isAbsence || validSegs.length === 0 ? null : calcSegsBreak(validSegs)), [isAbsence, validSegs]);
+  // 休憩が法律の最低に足りないか（受理の画面の印と同じ判定・文）
+  const legal = useMemo(() => (isAbsence || validSegs.length === 0 ? null : shiftLegalBreak({ actual_segments: validSegs, break_minutes: breakMin })), [isAbsence, validSegs, breakMin]);
 
   const fmtMin = (m: number | null) => (m == null ? '-' : `${Math.floor(m / 60)}時間${m % 60 > 0 ? (m % 60) + '分' : ''}`);
 
@@ -130,6 +143,11 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
       if (segs.some(s => toMin(s.end) < toMin(s.start))) { fail('終了が開始より前の行があります。', 'segTime'); return; }
       if (segs.some((s, i) => i > 0 && toMin(s.start) < toMin(segs[i - 1].end))) { fail('勤務の時間が重なっています。順番に入力してください。', 'segTime'); return; }
       if (segs.some(s => !(s.location ?? '').trim())) { fail('勤務地を選択してください。', 'segLoc'); return; }
+      if (breakManual) {
+        const m = parseInt(breakManualMin, 10);
+        if (breakManualMin.trim() === '' || !Number.isFinite(m) || m < 0) { fail('休憩（分）を入力してください。', 'break'); return; }
+        if (m >= segMinutes(validSegs)) { fail('休憩が勤務時間より長くなっています。', 'break'); return; }
+      }
     }
     if (changedCount === 0) { setError('変更された項目がありません。'); return; }
     if (!changeReason.trim()) { fail('修正理由を入力してください（本人へ通知されます）。', 'changeReason'); return; }
@@ -251,9 +269,24 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
                     ＋ 勤務時間帯を追加（外出・戻りがある場合）
                   </button>
                 )}
-                <div style={{ fontSize: 12, color: sub }}>自動計算：休憩 {breakMin ?? 0}分　実労働 {fmtMin(laborMin)}</div>
-                {(record.break_minutes ?? null) !== breakMin && (
+                <div style={{ fontSize: 12, color: sub }}>{breakManual ? '手で入れた' : '自動計算：'}休憩 {breakMin ?? 0}分　実労働 {fmtMin(laborMin)}{breakManual && autoBreak != null ? `（自動なら休憩 ${autoBreak}分）` : ''}</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12.5, color: text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={breakManual} onChange={e => { setBreakManual(e.target.checked); if (e.target.checked && breakManualMin === '' && autoBreak != null) setBreakManualMin(String(autoBreak)); if (errField === 'break') setErrField(''); }} />
+                  休憩を手で入れる（実際に取った休憩が自動の計算と違う日）
+                </label>
+                {breakManual && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, paddingLeft: 22 }}>
+                    <input type="text" inputMode="numeric" aria-label="休憩（分）" value={breakManualMin}
+                      onChange={e => { setBreakManualMin(e.target.value.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0)).replace(/[^0-9]/g, '')); if (errField === 'break') setErrField(''); }}
+                      style={{ ...inputStyle, width: 90, ...errorStyle(errField === 'break', isDarkMode) }} />
+                    <span style={{ fontSize: 12, color: sub }}>分（外出など時間帯の間の時間は含めない）</span>
+                  </div>
+                )}
+                {!breakManual && (record.break_minutes ?? null) !== breakMin && (
                   <div style={{ fontSize: 12, color: '#fd7e14', marginTop: 2 }}>⚠️ 保存されている休憩（{record.break_minutes ?? 0}分）と違います。保存すると新しい計算で上書きされます。</div>
+                )}
+                {legal && !legal.ok && (
+                  <div style={{ fontSize: 12, color: isDarkMode ? '#ffd54f' : '#856404', background: isDarkMode ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 6, padding: '4px 8px', marginTop: 6, lineHeight: 1.5 }}>{legalBreakReviewNote(legal)}</div>
                 )}
               </div>
             )}
