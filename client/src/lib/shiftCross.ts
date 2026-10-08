@@ -25,6 +25,9 @@ export interface CrossEntry {
 
 export interface CrossSource { place: KidsPlace; items: KidsItem[] }
 
+/** 重なりに出す置き場所の短い呼び名（本校 3F・6F・出張 など）。こども・大人・掃除の画面で同じものを使う */
+export const placeShortName = (p: KidsPlace) => (p.kind === 'trip' ? '出張' : p.board === 'adult' ? (p.floor ?? p.label) : p.label.replace('四条本校', '本校'));
+
 /**
  * その曜日の、その表の全員の時間を出す。
  * @param isClass クラスの行か（こども＝班のある行／大人＝adult_class）

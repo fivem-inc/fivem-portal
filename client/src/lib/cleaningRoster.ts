@@ -10,6 +10,7 @@ import {
   ROSTER_DAY_LABEL, deriveFields, minText, normTime, shiftDayOn, shiftTimeIssue, shortSchool, toMin,
   type PatternRowLike, type RosterDay, type RosterDayKind, type ShiftTimeIssueKind,
 } from './shiftRoster';
+import type { CrossEntry } from './shiftCross';
 
 export interface CleaningRow {
   id: string;
@@ -97,8 +98,10 @@ export function rowPlaceLabel(row: Pick<CleaningRow, 'school' | 'floor' | 'short
 export interface CleaningIssue {
   userId: string;
   start: string;
-  /** overlap＝同じ人が同じ時間に別の校の掃除にも入っている（2026-10-06） */
-  kind: ShiftTimeIssueKind | 'overlap';
+  /** overlap＝同じ人が同じ時間に別の校の掃除にも入っている（2026-10-06）／cross＝こども・大人のシフト表と重なる（2026-10-08） */
+  kind: ShiftTimeIssueKind | 'overlap' | 'cross';
+  /** red＝直す（［確認した］では消えない・保存はできる）。無い・warn＝確かめる（［確認した］で消せる） */
+  level?: 'red' | 'warn';
   text: string;
   key: string; // 「確認した」に使う。ずれ方が変わると変わる
 }
@@ -179,6 +182,37 @@ export function overlapIssues(
           key: `overlap|${e.user_id}|${normTime(e.start)}|${r2.id}@${normTime(e2.start)}`,
         });
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * こども・大人のシフト表との重なり（2026-10-08 ユーザー確定）。決める順番（こども→大人→勤務表→掃除）に合わせて、掃除は保存を止めない。
+ * 🔴＝担当（同じ校でも・担当中は掃除できない）・出張/園指導・別の校の予定／⚠️＝補助・サポート・（ ）・共通の人・P・事務など
+ * 🚨 掃除の時間は場所ごとの長さ（row.minutes）。時刻なしは見ない。境目がちょうど同じ時刻は重なりにしない
+ */
+export function crossCleaningIssues(
+  row: Pick<CleaningRow, 'school' | 'minutes'>,
+  value: CleaningCellValue,
+  entries: CrossEntry[],
+  fullNames: Map<string, string>,
+): CleaningIssue[] {
+  if (value.is_none) return [];
+  const ROLE: Record<CrossEntry['cat'], string> = { lead: '担当', support: 'サポート', assist: '補助', trip: '', job: '' };
+  const out: CleaningIssue[] = [];
+  for (const e of value.entries) {
+    const s = toMin(e.start);
+    if (s === null || !e.start) continue;
+    const end = s + row.minutes;
+    for (const x of entries) {
+      if (x.userId !== e.user_id || !(s < x.e && x.s < end)) continue;
+      const red = x.cat === 'lead' || x.cat === 'trip' || (!!x.school && x.school !== row.school);
+      out.push({
+        userId: e.user_id, start: normTime(e.start), kind: 'cross', level: red ? 'red' : 'warn',
+        text: `${fullNames.get(e.user_id) ?? '（不明）'}さんは同じ時間に ${x.label}${ROLE[x.cat] ? `（${ROLE[x.cat]}）` : ''} にも入っています`,
+        key: `cross|${e.user_id}|${normTime(e.start)}|${x.placeId}|${x.s}-${x.e}`,
+      });
     }
   }
   return out;

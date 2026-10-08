@@ -8,6 +8,7 @@ import {
   AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_WEEK, deriveFields, mainBand, minText, placeSteps, shortSchool, timeText,
   type RosterDay, type RosterDayKind, type WorkArea,
 } from './shiftRoster';
+import { CHANGE_MARK_PRINT_CSS, diffLines } from './changeMark';
 
 export interface PrintPerson {
   name: string;
@@ -15,8 +16,10 @@ export interface PrintPerson {
   mainAreaId: string | null;
   mainAreaName: string;
   days: Partial<Record<RosterDayKind, RosterDay>>;
-  /** 前の版から変わった曜日（赤字にする） */
+  /** 前の版から変わった曜日（印を付ける） */
   changedDays: RosterDayKind[];
+  /** 前の版（変わった時刻を見分けるため・2026-10-08） */
+  baseDays?: Partial<Record<RosterDayKind, RosterDay>>;
   /** 勉強会の欄（「12:30(30)濱口・馬場」）。warn＝勤務時間外などの ⚠️ */
   studies: Partial<Record<RosterDayKind, { text: string; warn: boolean }[]>>;
   /** 掃除の欄（「9:30 4Fトイレ」・④ 掃除担当表から） */
@@ -28,9 +31,23 @@ export interface PrintOptions {
   applyFrom: string;        // "2026-10-01"
   people: PrintPerson[];    // 並べたい順（メインの部門 → 役職順）
   areas: WorkArea[];
+  /** 変わった所に印（薄い黄色のマス＋変わった時刻だけ濃いピンク・2026-10-08 に赤い字から変更） */
   redChanges: boolean;
   /** 勉強会の ⚠️ 印も刷る（初期は刷らない） */
   studyWarn: boolean;
+}
+
+/** 時刻の文字。前の版と違えば濃いピンク */
+function markT(text: string, base: string | null, on: boolean): string {
+  return on && base !== text ? `<span class="chg">${text}</span>` : text;
+}
+
+/** 変わった曜日の時刻の並び（「10:00-18:00」）を、変わった所だけ濃いピンクにした HTML（抜けたものは「前：」に取り消し線） */
+function markedTimes(lines: string[], base: string[]): string {
+  // 「-」は区切りにならないので「〜」に置き換えて比べ、出すときに戻す
+  const m = diffLines(lines.map(l => l.replace('-', '〜')), base.map(l => l.replace('-', '〜')));
+  const body = m.lines.map(ps => ps.map(p => (p.hit ? `<span class="chg">${esc(p.text.replace('〜', '-'))}</span>` : esc(p.text.replace('〜', '-')))).join('')).join('<br>');
+  return body + (m.removed.length > 0 ? `<div class="sub">前：${m.removed.map(r => `<span class="chg gone">${esc(r.replace('〜', '-'))}</span>`).join('・')}</div>` : '');
 }
 
 function cleaningLines(p: PrintPerson, k: RosterDayKind): string {
@@ -85,7 +102,10 @@ function blockA(p: PrintPerson, o: PrintOptions): string {
   const rows = ROSTER_WEEK.map(k => {
     const day = p.days[k];
     const f = day ? deriveFields(day.segments) : null;
-    const red = o.redChanges && p.changedDays.includes(k) ? ' red' : '';
+    const on = o.redChanges && p.changedDays.includes(k);
+    const red = on ? ' chgcell' : '';
+    const bf = p.baseDays?.[k] ? deriveFields(p.baseDays[k]!.segments) : null;
+    const bm = bf && bf.bands.length > 0 ? mainBand(bf.bands) : null;
     const tail = `<td class="cl">${cleaningLines(p, k)}</td><td class="st">${studyLines(p, k, o)}</td>`;
     if (!day || !f || f.bands.length === 0) {
       return `<tr class="off"><td class="dk">${ROSTER_DAY_LABEL[k]}</td><td></td><td></td><td></td><td></td><td></td><td class="memo${red}">${esc(day?.note ?? '')}</td>${tail}</tr>`;
@@ -98,8 +118,8 @@ function blockA(p: PrintPerson, o: PrintOptions): string {
     // 校の区切りが2つ以上なら、区切りの側に時刻が出るので重ねて書かない
     const band2 = other && printSteps(day, o.areas, p.mainAreaId).length < 2 ? `<div class="sub">${minText(other.s)}～${minText(other.e)}</div>` : '';
     return `<tr><td class="dk">${ROSTER_DAY_LABEL[k]}</td>`
-      + `<td class="t${red}">${minText(main.s)}</td>`
-      + `<td class="t${red}">${minText(main.e)}</td>`
+      + `<td class="t${red}">${markT(minText(main.s), bm ? minText(bm.s) : null, on)}</td>`
+      + `<td class="t${red}">${markT(minText(main.e), bm ? minText(bm.e) : null, on)}</td>`
       + `<td class="t">${minText(span)}</td><td class="t">${minText(f.breakMinutes)}</td><td class="t">${minText(f.laborMinutes)}</td>`
       + `<td class="memo${red}">${band2}${placeLine(day, o.areas, p.mainAreaId)}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}</td>${tail}</tr>`;
   }).join('');
@@ -132,10 +152,14 @@ function layoutB(o: PrintOptions): string {
       const cells = ROSTER_WEEK.map(k => {
         const day = p.days[k];
         const f = day ? deriveFields(day.segments) : null;
-        const red = o.redChanges && p.changedDays.includes(k) ? ' red' : '';
+        const on = o.redChanges && p.changedDays.includes(k);
+        const red = on ? ' chgcell' : '';
+        const bf = p.baseDays?.[k] ? deriveFields(p.baseDays[k]!.segments) : null;
+        const baseTimes = (bf?.bands ?? []).map(b => `${minText(b.s)}-${minText(b.e)}`);
         if (!day || !f || f.bands.length === 0) return `<td class="off${red}">休${day?.note ? `<div class="note">${esc(day.note)}</div>` : ''}${cleaningLines(p, k)}${studyLines(p, k, o)}</td>`;
         total += f.laborMinutes;
-        const times = f.bands.map(b => `${minText(b.s)}-${minText(b.e)}`).join('<br>');
+        const timeList = f.bands.map(b => `${minText(b.s)}-${minText(b.e)}`);
+        const times = on ? markedTimes(timeList, baseTimes) : timeList.join('<br>');
         const places = printSteps(day, o.areas, p.mainAreaId)
           .map(s => chip(o.areas, s.area?.id, `${shortSchool(s.school)}${s.area ? `(${s.area.short_name})` : ''}`)).join('→');
         return `<td class="${red.trim()}"><div class="t">${times}</div>${places}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}${cleaningLines(p, k)}${studyLines(p, k, o)}</td>`;
@@ -173,7 +197,7 @@ export function buildRosterPrintHtml(o: PrintOptions): string {
     .sub { font-size: 8px; color: #333; }
     .note { font-size: 7.5px; color: #333; }
     .off td, td.off { color: #999; }
-    .red, .red * { color: #c00 !important; }
+    ${CHANGE_MARK_PRINT_CSS}
     .chip { display: inline-block; padding: 0 2px; border-radius: 2px; font-size: 7.5px; }
     .arrow { margin: 0 1px; }
     .sum td { border-top: 1px solid #111; }

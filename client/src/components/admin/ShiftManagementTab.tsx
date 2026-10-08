@@ -22,10 +22,12 @@ import { dayIssue, studyCellText, studyLabel, versionsOnDate, type StudyVersion 
 import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
 import CleaningRosterPanel from './CleaningRosterPanel';
 import KidsShiftPanel from './KidsShiftPanel';
+import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
 import { cellIssues, cellValue, cellVersionOn, rosterCleaningLines, rowPlaceLabel } from '../../lib/cleaningRoster';
 import { loadCleaningData, type CleaningData } from '../../lib/cleaningRosterApi';
 import { loadKidsData, type KidsData } from '../../lib/kidsShiftApi';
 import { cellVersionOn as kidsVersionOn, kidsCellIssues } from '../../lib/kidsShift';
+import { withPersonSpans } from '../../lib/adultShift';
 
 // シフト管理（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-1〜5-3。
 // ・表は月〜日。名前を押すと、その人の月〜日（祝・出・過去の履歴）が表の中に開く（C）
@@ -102,14 +104,18 @@ const ShiftManagementTab: React.FC = () => {
   const [kids, setKids] = useState<KidsData | null>(null);
   const [cleaningErr, setCleaningErr] = useState('');
   const [kidsErr, setKidsErr] = useState('');
+  // 大人シフト表（2026-10-08）。保存の確認に「◯件が時間外になります」を出す（こどもと同じ形）
+  const [adultBoard, setAdultBoard] = useState<KidsData | null>(null);
+  const [adultErr, setAdultErr] = useState('');
   const [study, setStudy] = useState<StudyData | null>(null);
   const [studyErr, setStudyErr] = useState('');
   const [pdfStudyWarn, setPdfStudyWarn] = useState(false);
 
   // 勉強会（③）：勤務表の欄・保存の確認・PDF に使う。🚨 読めなくても勤務表は使えるようにする（理由だけ出す）
   const loadStudy = useCallback(async () => {
-    const [{ data: s, error }, c, kd] = await Promise.all([
+    const [{ data: s, error }, c, kd, ad] = await Promise.all([
       loadStudyData(prevDate(applyFrom)), loadCleaningData(prevDate(applyFrom)), loadKidsData(prevDate(applyFrom)),
+      loadKidsData(prevDate(applyFrom), 'adult'),
     ]);
     setStudyErr(error ? `勉強会を読み込めませんでした（勤務表の欄に勉強会が出ていません）：${error}` : '');
     if (s) setStudy(s);
@@ -120,6 +126,8 @@ const ShiftManagementTab: React.FC = () => {
     // 🚨 読めなくても勤務表は使える。ただし黙って0件にせず、確かめられない旨を出す
     setKidsErr(kd.error ? `こどもシフト表を読み込めませんでした（保存の確認に出ません）：${kd.error}` : '');
     if (kd.data) setKids(kd.data);
+    setAdultErr(ad.error ? `大人シフト表を読み込めませんでした（保存の確認に出ません）：${ad.error}` : '');
+    if (ad.data) setAdultBoard(ad.data);
   }, [applyFrom]);
 
   // 読み込み：適用開始日の前日（赤字の比べ先）に効いている行と、それより先の行
@@ -273,13 +281,15 @@ const ShiftManagementTab: React.FC = () => {
   // 🚨 掃除・勉強会と同じ形。**直す前は問題なく、直すと ⚠️ になるものだけ**を出す
   //    （もともと ⚠️ のものまで出すと、毎回同じ警告が並んで読まれなくなる）。
   // 🚨 判定は lib/kidsShift.ts の kidsCellIssues 1本（こどもシフト表の画面と同じもの）
-  const kidsWarnings = kids ? draftIds.flatMap(id => draftChangedDays(id).flatMap(k => {
+  // 🚨 大人シフト表も同じ判定（2026-10-08）。大人は前半／後半と終わりの無い行の時間を withPersonSpans で埋めてから渡す
+  const boardWarnings = (bd: KidsData | null, adultBoardMode: boolean): string[] => (bd ? draftIds.flatMap(id => draftChangedDays(id).flatMap(k => {
     if (!ROSTER_WEEK.includes(k)) return [];
     const name = data?.staff.find(s => s.id === id)?.name ?? '';
     const names = new Map([[id, name]]);
-    const modeOf = (rk: string) => kids.rowKinds.find(r => r.key === rk)?.issue_mode ?? 'full';
-    return kids.places.filter(p => p.active && p.kind !== 'daynote').flatMap(p => {
-      const items = kidsVersionOn(kids.cells, p.id, k, applyFrom)?.items ?? [];
+    const modeOf = (rk: string) => bd.rowKinds.find(r => r.key === rk)?.issue_mode ?? 'full';
+    return bd.places.filter(p => p.active && p.kind !== 'daynote').flatMap(p => {
+      const raw = kidsVersionOn(bd.cells, p.id, k, applyFrom)?.items ?? [];
+      const items = adultBoardMode ? withPersonSpans(raw, rk => bd.rowKinds.find(r => r.key === rk)?.default_minutes ?? 30) : raw;
       // その人が入っている行だけに絞る（ほかの人の ⚠️ はこの保存と関係ない）
       const mine = items.map(it => ({ ...it, people: it.people.filter(pe => pe.user_id === id) }))
         .filter(it => it.people.length > 0);
@@ -291,7 +301,9 @@ const ShiftManagementTab: React.FC = () => {
         .filter(i => !before.has(i.key))
         .map(() => `${name}さん（${ROSTER_DAY_LABEL[k]}）：${p.label}`);
     });
-  })) : [];
+  })) : []);
+  const kidsWarnings = boardWarnings(kids, false);
+  const adultWarnings = boardWarnings(adultBoard, true);
 
   const doSave = async () => {
     if (!data || token == null) return;
@@ -340,7 +352,9 @@ const ShiftManagementTab: React.FC = () => {
       for (const k of ROSTER_WEEK) studies[k] = studiesFor(s.id, k, applyFrom).map(v => ({ text: studyCellText(v, shortNames), warn: !!dayIssue(v, days[k]!) }));
       const cleaningLines: PrintPerson['cleaning'] = {};
       for (const k of ROSTER_WEEK) cleaningLines[k] = cleaningFor(s.id, k, applyFrom);
-      return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id), studies, cleaning: cleaningLines };
+      const baseDays: Partial<Record<RosterDayKind, RosterDay>> = {};
+      for (const k of ROSTER_WEEK) baseDays[k] = baseDay(s.id, k);
+      return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id), baseDays, studies, cleaning: cleaningLines };
     });
     setPdfErr(openRosterPrint(buildRosterPrintHtml({ layout: pdfLayout, applyFrom, people, areas, redChanges: pdfRed, studyWarn: pdfStudyWarn })) ?? '');
   };
@@ -373,14 +387,22 @@ const ShiftManagementTab: React.FC = () => {
     const isRed = !dayEquals(day, baseDay(userId, k));
     const mainId = mainAreaOf(userId);
     const base = baseDay(userId, k);
-    const baseText = deriveFields(base.segments).bands.map(b => `${minText(b.s)}〜${minText(b.e)}`).join(' / ') || '休み';
+    // 変わった所の印（2026-10-08：赤い字 → マスは薄い黄色・変わった時刻だけ濃いピンク・抜けたものは「前：」に取り消し線。lib/changeMark.ts）
+    // 🚨 「-」は区切りにならないので「〜」で比べて、出すときに「-」に戻す
+    const lines = f.bands.map(b => `${minText(b.s)}〜${minText(b.e)}`);
+    const marked = isRed ? diffLines(lines, deriveFields(base.segments).bands.map(b => `${minText(b.s)}〜${minText(b.e)}`)) : null;
+    const dash = (s: string) => s.replace('〜', '-');
     return (
-      <div style={{ color: isRed ? red : text }}>
-        {f.bands.length === 0 ? <span style={{ color: isRed ? red : subText }}>{hasAnyRow(userId) || drafts[userId] ? '休' : '—'}</span>
-          : f.bands.map((b, i) => <div key={i} style={{ fontWeight: isRed ? 'bold' : 'normal' }}>{minText(b.s)}-{minText(b.e)}</div>)}
+      <div style={{ color: isRed ? '#000' : text }}>
+        {f.bands.length === 0 ? <span style={{ color: isRed ? '#000' : subText }}>{hasAnyRow(userId) || drafts[userId] ? '休' : '—'}</span>
+          : lines.map((l, i) => (
+            <div key={i}>
+              {marked ? marked.lines[i].map((p, j) => (p.hit ? <span key={j} style={CHANGE_MARK_SPAN}>{dash(p.text)}</span> : <React.Fragment key={j}>{dash(p.text)}</React.Fragment>)) : dash(l)}
+            </div>
+          ))}
         {/* 休憩・労働は切り替えなしで時刻のすぐ下に出す（2026-09-15 ユーザー要望） */}
         {f.bands.length > 0 && !f.error && (
-          <div style={{ fontSize: 11, color: isRed ? red : subText, whiteSpace: 'nowrap' }}>休憩{minText(f.breakMinutes)} 労働{minText(f.laborMinutes)}</div>
+          <div style={{ fontSize: 11, color: isRed ? '#444' : subText, whiteSpace: 'nowrap' }}>休憩{minText(f.breakMinutes)} 労働{minText(f.laborMinutes)}</div>
         )}
         {f.bands.length > 0 && (
           <div style={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap', marginTop: 1 }}>
@@ -403,7 +425,11 @@ const ShiftManagementTab: React.FC = () => {
           <div key={t} style={{ fontSize: 10.5, color: subText, whiteSpace: 'nowrap' }} title="掃除担当表から">掃除 {t}</div>
         ))}
         {f.error && <div style={{ fontSize: 10.5, color: red }}>⚠️ 入力を確かめてください</div>}
-        {isRed && <div style={{ fontSize: 10, color: subText }}>前：{baseText}</div>}
+        {marked && marked.removed.length > 0 && (
+          <div style={{ fontSize: 10, color: '#444' }}>
+            前：{marked.removed.map((r, i) => <React.Fragment key={i}>{i > 0 ? '・' : ''}<span style={{ ...CHANGE_MARK_SPAN, textDecoration: 'line-through' }}>{dash(r)}</span></React.Fragment>)}
+          </div>
+        )}
       </div>
     );
   };
@@ -418,7 +444,7 @@ const ShiftManagementTab: React.FC = () => {
     return (
       <div key={k} style={{ padding: '6px 8px', borderRadius: 8, background: innerBg, marginBottom: 4 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ width: 20, fontWeight: 'bold', color: changed ? red : text, paddingTop: 6 }}>{ROSTER_DAY_LABEL[k]}</span>
+          <span style={{ width: 20, fontWeight: 'bold', color: changed ? '#000' : text, paddingTop: 6 }}><span style={changed ? CHANGE_MARK_SPAN : undefined}>{ROSTER_DAY_LABEL[k]}</span></span>
           <div style={{ flex: 1, minWidth: 320 }}>
             {day.segments.length === 0 && <span style={{ fontSize: 12.5, color: subText, lineHeight: '30px' }}>休み</span>}
             {day.segments.map((sg, i) => (
@@ -672,6 +698,17 @@ const ShiftManagementTab: React.FC = () => {
               {kidsWarnings.map(t => <div key={t}>・{t}</div>)}
             </div>
           )}
+          {adultWarnings.length > 0 && (
+            <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
+              ⚠️ 大人シフト表{adultWarnings.length}件が時間外になります（保存はできます。大人シフト表のタブで直せます）
+              {adultWarnings.map(t => <div key={t}>・{t}</div>)}
+            </div>
+          )}
+          {adultErr && (
+            <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
+              ⚠️ 大人シフト表が時間外になるかは確かめられませんでした（{adultErr}）
+            </div>
+          )}
           {/* 🚨 読めなかったときは黙って0件にしない（「問題なし」と誤解させない） */}
           {kidsErr && (
             <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
@@ -706,7 +743,7 @@ const ShiftManagementTab: React.FC = () => {
             <button type="button" onClick={() => setPdfWho('all')} style={toggle(pdfWho === 'all')}>表示している全員</button>
             <button type="button" onClick={() => setPdfWho('changed')} style={toggle(pdfWho === 'changed')}>変更があった人</button>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
-              <input type="checkbox" checked={pdfRed} onChange={e => setPdfRed(e.target.checked)} />変わった所を赤字にする
+              <input type="checkbox" checked={pdfRed} onChange={e => setPdfRed(e.target.checked)} />変わった所に印（ピンク）を付ける
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
               <input type="checkbox" checked={pdfStudyWarn} onChange={e => setPdfStudyWarn(e.target.checked)} />勉強会の⚠️印も刷る
@@ -783,13 +820,13 @@ const ShiftManagementTab: React.FC = () => {
                     </td>
                     {ROSTER_WEEK.map(k => (
                       <td key={k} onClick={() => openPerson(s.id)}
-                        style={{ padding: '5px 3px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top', cursor: 'pointer' }}>
+                        style={{ padding: '5px 3px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top', cursor: 'pointer', ...changeCellStyle(!dayEquals(shownDay(s.id, k), baseDay(s.id, k))) }}>
                         {cellView(s.id, k)}
                       </td>
                     ))}
-                    <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top', whiteSpace: 'nowrap', color: total !== baseTotal ? red : text }}>
-                      <b>{minText(total)}</b>
-                      {total !== baseTotal && <div style={{ fontSize: 10, color: subText }}>前：{minText(baseTotal)}</div>}
+                    <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top', whiteSpace: 'nowrap', color: text, ...changeCellStyle(total !== baseTotal) }}>
+                      <b style={total !== baseTotal ? CHANGE_MARK_SPAN : undefined}>{minText(total)}</b>
+                      {total !== baseTotal && <div style={{ fontSize: 10, color: '#444' }}>前：<span style={{ textDecoration: 'line-through' }}>{minText(baseTotal)}</span></div>}
                     </td>
                   </tr>
                   {openId === s.id && (

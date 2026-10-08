@@ -13,7 +13,7 @@ import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
   CLEANING_WEEK, cellEquals, cellError, cellIsEmpty, cellIssues, cellKey, cellLines, cellSameIgnoringOrder, cellValue, cellVersionOn, dayOfFrom,
-  offAndUnassigned, overlapIssues, personAssigns, personDaySig, rosterCleaningLines,
+  crossCleaningIssues, offAndUnassigned, overlapIssues, personAssigns, personDaySig, rosterCleaningLines,
   type CleaningCellValue, type CleaningIssue, type CleaningRow, type PersonAssign,
 } from '../../lib/cleaningRoster';
 import {
@@ -21,6 +21,10 @@ import {
   setCleaningExcluded, updateCleaningNote, updateCleaningRow, type CleaningData,
 } from '../../lib/cleaningRosterApi';
 import { buildCleaningPrintHtml } from '../../lib/cleaningRosterPrint';
+import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
+import { loadKidsData, type KidsData } from '../../lib/kidsShiftApi';
+import { cellVersionOn as boardVersionOn } from '../../lib/kidsShift';
+import { crossEntriesOf, placeShortName, type CrossEntry } from '../../lib/shiftCross';
 
 // ④ 掃除担当表（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-8〜5-8-2。
 // ・表は行（校・階・仕事）×月〜日。マスを押すと、その場で人・時刻・書き添え・この日は無し を入れる
@@ -90,6 +94,8 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const [personOpen, setPersonOpen] = useState<string | null>(null);
   const [personAdd, setPersonAdd] = useState<{ rowId: string; start: string } | null>(null);
   const [personErr, setPersonErr] = useState('');
+  // こども・大人のシフト表（決定済み）。掃除の時間との重なり（🔴/⚠️）に使う（2026-10-08）。🚨 読めなくても掃除担当表は使える
+  const [boards, setBoards] = useState<{ kids: KidsData | null; adult: KidsData | null; err: string }>({ kids: null, adult: null, err: '' });
 
   // 読み込み：適用開始日の前日（赤字の比べ先）に効いている版と、それより先の版
   const load = useCallback(async (keepDrafts: boolean) => {
@@ -102,6 +108,11 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     setRoster(r.data); setData(c.data); setToken(t.token); setStale(false);
     if (!keepDrafts) setDrafts({});
     setLoading(false);
+    const [kb, ab] = await Promise.all([loadKidsData(since, 'kids'), loadKidsData(since, 'adult')]);
+    setBoards({
+      kids: kb.data, adult: ab.data,
+      err: [kb.error ? 'こどもシフト表' : '', ab.error ? '大人シフト表' : ''].filter(Boolean).join('・'),
+    });
   }, [applyFrom]);
 
   useEffect(() => { void load(true); }, [load]);
@@ -136,10 +147,28 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const changedSet = new Set(changedKeys);
   const rowById = (id: string) => data.rows.find(r => r.id === id);
 
+  // こども・大人のシフト表（決定済み・適用開始日の版）の、その曜日の全員の時間
+  const crossMemo = new Map<RosterDayKind, CrossEntry[]>();
+  const crossOfDay = (day: RosterDayKind): CrossEntry[] => {
+    let v = crossMemo.get(day);
+    if (v) return v;
+    v = [];
+    for (const [b, bd] of [['kids', boards.kids], ['adult', boards.adult]] as const) {
+      if (!bd) continue;
+      const ps = bd.places.filter(p => p.active && (p.kind === 'column' || p.kind === 'trip' || p.kind === 'pool'));
+      v.push(...crossEntriesOf(b, ps.map(p => ({ place: p, items: boardVersionOn(bd.cells, p.id, day, applyFrom)?.items ?? [] })),
+        it => (b === 'adult' ? it.kind === 'adult_class' : !!bd.rowKinds.find(k => k.key === it.kind)?.has_groups),
+        k => bd.rowKinds.find(r => r.key === k)?.default_minutes ?? (b === 'adult' ? 30 : 50), placeShortName));
+    }
+    crossMemo.set(day, v);
+    return v;
+  };
   // ⚠️＝週のシフトと合わない（cellIssues）＋別の校の掃除と時間が重なる（overlapIssues・2026-10-06）
+  // ＋こども・大人のシフト表と重なる（crossCleaningIssues・2026-10-08。🔴 は［確認した］で消えない）
   const issuesOf = (row: CleaningRow, day: RosterDayKind, v = shown(row.id, day), valueOf = (rid: string) => (rid === row.id ? v : shown(rid, day))) => [
     ...cellIssues(row, v, dayOfFrom(rowsByUser, day, applyFrom), fullNames),
     ...overlapIssues(row, v, activeRows, valueOf, fullNames),
+    ...crossCleaningIssues(row, v, crossOfDay(day), fullNames),
   ];
   const issueMemo = new Map<string, CleaningIssue[]>();
   const issuesAt = (row: CleaningRow, day: RosterDayKind) => {
@@ -153,8 +182,9 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const v = cellVersionOn(cells, row.id, day, applyFrom);
     return !!v && data.acks.some(a => a.cell_id === v.id && a.issue_key === key);
   };
-  const allIssues = activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => issuesAt(r, d).map(i => ({ r, d, i, acked: isAcked(r, d, i.key) }))));
+  const allIssues = activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => issuesAt(r, d).map(i => ({ r, d, i, acked: i.level !== 'red' && isAcked(r, d, i.key) }))));
   const unacked = allIssues.filter(x => !x.acked);
+  const redCount = allIssues.filter(x => x.i.level === 'red').length;
 
   const footerOf = (day: RosterDayKind) => {
     const assigned = new Set(activeRows.flatMap(r => shown(r.id, day).entries.map(e => e.user_id)));
@@ -288,7 +318,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const unassigned: Partial<Record<RosterDayKind, string[]>> = {};
     for (const d of CLEANING_WEEK) { const f = footerOf(d); off[d] = f.off; unassigned[d] = f.unassigned; }
     const html = buildCleaningPrintHtml({
-      applyFrom, rows, valueOf: shown, names, changed, redChanges: pdfRed, warn, showWarn: pdfWarn,
+      applyFrom, rows, valueOf: shown, baseOf: base, names, changed, redChanges: pdfRed, warn, showWarn: pdfWarn,
       school: pdfSchool || null, off: pdfSchool ? undefined : off, unassigned: pdfSchool ? undefined : unassigned,
       title: data.notes.find(n => n.kind === 'title' && n.active)?.body ?? '毎日の掃除担当表',
       notes: data.notes.filter(n => n.kind === 'note' && n.active).map(n => n.body),
@@ -353,11 +383,11 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           </div>
           {err && <div style={{ color: red, marginTop: 6 }}>⚠️ {err}</div>}
           {issues.map(i => {
-            const acked = isAcked(row, day, i.key);
+            const acked = i.level !== 'red' && isAcked(row, day, i.key);
             return (
               <div key={i.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
-                <span>{acked ? '✓' : '⚠️'} {i.text}{acked ? '（確認済み）' : '（保存はできます）'}</span>
-                {!acked && !changedSet.has(k) && cellVersionOn(cells, row.id, day, applyFrom) && (
+                <span>{acked ? '✓' : i.level === 'red' ? '🔴' : '⚠️'} {i.text}{acked ? '（確認済み）' : i.level === 'red' ? '（直してください・保存はできます）' : '（保存はできます）'}</span>
+                {!acked && i.level !== 'red' && !changedSet.has(k) && cellVersionOn(cells, row.id, day, applyFrom) && (
                   <button type="button" onClick={() => void ack(row, day, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
                 )}
               </div>
@@ -376,19 +406,30 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const v = shown(row.id, day);
     const isRed = !cellEquals(v, base(row.id, day));
     const dirty = changedSet.has(k);
-    const warnCount = issuesAt(row, day).filter(i => !isAcked(row, day, i.key)).length;
+    const cellIss = issuesAt(row, day);
+    const warnCount = cellIss.filter(i => i.level === 'red' || !isAcked(row, day, i.key)).length;
+    const hasRed = cellIss.some(i => i.level === 'red');
     const lines = cellLines(v, names);
+    // 変わった所の印（2026-10-08：赤い字 → マスは薄い黄色・変わった名前・時刻だけ濃いピンク・抜けたものは「前：」に取り消し線）
+    const marked = isRed ? diffLines(lines, cellLines(base(row.id, day), names)) : null;
     return (
       <td key={day} onClick={() => setOpenKey(o => (o === k ? null : k))}
         style={{
           padding: '4px 3px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'middle',
-          cursor: 'pointer', whiteSpace: 'nowrap', color: isRed ? red : text, fontWeight: isRed ? 'bold' : 'normal',
+          cursor: 'pointer', whiteSpace: 'nowrap', color: text,
           outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
-          background: v.is_none ? innerBg : 'transparent',
+          background: v.is_none ? innerBg : 'transparent', ...changeCellStyle(isRed),
         }}>
         {v.is_none ? <span style={{ color: subText }}>／</span>
           : lines.length === 0 ? <span style={{ color: subText }}>—</span>
-          : lines.map((l, i) => <div key={i}>{i === 0 && warnCount > 0 ? '⚠️' : ''}{l}</div>)}
+          : lines.map((l, i) => (
+            <div key={i}>{i === 0 && warnCount > 0 ? (hasRed ? '🔴' : '⚠️') : ''}
+              {marked ? marked.lines[i].map((p, j) => (p.hit ? <span key={j} style={CHANGE_MARK_SPAN}>{p.text}</span> : <React.Fragment key={j}>{p.text}</React.Fragment>)) : l}
+            </div>
+          ))}
+        {marked && marked.removed.length > 0 && (
+          <div style={{ fontSize: 10.5 }}>前：{marked.removed.map((x, i) => <React.Fragment key={i}>{i > 0 ? '・' : ''}<span style={{ ...CHANGE_MARK_SPAN, textDecoration: 'line-through' }}>{x}</span></React.Fragment>)}</div>
+        )}
       </td>
     );
   };
@@ -546,11 +587,11 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           {personErr && <div style={{ color: red, marginTop: 6 }}>⚠️ {personErr}</div>}
           {errs.map(e => <div key={e} style={{ color: red, marginTop: 6 }}>⚠️ {e}</div>)}
           {issues.map(({ r, i }) => {
-            const acked = isAcked(r, day, i.key);
+            const acked = i.level !== 'red' && isAcked(r, day, i.key);
             return (
               <div key={`${r.id}|${i.key}`} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
-                <span>{acked ? '✓' : '⚠️'} {r.school === '四条本校' ? '' : `${shortSchool(r.school)} `}{r.floor ?? ''}{r.short_name}：{i.text}{acked ? '（確認済み）' : '（保存はできます）'}</span>
-                {!acked && !changedSet.has(cellKey(r.id, day)) && cellVersionOn(cells, r.id, day, applyFrom) && (
+                <span>{acked ? '✓' : i.level === 'red' ? '🔴' : '⚠️'} {r.school === '四条本校' ? '' : `${shortSchool(r.school)} `}{r.floor ?? ''}{r.short_name}：{i.text}{acked ? '（確認済み）' : i.level === 'red' ? '（直してください・保存はできます）' : '（保存はできます）'}</span>
+                {!acked && i.level !== 'red' && !changedSet.has(cellKey(r.id, day)) && cellVersionOn(cells, r.id, day, applyFrom) && (
                   <button type="button" onClick={() => void ack(r, day, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
                 )}
               </div>
@@ -575,18 +616,28 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const mine = personDaySig(activeRows, shownOf(day), userId);
     const isRed = mine !== personDaySig(activeRows, baseOf(day), userId);
     const dirty = mine !== personDaySig(activeRows, savedOf(day), userId);
-    const warnCount = personIssues(userId, day).filter(x => !isAcked(x.r, day, x.i.key)).length;
+    const pIss = personIssues(userId, day);
+    const warnCount = pIss.filter(x => x.i.level === 'red' || !isAcked(x.r, day, x.i.key)).length;
+    const hasRed = pIss.some(x => x.i.level === 'red');
+    const marked = isRed ? diffLines(lines, rosterCleaningLines(activeRows, baseOf(day), userId)) : null;
     return (
       <td key={day} onClick={() => openPerson(userId, day)}
         style={{
           padding: '4px 5px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, textAlign: 'left', verticalAlign: 'middle',
-          cursor: 'pointer', whiteSpace: 'nowrap', color: isRed ? red : text, fontWeight: isRed ? 'bold' : 'normal',
+          cursor: 'pointer', whiteSpace: 'nowrap', color: text,
           outline: dirty ? '2px solid #e65100' : personOpen === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
-          background: isOff && lines.length === 0 ? innerBg : 'transparent',
+          background: isOff && lines.length === 0 ? innerBg : 'transparent', ...changeCellStyle(isRed),
         }}>
         {lines.length > 0
-          ? lines.map((l, i) => <div key={i}>{i === 0 && warnCount > 0 ? '⚠️' : ''}{l}</div>)
+          ? lines.map((l, i) => (
+            <div key={i}>{i === 0 && warnCount > 0 ? (hasRed ? '🔴' : '⚠️') : ''}
+              {marked ? marked.lines[i].map((p, j) => (p.hit ? <span key={j} style={CHANGE_MARK_SPAN}>{p.text}</span> : <React.Fragment key={j}>{p.text}</React.Fragment>)) : l}
+            </div>
+          ))
           : <span style={{ color: subText }}>{!d ? '未登録' : isOff ? '休み' : '—'}</span>}
+        {marked && marked.removed.length > 0 && (
+          <div style={{ fontSize: 10.5 }}>前：{marked.removed.map((x, i) => <React.Fragment key={i}>{i > 0 ? '・' : ''}<span style={{ ...CHANGE_MARK_SPAN, textDecoration: 'line-through' }}>{x}</span></React.Fragment>)}</div>
+        )}
       </td>
     );
   };
@@ -612,7 +663,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
         {view === 'task'
           ? 'マスを押すと、人・時刻・書き添えを入れられます。'
           : 'マスを押すと、その人のその日の掃除（場所・時刻）を直せます。'}
-        赤字は、適用開始日の前日に効いている表から変わったマスです。<br />
+        薄い黄色のマスは、適用開始日の前日に効いている表から変わったマスです（変わった名前・時刻は濃いピンク）。<br />
         保存すると、変えたマスだけが適用開始日から切り替わります。先に登録してある変更は消えません。
       </p>
       {rosterDraftCount > 0 && (
@@ -628,8 +679,9 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
         </label>
         {isPast && <span style={{ fontSize: 12, color: '#856404' }}>今日より前の日付です</span>}
         <span style={{ fontSize: 13, color: unacked.length > 0 ? red : subText, fontWeight: unacked.length > 0 ? 'bold' : 'normal' }}>
-          ⚠️ {unacked.length}件{allIssues.length - unacked.length > 0 ? `（確認済み ${allIssues.length - unacked.length}）` : ''}
+          {redCount > 0 ? `🔴 ${redCount}件 ／ ` : ''}⚠️ {unacked.length - redCount}件{allIssues.length - unacked.length > 0 ? `（確認済み ${allIssues.length - unacked.length}）` : ''}
         </span>
+        {boards.err && <span style={{ fontSize: 12, color: red }}>{boards.err}を読み込めませんでした（重なりを出せません）</span>}
       </div>
 
       {/* 保存・PDF の帯 */}
@@ -666,7 +718,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           {keptFuture.map(t => <div key={t}>・{t}</div>)}
           {newWarnings.length > 0 && (
             <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
-              ⚠️ 勤務時間と合わないマスが{newWarnings.length}件あります（保存はできます）
+              ⚠️ 勤務時間・ほかの表と合わないマスが{newWarnings.length}件あります（保存はできます）
               {newWarnings.map(t => <div key={t}>・{t}</div>)}
             </div>
           )}
@@ -696,7 +748,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
             </select>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={pdfRed} onChange={e => setPdfRed(e.target.checked)} />変わった所を赤字にする</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={pdfRed} onChange={e => setPdfRed(e.target.checked)} />変わった所に印（ピンク）を付ける</label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={pdfWarn} onChange={e => setPdfWarn(e.target.checked)} />⚠️印も刷る</label>
           </div>
           <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>

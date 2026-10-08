@@ -2,11 +2,12 @@
 // 🚨 supabase を読まない。別の窓に書き出してブラウザの印刷で「PDF に保存」する（勤務表と同じ openRosterPrint）
 // ・紙と同じ A4横1枚（全校）／校を選んで1枚（その校の行だけ・休み・担当なしは出さない）
 // ・斜線＝この日は無し。校×曜日の全部が無しなら1本の斜線、全部が同じ1人なら1マスにまとめる（mergedSchoolDay）
-// ・赤字（前の日から変わったマス）と ⚠️ は出すときに選ぶ
-// 🚨 地の色は足さない（新しい色を足さない決まり）。注意書きは紙と同じ赤字
+// ・変わった所の印（前の日から変わったマス・2026-10-08 に赤い字から薄い黄色＋濃いピンクへ。lib/changeMark.ts）と ⚠️ は出すときに選ぶ
+// 🚨 地の色は変わった所の印だけ（ほかに新しい色を足さない）。注意書きは紙と同じ赤字
 
 import { CLEANING_WEEK, cellKey, cellLines, mergedSchoolDay, type CleaningCellValue, type CleaningRow } from './cleaningRoster';
 import { ROSTER_DAY_LABEL, minText, toMin, type RosterDayKind } from './shiftRoster';
+import { CHANGE_MARK_PRINT_CSS, diffLines } from './changeMark';
 
 export interface CleaningPrintOptions {
   applyFrom: string;
@@ -14,6 +15,8 @@ export interface CleaningPrintOptions {
   notes: string[];
   rows: CleaningRow[];                 // 出す行（並び順・active だけ）
   valueOf: (rowId: string, day: RosterDayKind) => CleaningCellValue;
+  /** 比べる先（変わった名前・時刻を見分けるため） */
+  baseOf?: (rowId: string, day: RosterDayKind) => CleaningCellValue;
   names: Map<string, string>;
   changed: Set<string>;                // cellKey
   redChanges: boolean;
@@ -69,10 +72,18 @@ export function buildCleaningPrintHtml(o: CleaningPrintOptions): string {
         }
         const k = cellKey(r.id, d);
         const v = o.valueOf(r.id, d);
-        const red = o.redChanges && o.changed.has(k) ? ' red' : '';
+        const on = o.redChanges && o.changed.has(k);
+        const red = on ? ' chgcell' : '';
         if (v.is_none) { tr += `<td class="none${red}"></td>`; continue; }
         const w = o.showWarn && o.warn.has(k) ? '⚠️' : '';
-        tr += `<td class="c${red}">${w}${cellLines(v, o.names).map(esc).join('<br>')}</td>`;
+        const lines = cellLines(v, o.names);
+        let inner = lines.map(esc).join('<br>');
+        if (on && o.baseOf) {
+          const m = diffLines(lines, cellLines(o.baseOf(r.id, d), o.names));
+          inner = m.lines.map(ps => ps.map(p => (p.hit ? `<span class="chg">${esc(p.text)}</span>` : esc(p.text))).join('')).join('<br>')
+            + (m.removed.length > 0 ? `<div class="gn">前：${m.removed.map(x => `<span class="chg gone">${esc(x)}</span>`).join('・')}</div>` : '');
+        }
+        tr += `<td class="c${red}">${w}${inner}</td>`;
       }
       tr += '</tr>';
       body += tr;
@@ -106,7 +117,8 @@ export function buildCleaningPrintHtml(o: CleaningPrintOptions): string {
     .mg { text-align: center; font-size: 12px; }
     .none { background: linear-gradient(to top right, transparent calc(50% - 0.6px), #333 50%, transparent calc(50% + 0.6px)); }
     .nb { text-align: center; font-size: 8px; font-weight: bold; }
-    .red, .red * { color: #c00 !important; }
+    ${CHANGE_MARK_PRINT_CSS}
+    .gn { font-size: 7px; }
     .ft td { font-size: 7.5px; }
     .ft td:first-child { text-align: center; font-size: 10px; font-weight: bold; }
     .sm { white-space: normal; }

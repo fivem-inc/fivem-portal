@@ -2090,6 +2090,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     if (!onlyShiftPending) {
       for (const ab of (absencesByDate[date] || [])) monthListRows.push({ kind: 'absence', date, ab });
       for (const ot of (overtimesByDate[date] || [])) monthListRows.push({ kind: 'overtime', date, ot });
+    } else {
+      // 🚨 欠勤にもシフト調整の場がある（2026-09-13）。印が「未」「調整中」の欠勤は残す（2026-10-08：パートの欠勤で、
+      //    印は「シフト 未」なのに絞ると出なかった）。🚨 印を出す条件（下の欠勤の行の shiftMarkChip）と同じ場・同じ slotMarkKey で見る
+      for (const ab of (absencesByDate[date] || [])) {
+        const sa = ab.type === 'absent' && saPerms.view ? saSlots[`${ab.user_id}|${ab.date}`] : undefined;
+        const k = sa ? slotMarkKey(sa) : null;
+        if (k === 'pending' || k === 'working') monthListRows.push({ kind: 'absence', date, ab });
+      }
     }
   }
 

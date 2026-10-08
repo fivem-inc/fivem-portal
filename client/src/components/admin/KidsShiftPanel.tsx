@@ -16,7 +16,7 @@ import {
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell, type ShiftBoard,
 } from '../../lib/kidsShift';
 import { ADULT_CLASS_KIND, ADULT_JOB_TAG, ADULT_ROLES, ADULT_TRIP_KIND, adultLines, hasSecondHalf, personSpanOf, splitMinOf, withPersonSpans, type AdultLine } from '../../lib/adultShift';
-import { crossEntriesOf, crossOverlaps, kidsRowText, type CrossEntry } from '../../lib/shiftCross';
+import { crossEntriesOf, crossOverlaps, kidsRowText, placeShortName as placeShort, type CrossEntry } from '../../lib/shiftCross';
 import { adultGridSheet, buildAdultPrintHtml, type AdultPrintOptions } from '../../lib/adultShiftPrint';
 import {
   ackKidsIssue, decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
@@ -34,8 +34,6 @@ import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMa
 
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const cellKey = (placeId: string, day: string) => `${placeId}|${day}`;
-/** 表をまたぐ重なりに出す置き場所の短い呼び名（本校 3F・6F・出張 など） */
-const placeShort = (p: KidsPlace) => (p.kind === 'trip' ? '出張' : p.board === 'adult' ? (p.floor ?? p.label) : p.label.replace('四条本校', '本校'));
 /** 案と比べているときの薄い水色の帯（2026-10-06 ユーザー確定 B・黄色は変わったマスに使うため） */
 const compareBand = (isDark: boolean): React.CSSProperties => ({ background: isDark ? '#12363d' : '#e0f7fa' });
 
