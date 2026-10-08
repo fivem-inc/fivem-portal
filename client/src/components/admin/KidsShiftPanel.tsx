@@ -15,7 +15,7 @@ import {
   kidsCellIssues, kidsGridSheet, kidsListSheet, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell, type ShiftBoard,
 } from '../../lib/kidsShift';
-import { ADULT_CLASS_KIND, ADULT_JOB_TAG, ADULT_ROLES, ADULT_TRIP_KIND, adultLines, hasSecondHalf, personSpanOf, splitMinOf, withPersonSpans, type AdultLine } from '../../lib/adultShift';
+import { ADULT_CLASS_KIND, ADULT_JOB_TAG, ADULT_ROLES, ADULT_TRIP_KIND, adultLines, hasSecondHalf, isTentativeItem, personSpanOf, splitMinOf, withPersonSpans, type AdultLine } from '../../lib/adultShift';
 import { crossEntriesOf, crossOverlaps, kidsRowText, placeShortName as placeShort, type CrossEntry } from '../../lib/shiftCross';
 import { adultGridSheet, buildAdultPrintHtml, type AdultPrintOptions } from '../../lib/adultShiftPrint';
 import {
@@ -457,7 +457,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
       // 🚨 大人は1つの列（6F）にすべてのクラスが入るので、行ごとに分けて渡す（同じ列の中の掛け持ちも重なり）。
       //    前半と後半の人は personSpanOf の時間で比べる（同じ人が前半サポート・後半担当でも重ならない）
       const sources = isAdult
-        ? [...activeColumns, ...tripPlaces].flatMap(p => judgedCell(p.id, d).map((it, i) => {
+        // P（目安）は週ごとに変わる予約なので、同じ列の中の掛け持ちにも数えない（2026-10-08）
+        ? [...activeColumns, ...tripPlaces].flatMap(p => judgedCell(p.id, d).map((it, i) => ({ it, i })).filter(x => !isTentativeItem(x.it)).map(({ it, i }) => {
           const id = `${p.id}#${i}`;
           names.set(id, `${normTime(it.start)} ${it.class_name || (data?.rowKinds.find(r => r.key === it.kind)?.label ?? '')}`.trim());
           return { placeId: id, items: [it] };
@@ -1352,7 +1353,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const lineStyle = (l: AdultLine, i: number, lines: AdultLine[]): React.CSSProperties => ({
       fontSize: l.kind === 'staff' ? 14 : l.kind === 'head' || l.kind === 'trip' ? 11.5 : l.kind === 'note' ? 11 : 12,
       fontWeight: l.kind === 'staff' || (l.jr && l.kind === 'head') ? 'bold' : 'normal',
-      color: l.jr ? jrText : l.kind === 'head' || l.kind === 'note' ? subText : text,
+      color: l.jr ? jrText : l.kind === 'head' || l.kind === 'note' || l.tentative ? subText : text,
       background: l.jr ? jrBg : undefined,
       padding: l.jr ? '0 3px' : undefined,
       lineHeight: 1.4,

@@ -45,7 +45,7 @@ function linesHtml(lines: AdultLine[], base: AdultLine[], mark: boolean): { html
   const m = changed ? diffLines(lines.map(l => l.text), base.map(l => l.text)) : null;
   const body = lines.map((l, i) => {
     const inner = m ? m.lines[i].map(p => (p.hit ? `<span class="chg">${esc(p.text)}</span>` : esc(p.text))).join('') : esc(l.text);
-    const cls = [l.kind === 'staff' ? staffClass(l.text) : l.kind, l.jr ? 'jr' : '',
+    const cls = [l.kind === 'staff' ? staffClass(l.text) : l.kind, l.jr ? 'jr' : '', l.tentative ? 'tbd' : '',
       l.kind === 'job' && i > 0 && lines[i - 1].kind !== 'job' && lines[i - 1].kind !== 'note' ? 'jobtop' : ''].filter(Boolean).join(' ');
     return `<div class="${cls}">${inner}</div>`;
   }).join('');
@@ -96,6 +96,7 @@ export function buildAdultPrintHtml(o: AdultPrintOptions): string {
   .assist { font-size: 6.3pt; }
   .job { font-size: 6.3pt; }
   .jobtop { border-top: 0.4pt dashed #000; margin-top: 0.4mm; }
+  .tbd { color: #777; }
   .note { font-size: 5.6pt; }
   .jr { background: #d9d8d3; color: #444441; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   tr.foot td { font-size: 6pt; }

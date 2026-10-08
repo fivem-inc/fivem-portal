@@ -6,7 +6,7 @@
 // 🚨 supabase を読まない側（画面を開かずに検算できる）。人の時間は大人＝personSpanOf（前半／後半）、こども＝人の時間か行の時間
 
 import { normTime, toMin } from './shiftRoster';
-import { ADULT_TRIP_KIND, personSpanOf } from './adultShift';
+import { ADULT_TRIP_KIND, personSpanOf, isTentativeItem } from './adultShift';
 import type { KidsItem, KidsPlace, ShiftBoard } from './kidsShift';
 
 /** 1人の、1つの行にいる時間 */
@@ -43,6 +43,8 @@ export function crossEntriesOf(
   for (const src of sources) {
     for (const it of src.items) {
       if (it.kind === 'role' || it.kind === 'daynote' || it.is_none) continue;
+      // P（目安）は週ごとに変わる予約なので重なりを見ない（2026-10-08・こども／大人／掃除の重なりがすべてここを通る）
+      if (isTentativeItem(it)) continue;
       const cls = isClass(it);
       for (const p of it.people) {
         if (!p.user_id) continue;

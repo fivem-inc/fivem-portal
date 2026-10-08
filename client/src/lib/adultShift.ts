@@ -23,7 +23,14 @@ export const ADULT_ROLES: { key: KidsPersonRole; label: string }[] = [
 ];
 
 /** 別の仕事の札（白黒でも読めるように字で出す） */
-export const ADULT_JOB_TAG: Record<string, string> = { private: 'P', video: '映', office: '事', meeting: '打', other: '他' };
+export const ADULT_JOB_TAG: Record<string, string> = { private: 'P', private_tbd: 'P目安', video: '映', office: '事', meeting: '打', other: '他' };
+
+/**
+ * P（目安）＝会員様の希望で週ごとに変わる予約（2026-10-08 ユーザー確定）。表には薄く出すが、重なり（こども・大人・掃除・同じ列の中）は見ない。
+ * 毎週決まっている予約は private（P）。⚠️（勤務時間の外）は行の種類の issue_mode=day_only で曜日の休みだけ見る
+ */
+export const ADULT_TENTATIVE_KIND = 'private_tbd';
+export const isTentativeItem = (it: { kind: string }): boolean => it.kind === ADULT_TENTATIVE_KIND;
 
 const isFirst = (r: KidsPersonRole) => r === 'lead' || r === 'support';
 const isSecond = (r: KidsPersonRole) => r === 'second' || r === 'second_support';
@@ -92,6 +99,8 @@ export interface AdultLine {
   text: string;
   /** head＝時刻とクラス名／staff＝担当（大きい字）／assist＝補助／job＝別の仕事（下の段）／trip＝出張／note＝書き添え */
   kind: 'head' | 'staff' | 'assist' | 'job' | 'trip' | 'note';
+  /** P（目安）の行（薄く出す） */
+  tentative?: boolean;
   jr: boolean;
 }
 
@@ -131,7 +140,7 @@ export function adultLines(items: KidsItem[], name: (userId: string) => string):
     const tag = ADULT_JOB_TAG[it.kind] ?? '他';
     const t = `${normTime(it.start)}${it.end ? `〜${normTime(it.end)}` : ''}`;
     const who = names(it.people);
-    out.push({ text: `${who}${t}${it.class_name ? ` ${it.class_name}` : ''}［${tag}］`, kind: 'job', jr: false });
+    out.push({ text: `${who}${t}${it.class_name ? ` ${it.class_name}` : ''}［${tag}］`, kind: 'job', jr: false, tentative: isTentativeItem(it) });
     if (it.note) out.push({ text: it.note, kind: 'note', jr: false });
   }
   return out;
