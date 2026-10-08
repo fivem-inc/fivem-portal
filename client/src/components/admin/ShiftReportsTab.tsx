@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
-import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs } from '../../lib/shiftCalc';
+import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs, shiftLegalBreak, legalBreakReviewNote } from '../../lib/shiftCalc';
 import { logFail } from '../../lib/logFail';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 
@@ -646,6 +646,10 @@ const ShiftReportsTab: React.FC = () => {
                         {r.labor_minutes != null && r.labor_minutes > 0 && (
                           <div style={{ fontSize: 11, color: '#166534' }}>実労働 {fmtMin(r.labor_minutes)}</div>
                         )}
+                        {/* 休憩が法律の最低に足りない報告（2026-10-08・受理する人にだけ出す。文は lib/shiftCalc の legalBreakReviewNote） */}
+                        {(() => { const l = shiftLegalBreak(r); return l && !l.ok ? (
+                          <div style={{ fontSize: 11, color: isDarkMode ? '#ffd54f' : '#856404', background: isDarkMode ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 6, padding: '4px 6px', marginTop: 4, textAlign: 'left', lineHeight: 1.5 }}>{legalBreakReviewNote(l)}</div>
+                        ) : null; })()}
                         {!r.actual_location && !r.actual_start && (
                           <div style={{ fontSize: 11, color: sub }}>—</div>
                         )}

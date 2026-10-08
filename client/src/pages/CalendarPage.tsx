@@ -19,7 +19,7 @@ import {
 } from '../lib/overtimeTypes';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
-import { todayJstStr } from '../lib/breakCalc';
+import { todayJstStr, calcTotalBreak, checkLegalBreak, legalBreakPlanMessage, timeToMin } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
@@ -28,6 +28,7 @@ import { PageTabs } from '../components/PageTabs';
 import ShiftAdjustTab from '../components/ShiftAdjustTab';
 import { TOGGLE_BLUE } from '../lib/buttonStyles';
 import { ENC_PURPOSE_MARK, ENC_REASON_MARK } from '../lib/encouragementDay';
+import { PLACE_OPTION_FILTER, placeGroupsFromRows, allPlaces, placesInText, hasMoveWords, timesInText, type PlaceGroup } from '../lib/workPlaces';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -47,6 +48,8 @@ interface AbsenceDraft {
   isHolidayWork?: boolean;
   segments?: WorkSegment[];
   segmentCustoms?: string[];
+  /** 時間帯ごとに「前の時間帯から移ってきた（前の終わり＝この始まり）」か。［＋ 途中で別の校へ移る］で足したもの */
+  segmentMoves?: boolean[];
   hasLocationMove?: boolean;
   isLocationChange?: boolean;
   originalLocation?: string;
@@ -59,17 +62,22 @@ interface AbsenceDraft {
  * 校は保存時に「その他」が実際の校名へ解決されているので、登録リストに無い値は
  * 「その他（自由入力）」＋自由入力欄に振り分ける（交通費の toDraft と同じ考え方）。
  */
-const absenceToDraft = (ab: AbsenceEvent, workplaces: string[]): AbsenceDraft => {
-  // 校名 → [selectの値, 自由入力の値]
-  const splitLoc = (loc: string | null): [string, string] => {
+/** 時間帯がつながっている（前の終わり＝この始まり）ものを「途中で移った」とみなす */
+const deriveSegMoves = (segs: { start?: string | null; end?: string | null }[]): boolean[] =>
+  segs.map((s, i) => i > 0 && !!s.start && (s.start ?? '').slice(0, 5) === (segs[i - 1].end ?? '').slice(0, 5));
+
+const absenceToDraft = (ab: AbsenceEvent, workplaces: string[], places: string[]): AbsenceDraft => {
+  // 校名 → [selectの値, 自由入力の値]。時間帯の場所は出張先・園指導先も選べるので places で見る
+  const splitIn = (list: string[]) => (loc: string | null): [string, string] => {
     const v = (loc ?? '').trim();
     if (!v) return ['', ''];
-    return workplaces.includes(v) ? [v, ''] : [OTHER_LOCATION, v];
+    return list.includes(v) ? [v, ''] : [OTHER_LOCATION, v];
   };
+  const splitLoc = splitIn(workplaces);
   const [locSel, locCustom] = splitLoc(ab.location);
   const [origSel, origCustom] = splitLoc(ab.original_location);
   const segs = ab.work_segments;
-  const segSplit = segs.map(s => splitLoc(s.location));
+  const segSplit = segs.map(s => splitIn(places)(s.location));
   const time = ab.actual_time ? ab.actual_time.slice(0, 5) : '';
   const isLateType = ab.type === 'late' || ab.type === 'late_start';
   const isEarlyType = ab.type === 'early_leave' || ab.type === 'early_end';
@@ -97,6 +105,8 @@ const absenceToDraft = (ab: AbsenceEvent, workplaces: string[]): AbsenceDraft =>
       ? segs.map((s, i) => ({ start: (s.start ?? '').slice(0, 5), end: (s.end ?? '').slice(0, 5), location: segSplit[i][0] }))
       : [{ start: '', end: '', location: '' }],
     segmentCustoms: segs.length > 0 ? segSplit.map(p => p[1]) : [''],
+    // つながっている時間帯（前の終わり＝次の始まり）は「途中で移った」として戻す
+    segmentMoves: segs.length > 0 ? deriveSegMoves(segs) : [false],
     // 遅刻・早退で時間帯がある＝「途中で別の校に移動する」を使って登録したもの
     hasLocationMove: segs.length > 0 && (isLateType || isEarlyType),
     originalLocation: origSel,
@@ -545,6 +555,8 @@ const AbsenceInputSheet: React.FC<{
   profiles: ProfileEntry[];
   currentUserId: string;
   workplaces: string[];
+  /** 時間帯の場所の選択肢（校・出張先・園指導先。lib/workPlaces.ts） */
+  placeGroups: PlaceGroup[];
   onClose: () => void;
   onSaved: () => void;
   onSaving: () => void;
@@ -552,7 +564,9 @@ const AbsenceInputSheet: React.FC<{
   profilesError: string;
   /** 対象者の一覧を読み直す */
   onReloadProfiles: () => void;
-}> = ({ date, profiles, currentUserId, workplaces, onClose, onSaved, onSaving, profilesError, onReloadProfiles }) => {
+}> = ({ date, profiles, currentUserId, workplaces, placeGroups: placeGroupsProp, onClose, onSaved, onSaving, profilesError, onReloadProfiles }) => {
+  // 出張先などが読めなかったときも、校だけは選べるようにする
+  const placeGroups: PlaceGroup[] = placeGroupsProp.length > 0 ? placeGroupsProp : [{ label: '校', items: workplaces }];
   // 🚨 開いたときに対象者の一覧が空なら、その場で読み直す（2026-09-29：Android の一部の機種で、ページを開いた瞬間の
   //    読み込みがログインの確認より先に走って空になり、そのまま対象者を選べなかった＝濱口さん）
   useEffect(() => {
@@ -575,6 +589,12 @@ const AbsenceInputSheet: React.FC<{
   // 勤務時間帯（休日出勤、または「途中で別の校に移動した」を選んだとき）。既定値は必ず `??` で入れる
   const [segments, setSegments] = useState<WorkSegment[]>(absDraft?.segments ?? [{ start: '', end: '', location: '' }]);
   const [segmentCustoms, setSegmentCustoms] = useState<string[]>(absDraft?.segmentCustoms ?? ['']);
+  // 時間帯ごとに「前の時間帯から移ってきた」か（segments と同じ長さ）。古い下書きはつながりから作る
+  const [segMoves, setSegMoves] = useState<boolean[]>(() => {
+    const segs = absDraft?.segments ?? [{ start: '', end: '', location: '' }];
+    const m = absDraft?.segmentMoves;
+    return m && m.length === segs.length ? m : deriveSegMoves(segs);
+  });
   const [hasLocationMove, setHasLocationMove] = useState(absDraft?.hasLocationMove ?? false);
   // 勤務地変更（普段と違う校で勤務する）。「校（必須）」欄が変更後、こちらが変更前
   const [isLocationChange, setIsLocationChange] = useState(absDraft?.isLocationChange ?? false);
@@ -622,10 +642,10 @@ const AbsenceInputSheet: React.FC<{
     saveDraft(DRAFT_KEYS.attendance, {
       date, userIds: [...userIds], isAbsent, targetDates: [...targetDates],
       isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations,
-      locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove,
+      locationCustoms, isHolidayWork, segments, segmentCustoms, segmentMoves: segMoves, hasLocationMove,
       isLocationChange, originalLocation, originalLocationCustom, isTimeChange,
     });
-  }, [date, userIds, isAbsent, targetDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
+  }, [date, userIds, isAbsent, targetDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, segMoves, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
 
   // 種別が排他で押せないときの理由（グレーにするだけだと「なぜ押せないのか」が分からないため）
   const blockedReason = isHolidayWork
@@ -692,26 +712,102 @@ const AbsenceInputSheet: React.FC<{
   const toggleLocationMove = (checked: boolean) => {
     setHasLocationMove(checked);
     if (checked && segments.every(s => !s.start && !s.end && !s.location)) {
+      // 最初の校から移る先へ（移る先に着く時刻を入れる形・下の［＋ 途中で別の校へ移る］と同じ）
       setSegments([
         { start: lateTime || '', end: '', location: locations[date] ?? '' },
         { start: '', end: earlyTime || '', location: '' },
       ]);
       setSegmentCustoms([locationCustoms[date] ?? '', '']);
+      setSegMoves([false, true]);
     }
   };
 
   // 時間帯の編集（休日出勤・勤務地変更・勤務時間変更・校の移動で共用）
+  // 🚨 segments・segmentCustoms・segMoves は同じ長さで持つ。長さを変えるときは setSegAll を通す
+  const MAX_SEGMENTS = 3; // 午前・午後・夜で3つあれば実務上足りる（際限なく伸びるのを防ぐ）
   const useSegments = isHolidayWork || isLocationChange || isTimeChange || hasLocationMove;
+  const setSegAll = (segs: WorkSegment[], customs: string[], moves: boolean[]) => {
+    setSegments(segs); setSegmentCustoms(customs); setSegMoves(moves);
+  };
   const updateSegment = (i: number, patch: Partial<WorkSegment>) =>
     setSegments(prev => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  /** 間に勤務しない時間があるとき：別の時間帯を足す（移動ではない） */
   const addSegment = () => {
-    if (segments.length >= 3) return; // 午前・午後・夜で3つあれば実務上足りる（際限なく伸びるのを防ぐ）
-    setSegments(prev => [...prev, { start: '', end: '', location: '' }]);
-    setSegmentCustoms(prev => [...prev, '']);
+    if (segments.length >= MAX_SEGMENTS) return;
+    setSegAll([...segments, { start: '', end: '', location: '' }], [...segmentCustoms, ''], [...segMoves, false]);
   };
-  const removeSegment = (i: number) => {
-    setSegments(prev => prev.filter((_, idx) => idx !== i));
-    setSegmentCustoms(prev => prev.filter((_, idx) => idx !== i));
+  /** 時間帯をまるごと消す（移ってきた続きも一緒に消す） */
+  const removeChain = (chain: number[]) => {
+    const keep = (_: unknown, idx: number) => !chain.includes(idx);
+    setSegAll(segments.filter(keep), segmentCustoms.filter(keep), segMoves.filter(keep));
+  };
+  /** 途中で別の場所へ移る：i 番目の時間帯の後ろに「移る先」を足す。終わりの時刻は移る先が引き継ぐ */
+  const addMove = (i: number) => {
+    if (segments.length >= MAX_SEGMENTS) return;
+    const s = [...segments], c = [...segmentCustoms], m = [...segMoves];
+    s.splice(i + 1, 0, { start: '', end: s[i].end, location: '' });
+    s[i] = { ...s[i], end: '' };
+    c.splice(i + 1, 0, '');
+    m.splice(i + 1, 0, true);
+    setSegAll(s, c, m);
+  };
+  /** 移るのをやめる：移る先 j を消し、その終わりの時刻を前の時間帯に戻す */
+  const removeMove = (j: number) => {
+    const s = [...segments];
+    s[j - 1] = { ...s[j - 1], end: s[j].end };
+    const keep = (_: unknown, idx: number) => idx !== j;
+    setSegAll(s.filter(keep), segmentCustoms.filter(keep), segMoves.filter(keep));
+  };
+  /** 移る先に着く時刻＝前の時間帯の終わり＝移る先の始まり（いつも同じにする＝間を空けない） */
+  const setArrival = (j: number, v: string) =>
+    setSegments(prev => prev.map((s, idx) => (idx === j ? { ...s, start: v } : idx === j - 1 ? { ...s, end: v } : s)));
+  /** 時間帯のまとまり（最初の場所＋移った先）。間が空いたら次のまとまり */
+  const segChains: number[][] = [];
+  segments.forEach((_, i) => {
+    if (i > 0 && segMoves[i]) segChains[segChains.length - 1].push(i);
+    else segChains.push([i]);
+  });
+  /**
+   * 予定の休憩が法律の最低に足りているか（2026-10-08 ユーザー確定）。勤怠カレンダーは上司が入れる「予定」なので、足りなければ直すまで登録できない。
+   * 判定は残業と同じ checkLegalBreak（間の時間も休憩に数える・つながった時間帯は1つの勤務として自動の休憩を数える）。時刻がそろっていなければ null
+   */
+  const planLegal = (() => {
+    if (!useSegments) return null;
+    const ws = segments.map(s => ({ startMin: timeToMin(s.start), endMin: timeToMin(s.end) }));
+    if (ws.length === 0 || ws.some(s => s.startMin == null || s.endMin == null || s.endMin <= s.startMin)) return null;
+    const ok = ws as { startMin: number; endMin: number }[];
+    return checkLegalBreak(ok, calcTotalBreak(ok));
+  })();
+  const placeOf = (i: number): string =>
+    segments[i]?.location === OTHER_LOCATION ? (segmentCustoms[i] ?? '').trim() : (segments[i]?.location ?? '');
+  /**
+   * 「その他」に場所を2つ以上書いた時間帯を、場所ごとの時間帯に分ける（［分けて入れる］）。
+   * 時刻が「場所の数×2」書いてあれば（9:15～12:45洛西口校→14:00～18:15四条本校）その時刻で分ける。
+   * 「場所の数−1」なら移る時刻として使う。それ以外は移る時刻を空けて、本人に入れてもらう
+   */
+  const splitFreeText = (i: number) => {
+    const text = segmentCustoms[i] ?? '';
+    const ps = placesInText(text, placeGroups);
+    if (ps.length < 2 || segments.length - 1 + ps.length > MAX_SEGMENTS) return;
+    const ts = timesInText(text);
+    const seg = segments[i];
+    let added: WorkSegment[];
+    if (ts.length === ps.length * 2) {
+      added = ps.map((p, k) => ({ start: ts[k * 2], end: ts[k * 2 + 1], location: p }));
+    } else {
+      const arr = ts.length === ps.length - 1 ? ts : [];
+      added = ps.map((p, k) => ({
+        start: k === 0 ? seg.start : (arr[k - 1] ?? ''),
+        end: k === ps.length - 1 ? seg.end : (arr[k] ?? ''),
+        location: p,
+      }));
+    }
+    const moves = added.map((a, k) => (k === 0 ? !!segMoves[i] : a.start === added[k - 1].end));
+    const s = [...segments], c = [...segmentCustoms], m = [...segMoves];
+    s.splice(i, 1, ...added);
+    c.splice(i, 1, ...added.map(() => ''));
+    m.splice(i, 1, ...moves);
+    setSegAll(s, c, m);
   };
   /** 「その他」を選んだ時間帯は自由入力の値を実際の校名として使う */
   const effectiveSegments = (): WorkSegment[] => segments.map((s, i) => ({
@@ -779,9 +875,37 @@ const AbsenceInputSheet: React.FC<{
     if (useSegments) {
       const segs = effectiveSegments();
       if (segs.length === 0) { setError('勤務時間を1つ以上入力してください'); return; }
+      // 🚨 「その他」に場所を2つ以上書いたまま登録させない（何時にどこにいるかが人によって書いたり書かなかったりになるため・2026-10-08）
+      for (let i = 0; i < segments.length; i++) {
+        if (segments[i].location !== OTHER_LOCATION) continue;
+        if (placesInText(segmentCustoms[i] ?? '', placeGroups).length >= 2) {
+          setError('「その他」に場所が2つ書かれています。［分けて入れる］を押して、移る時刻を入れてください');
+          return;
+        }
+      }
       for (let i = 0; i < segs.length; i++) {
         const s = segs[i];
-        const no = `時間帯${i + 1}`;
+        const chainNo = segChains.findIndex(c => c.includes(i)) + 1;
+        const no = `時間帯${chainNo}`;
+        if (segMoves[i]) {
+          // 移る先：場所と着く時刻
+          if (!s.location) { setError(`${no}の移る先を選択してください`); return; }
+          if (!s.start) { setError(`${no}の「${s.location}に着く時刻」を入力してください`); return; }
+          if (normalizeTime(s.start) === null) { setError(`${no}の「${s.location}に着く時刻」を正しく入力してください（例 15:30）`); return; }
+          if (segs[i - 1].start && s.start <= segs[i - 1].start) { setError(`${no}の「${s.location}に着く時刻」は、${segs[i - 1].location || '前の場所'}での開始より後にしてください`); return; }
+          if (!segMoves[i + 1]) {
+            // まとまりの最後：終わりの時刻はここが持つ
+            if (!s.end || normalizeTime(s.end) === null) { setError(`${no}の勤務時間（終わり）を入力してください`); return; }
+            if (s.start >= s.end) { setError(`${no}の「${s.location}に着く時刻」は、終わりの時刻より前にしてください`); return; }
+          }
+          continue;
+        }
+        if (segMoves[i + 1]) {
+          // 移る前の場所：終わり＝移る先に着く時刻（移る先のほうで確かめる）
+          if (!s.start || normalizeTime(s.start) === null) { setError(`${no}の勤務時間（始まり）を入力してください`); return; }
+          if (!s.location) { setError(`${no}の最初の場所を選択してください`); return; }
+          continue;
+        }
         if (!s.start || !s.end) { setError(`${no}の勤務時間を入力してください`); return; }
         if (normalizeTime(s.start) === null || normalizeTime(s.end) === null) { setError(`${no}の勤務時間を正しく入力してください（例 9:30）`); return; }
         if (s.start >= s.end) { setError(`${no}は終了時刻を開始時刻より後にしてください`); return; }
@@ -792,6 +916,8 @@ const AbsenceInputSheet: React.FC<{
       for (let i = 1; i < sorted.length; i++) {
         if (sorted[i].start < sorted[i - 1].end) { setError('勤務時間が重なっています。時間帯を確認してください'); return; }
       }
+      // 予定の休憩が法律の最低に足りないときは登録しない（休憩の足りない予定を組まないため・2026-10-08）
+      if (planLegal && !planLegal.ok) { setError(legalBreakPlanMessage(planLegal)); return; }
     } else {
       // 対象日すべてで校が選ばれているか
       if ([...targetDates].some(d => !effectiveLocation(d))) { setError('すべての日付で校を選択してください'); return; }
@@ -979,7 +1105,7 @@ const AbsenceInputSheet: React.FC<{
     setIsAbsent(false); setTargetDates(new Set([date])); setConflicts([]);
     setIsHolidayWork(false); setHasLocationMove(false);
     setIsLocationChange(false); setOriginalLocation(''); setOriginalLocationCustom(''); setIsTimeChange(false);
-    setSegments([{ start: '', end: '', location: '' }]); setSegmentCustoms(['']);
+    setSegments([{ start: '', end: '', location: '' }]); setSegmentCustoms(['']); setSegMoves([false]);
     setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false);
     setLateTime(''); setEarlyTime(''); setNotes(''); setError('');
     clearDraft(DRAFT_KEYS.attendance);
@@ -1150,59 +1276,140 @@ const AbsenceInputSheet: React.FC<{
                 style={{ width: '100%', marginTop: 5, padding: '8px', borderRadius: 8, border: `1px solid ${!originalLocationCustom.trim() ? '#f0a0a0' : '#ccc'}`, fontSize: 14, boxSizing: 'border-box' }} />
             )}
             <div style={{ fontSize: 11, color: '#888', marginTop: 5, lineHeight: 1.6 }}>
-              ※ 下の「勤務時間と校」が、変更後に実際に勤務する時間と校です。
+              ※ 下の「勤務時間と場所」が、変更後に実際に勤務する時間と場所です。
             </div>
           </div>
         )}
 
-        {/* 勤務時間と校（休日出勤、または「途中で別の校に移動する」とき）。
-            時間帯ごとに校を持つので、間に勤務しない時間があっても表せる */}
+        {/* 勤務時間と場所（休日出勤・勤務地変更・勤務時間変更、または「途中で別の校に移動する」とき）。
+            🚨 2026-10-08：途中で移る日は［＋ 途中で別の校へ移る］で「移る先」と「着く時刻」を入れる（全員同じ形にするため）。
+               着く時刻が前の場所の終わり＝移る先の始まりになり、間を空けない（移動も働いている時間・休憩は1つの勤務として数える）。
+               間に勤務しない時間があるときだけ［時間帯を追加］で別の時間帯にする */}
         {useSegments && (
           <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>勤務時間と校（必須）</div>
-            {segments.map((seg, i) => {
-              const missingLoc = !seg.location || (seg.location === OTHER_LOCATION && !(segmentCustoms[i] ?? '').trim());
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>勤務時間と場所（必須）</div>
+            {segChains.map((chain, k) => {
+              const head = chain[0];
+              const last = chain[chain.length - 1];
+              const isLastChain = k === segChains.length - 1;
+              const placeSelect = (i: number, missing: boolean) => (
+                <select value={segments[i].location} onChange={e => updateSegment(i, { location: e.target.value })}
+                  style={{ flex: 1, minWidth: 0, padding: '8px', borderRadius: 8, border: `1px solid ${missing ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }}>
+                  <option value="">選択してください</option>
+                  {placeGroups.map(g => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.items.map(w => <option key={w} value={w}>{w}</option>)}
+                    </optgroup>
+                  ))}
+                  <optgroup label="その他">
+                    <option value={OTHER_LOCATION}>その他（自由入力）</option>
+                  </optgroup>
+                </select>
+              );
+              // 「その他」の自由入力。場所が2つ書かれていたら［分けて入れる］へ案内する
+              const freeText = (i: number) => {
+                if (segments[i].location !== OTHER_LOCATION) return null;
+                const text = segmentCustoms[i] ?? '';
+                const found = placesInText(text, placeGroups);
+                const canSplit = found.length >= 2 && segments.length - 1 + found.length <= MAX_SEGMENTS;
+                return (
+                  <div style={{ paddingLeft: 52, marginTop: 5 }}>
+                    <input type="text" value={text} placeholder="校名・場所を入力"
+                      onChange={e => setSegmentCustoms(prev => prev.map((c, idx) => (idx === i ? e.target.value : c)))}
+                      style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${!text.trim() ? '#f0a0a0' : '#ccc'}`, fontSize: 14, boxSizing: 'border-box' }} />
+                    {found.length >= 2 ? (
+                      <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 8, background: '#fff8e1', border: '1px solid #f0c36d', color: '#7a5200', fontSize: 12.5, lineHeight: 1.6 }}>
+                        場所が2つ書かれています（{found.join('・')}）。何時に移るかを入れて、分けて登録してください。
+                        {canSplit ? (
+                          <button type="button" onClick={() => splitFreeText(i)}
+                            style={{ display: 'block', width: '100%', marginTop: 6, padding: '8px', background: '#e8f4fd', border: '1px solid #90caf9', borderRadius: 8, color: '#1565c0', fontSize: 13, cursor: 'pointer' }}>
+                            分けて入れる
+                          </button>
+                        ) : (
+                          <div style={{ marginTop: 4 }}>時間帯は{MAX_SEGMENTS}つまでです。ほかの時間帯を減らしてから分けてください。</div>
+                        )}
+                      </div>
+                    ) : hasMoveWords(text) && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: '#7a5200', lineHeight: 1.6 }}>
+                        途中で場所を移る日は、下の［＋ 途中で別の校へ移る］から入れると、何時にどこにいるかがカレンダーに出ます。
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+              const missingLoc = (i: number) => !segments[i].location || (segments[i].location === OTHER_LOCATION && !(segmentCustoms[i] ?? '').trim());
               return (
-                <div key={i} style={{ marginBottom: 8 }}>
+                <div key={head} style={{ marginBottom: 10, paddingBottom: segChains.length > 1 ? 8 : 0, borderBottom: segChains.length > 1 && !isLastChain ? '1px dashed #ddd' : 'none' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-                    <span style={{ fontSize: 12, color: '#666', minWidth: 46, flexShrink: 0 }}>時間帯{i + 1}</span>
-                    <TimeInput value={seg.start} onChange={v => updateSegment(i, { start: v })} isDark={false}
-                      advance invalid={!seg.start} ariaLabel={`時間帯${i + 1} 開始`} style={{ flex: 1, minWidth: 0 }} />
+                    <span style={{ fontSize: 12, color: '#666', minWidth: 46, flexShrink: 0 }}>時間帯{segChains.length > 1 ? k + 1 : ''}</span>
+                    <TimeInput value={segments[head].start} onChange={v => updateSegment(head, { start: v })} isDark={false}
+                      advance invalid={!segments[head].start} ariaLabel={`時間帯${k + 1} 開始`} style={{ flex: 1, minWidth: 0 }} />
                     <span style={{ fontSize: 12, color: '#666' }}>〜</span>
-                    <TimeInput value={seg.end} onChange={v => updateSegment(i, { end: v })} isDark={false}
-                      invalid={!seg.end} ariaLabel={`時間帯${i + 1} 終了`} style={{ flex: 1, minWidth: 0 }} />
-                    {segments.length > 1 && (
-                      <button type="button" onClick={() => removeSegment(i)} title="この時間帯を削除"
+                    <TimeInput value={segments[last].end} onChange={v => updateSegment(last, { end: v })} isDark={false}
+                      invalid={!segments[last].end} ariaLabel={`時間帯${k + 1} 終了`} style={{ flex: 1, minWidth: 0 }} />
+                    {segChains.length > 1 && (
+                      <button type="button" onClick={() => removeChain(chain)} title="この時間帯を削除"
                         style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>✕</button>
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 52 }}>
-                    <span style={{ fontSize: 12, color: '#666', flexShrink: 0 }}>校</span>
-                    <select value={seg.location} onChange={e => updateSegment(i, { location: e.target.value })}
-                      style={{ flex: 1, padding: '8px', borderRadius: 8, border: `1px solid ${missingLoc ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }}>
-                      <option value="">選択してください</option>
-                      {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                      <option value={OTHER_LOCATION}>その他（自由入力）</option>
-                    </select>
+                    <span style={{ fontSize: 12, color: '#666', flexShrink: 0, minWidth: chain.length > 1 ? 64 : undefined }}>{chain.length > 1 ? '最初の場所' : '場所'}</span>
+                    {placeSelect(head, missingLoc(head))}
                   </div>
-                  {seg.location === OTHER_LOCATION && (
-                    <div style={{ paddingLeft: 52, marginTop: 5 }}>
-                      <input type="text" value={segmentCustoms[i] ?? ''} placeholder="校名・場所を入力"
-                        onChange={e => setSegmentCustoms(prev => prev.map((c, idx) => (idx === i ? e.target.value : c)))}
-                        style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${!(segmentCustoms[i] ?? '').trim() ? '#f0a0a0' : '#ccc'}`, fontSize: 14, boxSizing: 'border-box' }} />
+                  {freeText(head)}
+                  {chain.slice(1).map(j => {
+                    const to = placeOf(j);
+                    return (
+                      <div key={j} style={{ marginTop: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 52 }}>
+                          <span style={{ fontSize: 12, color: '#666', flexShrink: 0, minWidth: 64 }}>移る先</span>
+                          {placeSelect(j, missingLoc(j))}
+                          <button type="button" onClick={() => removeMove(j)} title="移らない"
+                            style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>✕</button>
+                        </div>
+                        {freeText(j)}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 52, marginTop: 5 }}>
+                          <span style={{ fontSize: 12, color: '#666', flexShrink: 0 }}>{to ? `${to}に着く時刻` : '着く時刻'}</span>
+                          <TimeInput value={segments[j].start} onChange={v => setArrival(j, v)} isDark={false}
+                            invalid={!segments[j].start} ariaLabel={`${to || '移る先'}に着く時刻`} style={{ flex: 1, minWidth: 0, maxWidth: 140 }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* どう登録されるか（移るときだけ・時刻が全部入っているとき） */}
+                  {chain.length > 1 && chain.every(i => segments[i].start && segments[i].end) && (
+                    <div style={{ marginTop: 8, marginLeft: 52, padding: '6px 10px', borderRadius: 8, background: '#e8f5e9', color: '#1b5e20', fontSize: 12.5, lineHeight: 1.7 }}>
+                      {chain.map((i, n) => (
+                        <div key={i}>
+                          {n > 0 ? '→ ' : ''}{hhmm(segments[i].start)}〜{hhmm(segments[i].end)} {placeOf(i) || '（場所を選んでください）'}{n < chain.length - 1 ? '（移動を含む）' : ''}
+                        </div>
+                      ))}
                     </div>
+                  )}
+                  {isLastChain && segments.length < MAX_SEGMENTS && (
+                    <button type="button" onClick={() => addMove(last)}
+                      style={{ width: '100%', marginTop: 8, padding: '9px', background: '#e8f4fd', border: '1px solid #90caf9', borderRadius: 8, color: '#1565c0', fontSize: 13, cursor: 'pointer' }}>
+                      {chain.length > 1 ? '＋ さらに別の場所へ移る' : '＋ 途中で別の校へ移る'}
+                    </button>
                   )}
                 </div>
               );
             })}
-            <div style={{ fontSize: 11, color: '#888', margin: '0 0 6px', lineHeight: 1.6 }}>
-              ※ 間に勤務しない時間がある場合や、午前と午後で校が変わる場合は時間帯を追加してください。
-            </div>
-            {segments.length < 3 && (
-              <button type="button" onClick={addSegment}
-                style={{ width: '100%', padding: '9px', background: '#e8f4fd', border: '1px solid #90caf9', borderRadius: 8, color: '#1565c0', fontSize: 13, cursor: 'pointer' }}>
-                ＋ 時間帯を追加
-              </button>
+            {planLegal && !planLegal.ok && (
+              <div style={{ margin: '4px 0 6px', padding: '8px 10px', borderRadius: 8, background: '#fff8e1', border: '1px solid #f59e0b', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
+                ⚠️ {legalBreakPlanMessage(planLegal)}。直すまで登録できません。
+              </div>
+            )}
+            {segments.length >= MAX_SEGMENTS && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 2, lineHeight: 1.6 }}>※ 時間帯と移る先は、合わせて{MAX_SEGMENTS}つまでです。</div>
+            )}
+            {segments.length < MAX_SEGMENTS && (
+              <div style={{ textAlign: 'right', marginTop: 2 }}>
+                <button type="button" onClick={addSegment}
+                  style={{ background: 'none', border: 'none', padding: '4px 0', color: '#1565c0', fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }}>
+                  間に勤務しない時間があるとき：時間帯を追加
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -1701,6 +1908,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   const [loading, setLoading] = useState(false);
   const [absenceSheet, setAbsenceSheet] = useState<string | null>(null);
   const [workplaces, setWorkplaces] = useState<string[]>([]);
+  // 時間帯の場所の選択肢（校・出張先・園指導先）。出張先は区分・行き先リスト管理に足せば自動で出る（2026-10-08）
+  const [placeGroups, setPlaceGroups] = useState<PlaceGroup[]>([]);
   const [absenceSaved, setAbsenceSaved] = useState(false);
   const [absenceDeleted, setAbsenceDeleted] = useState(false);
   const [gcalDeleteFailed, setGcalDeleteFailed] = useState(false);
@@ -1959,6 +2168,12 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     // 欠勤入力の校ドロップダウン用（勤務変更報告と同じ勤務地マスタ）
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
+    supabase.from('master_options').select('category, value, ended_at').or(PLACE_OPTION_FILTER).order('sort_order')
+      .then(({ data, error }) => {
+        // 読めなかったときは校だけ選べる（入力シート側で workplaces に戻す）
+        if (error) { console.error('[attendance] 出張先などの一覧を読めませんでした（校だけ選べます）:', error); return; }
+        setPlaceGroups(placeGroupsFromRows(data ?? []));
+      });
     // 更新・別アプリ移動でシートが閉じても、入力途中の下書きがあればシートを開き直す
     const absDraft = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
@@ -2162,7 +2377,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     fetchAbsences();
     if (reuse) {
       // 入力シートは開いた日付の下書きを復元する作りなので、下書きに書いてから開く
-      saveDraft(DRAFT_KEYS.attendance, absenceToDraft(target, workplaces));
+      saveDraft(DRAFT_KEYS.attendance, absenceToDraft(target, workplaces, allPlaces(placeGroups.length > 0 ? placeGroups : [{ label: "校", items: workplaces }])));
       setAbsenceSheet(target.date);
     } else {
       setAbsenceDeleted(true);
@@ -2618,6 +2833,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
           profiles={profiles}
           currentUserId={user.id}
           workplaces={workplaces}
+          placeGroups={placeGroups}
           onClose={() => setAbsenceSheet(null)}
           onSaving={() => { setAbsenceSaved(true); }}
           onSaved={() => { fetchAbsences(); }}

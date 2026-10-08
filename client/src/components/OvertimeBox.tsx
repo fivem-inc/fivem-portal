@@ -635,7 +635,6 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             <label style={lbl}>休憩（分）<span style={{ fontSize: 11, marginLeft: 8 }}>空＝自動</span></label>
             <input type="text" inputMode="numeric" value={d.breakMin} placeholder={c ? `自動 ${c.breakMin}` : '自動'} style={fld} aria-label="休憩（分）"
               onChange={e => setInputDraft({ breakMin: e.target.value.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0)).replace(/[^0-9]/g, '') })} />
-            {c && !c.legalOk && <div style={{ fontSize: 12, color: warnText, fontWeight: 'bold', marginTop: 4 }}>⚠️ 休憩が法定より短い（送れます）</div>}
             {c?.typeDetect.lateQ && (
               <>
                 <label style={lbl}>開始が遅い理由{req}</label>

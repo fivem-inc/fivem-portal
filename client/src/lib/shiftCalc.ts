@@ -3,6 +3,7 @@
 // ※残業(overtime)の breakCalc とは休憩ルールが異なるため別物。
 
 import { timeToMinutes } from './timeInput';
+import { checkLegalBreak, type LegalCheckResult } from './breakCalc';
 
 // 🚨 不正な時刻で NaN を返さないこと（2026-08-26）。
 //    以前は `hhmm.split(':').map(Number)` で、"930" のような値が来ると NaN になっていた。
@@ -95,9 +96,20 @@ export function segMinutes(segs: Seg[]): number {
  * （中抜けの間に昼食＝休憩を取っているのに、さらに休憩を引くことになるため）
  * 例）9:00〜12:00 と 17:00〜19:00 → 3時間分0分 ＋ 2時間分0分 ＝ 0分
  *     中抜けなしの 9:00〜18:00 は従来どおり60分で、結果は変わらない
+ * 🚨 つながっている時間帯（前の終わり＝次の始まり）は1つの勤務として数える（2026-10-08 ユーザー確定）。
+ *    途中で校・出張先へ移る日は時間帯が2つになるが、移動も働いている時間なので、移らない日と同じ休憩になる。
+ *    例）9:00〜15:30 本校 と 15:30〜18:00 南草津校 → 9:00〜18:00 として60分（別々だと30分になっていた）
  */
 export function calcSegsBreak(segs: Seg[]): number {
-  return segs.reduce((sum, s) => sum + (s.start && s.end ? calcShiftBreakMinutes(s.start, s.end) : 0), 0);
+  const merged: { start: string; end: string }[] = [];
+  const valid = segs.filter(s => s.start && s.end && toMin(s.start) != null && toMin(s.end) != null)
+    .sort((a, b) => (toMin(a.start) ?? 0) - (toMin(b.start) ?? 0));
+  for (const s of valid) {
+    const last = merged[merged.length - 1];
+    if (last && toMin(last.end) === toMin(s.start)) last.end = s.end;
+    else merged.push({ start: s.start, end: s.end });
+  }
+  return merged.reduce((sum, s) => sum + calcShiftBreakMinutes(s.start, s.end), 0);
 }
 
 /** 最初の開始（従来の start 列に入れる値） */
@@ -182,4 +194,26 @@ export function summarizeShiftDiffs(rows: (ShiftDiffRow & { status: string })[])
     planned += d;
   }
   return { total, planned, plus, minus, absenceDays, pendingCount };
+}
+
+/**
+ * 勤務変更の報告（実際に働いた分）の休憩が、法律の最低（6時間超45分・8時間超60分）に足りているか（2026-10-08 ユーザー確定）。
+ * 判定は残業と同じ checkLegalBreak 1つ（時間帯の間の空き時間も休憩に数える）。
+ * 🚨 事後の報告なので、パート本人には出さない（直しようがないため）。受理する人の画面にだけ印を出す。
+ *    休憩を自動で多く引くこともしない（取っていない休憩を引くと、働いた分を払わないことになる）
+ * 時間帯が読めない報告（全欠勤など）は null
+ */
+/** 受理する人に出す印の文（勤務変更の受理の画面・管理画面の勤務変更タブで同じもの） */
+export const legalBreakReviewNote = (l: LegalCheckResult): string =>
+  `⚠️ 休憩が法律の最低に足りません（必要${l.requiredMinutes}分・休憩と間の時間で${l.actualRestMinutes}分）。実態を確かめて受理し、次から休憩を取れるシフトにしてください。`;
+
+export function shiftLegalBreak(r: {
+  actual_segments?: unknown; actual_start?: string | null; actual_end?: string | null;
+  actual_outing_start?: string | null; actual_outing_end?: string | null; break_minutes?: number | null;
+}): LegalCheckResult | null {
+  const segs = parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end);
+  const ws = segs.map(s => ({ startMin: toMin(s.start), endMin: toMin(s.end) }))
+    .filter((s): s is { startMin: number; endMin: number } => s.startMin != null && s.endMin != null && s.endMin > s.startMin);
+  if (ws.length === 0) return null;
+  return checkLegalBreak(ws, r.break_minutes ?? calcSegsBreak(segs));
 }

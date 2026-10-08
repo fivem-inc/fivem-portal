@@ -8,7 +8,7 @@ import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
-import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
+import { calcSegsBreak, shiftLegalBreak, legalBreakReviewNote, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
 import { describeUpdate } from '../lib/statusUpdate';
 import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
@@ -1651,6 +1651,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                     変更後：{r.actual_location} {formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                   </div>
                 )}
+                {/* 休憩が法律の最低に足りない報告（2026-10-08）。🚨 受理する人にだけ出す（事後の報告なので本人には出さない） */}
+                {(() => { const l = shiftLegalBreak(r); return l && !l.ok ? (
+                  <div style={{ fontSize: 12, color: isDark ? '#ffd54f' : '#856404', background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '6px 10px', marginBottom: 6, lineHeight: 1.6 }}>{legalBreakReviewNote(l)}</div>
+                ) : null; })()}
                 <div style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>{r.reason}</div>
                 {r.status === 'resubmitted' && (
                   <div style={{ fontSize: 11, color: '#9d174d', background: '#fce7f3', borderRadius: 6, padding: '4px 8px', marginBottom: 8 }}>⚠️ 修正されました（再確認をお願いします）</div>

@@ -505,6 +505,8 @@ export function computeGridRow(a: {
     location: draft.location, locationCustom: draft.locationCustom, locMoveStart: draft.locMoveStart ?? '', locMoveEnd: draft.locMoveEnd ?? '', effectiveLocation,
     normalSegs: normalSegsOf(ns), isReportPhase, hasChanges, isPureZero, changeReason: draft.changeReason,
     typeDetect, lateChoice: draft.lateChoice, earlyChoice: draft.earlyChoice,
+    // 事前（予定）は休憩が法律の最低に足りないと送れない（1件フォームと同じ・2026-10-08）
+    plannedLegal: phase === 'planned' ? legal : null,
   });
   // 🚨 自己受理はマネージャー以上だけ（1件フォームは選択肢自体を出さない。表でも同じ判定を通す）
   const selfBlocked = !isEdit && isSelfReview && !a.canSelfReview ? '自己受理はマネージャー以上のみです' : '';
@@ -512,7 +514,7 @@ export function computeGridRow(a: {
   if (msg === NOCHANGE_MSG) return { ...calc, state: 'nochange', message: '通常シフトと同じ（送りません）' };
   if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
   if (!isEdit && a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
-  if (!legal.ok) return { ...calc, state: 'warn', message: '休憩が法定より短い（送れます）' };
+  // 🚨 事後（実績）で休憩が足りないときは本人に出さない（直しようがないため）。受理する人の一覧に印が出る（legal_warning）
   return { ...calc, state: 'ok' };
 }
 

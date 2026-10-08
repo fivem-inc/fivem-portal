@@ -923,7 +923,6 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                               <>
                                 {formatMin(c.laborMin)}<br />
                                 <b style={{ color: c.diffMin > 0 ? '#2e7d32' : c.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(c.diffMin)}</b>
-                                {!c.legalOk && <div style={{ fontSize: 11.5, fontWeight: 'bold', color: warnText }}>⚠️ 休憩が法定より短い</div>}
                               </>
                             ) : <span style={{ color: subText }}>―</span>}
                           </td>

@@ -31,9 +31,25 @@ export function calcSegmentBreak(startMin: number, endMin: number): number {
   return 60;
 }
 
-/** 分割勤務（最大3時間帯）の休憩合計。時間帯ごとに表を適用して合算（シートの2行目運用と同じ結果） */
+/**
+ * つながっている時間帯（前の終わり＝次の始まり）を1つにまとめる。間が空いているものはそのまま。
+ * 🚨 途中で校・出張先へ移る日は時間帯が2つになるが、移動の時間も働いている時間なので1つの勤務として休憩を数える
+ *    （2026-10-08 ユーザー確定：つながっていれば校が変わってもつなげる・園指導などで間が空けばつなげない。勤務表の deriveFields と同じ）
+ */
+export function mergeContiguous(segments: WorkSegment[]): WorkSegment[] {
+  const sorted = [...segments].sort((a, b) => a.startMin - b.startMin);
+  const out: WorkSegment[] = [];
+  for (const s of sorted) {
+    const last = out[out.length - 1];
+    if (last && last.endMin === s.startMin) last.endMin = s.endMin;
+    else out.push({ startMin: s.startMin, endMin: s.endMin });
+  }
+  return out;
+}
+
+/** 分割勤務（最大3時間帯）の休憩合計。時間帯ごとに表を適用して合算（シートの2行目運用と同じ結果）。つながった時間帯は1つとして数える */
 export function calcTotalBreak(segments: WorkSegment[]): number {
-  return segments.reduce((sum, s) => sum + calcSegmentBreak(s.startMin, s.endMin), 0);
+  return mergeContiguous(segments).reduce((sum, s) => sum + calcSegmentBreak(s.startMin, s.endMin), 0);
 }
 
 /** 拘束時間の合計（時間帯の長さの和。帯間の空き時間は含まない） */
@@ -92,6 +108,16 @@ export function checkLegalBreak(segments: WorkSegment[], breakMinutes: number): 
   const required = labor > 8 * 60 ? 60 : labor > 6 * 60 ? 45 : 0;
   const actualRest = breakMinutes + calcGapMinutes(segments);
   return { ok: actualRest >= required, requiredMinutes: required, actualRestMinutes: actualRest };
+}
+
+/**
+ * 事前（予定）の休憩が法律の最低に足りないときの文（2026-10-08 ユーザー確定：事前は直すまで送れない）。
+ * 残業の事前申請・勤怠カレンダーの予定で同じ文を使う。事後の報告では本人に出さない（受理する人の画面に印）
+ */
+export function legalBreakPlanMessage(l: LegalCheckResult): string {
+  const hours = l.requiredMinutes >= 60 ? 8 : 6;
+  return `この予定だと、働く時間が${hours}時間を超えるのに休憩が${l.actualRestMinutes}分しかありません（${l.requiredMinutes}分以上が必要です）。`
+    + `時間帯の間を${l.requiredMinutes}分以上空けるか、1つの時間帯で入れて途中で休憩を取る予定にしてください`;
 }
 
 // ---------- 時間の表示・変換ユーティリティ ----------

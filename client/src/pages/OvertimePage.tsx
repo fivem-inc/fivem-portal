@@ -13,7 +13,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
-  calcTotalBreak, calcPatternFields, checkLegalBreak,
+  calcTotalBreak, calcPatternFields, checkLegalBreak, legalBreakPlanMessage,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
   payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
@@ -905,6 +905,8 @@ const OvertimeForm: React.FC<{
   const diffMin = workDiff.diff_minutes;
   const legal = checkLegalBreak(workSegments, breakMin);
   const hasInput = workSegments.length > 0;
+  // 事前（予定）として出すか。休憩が法律の最低に足りないとき、事前は直すまで送れない／事後は本人に出さない（受理する人に印・2026-10-08）
+  const isPlannedPhase = overtimePhase({ mode, isReportPhase, isResubmit, editTarget }) === 'planned';
 
   // ---- 種別の自動判定 ----
   // 時刻・勤務地の入力からシステムが種別を提案する。迷いやすい「調整か遅刻/早退か」だけ2択バナーで確定。
@@ -1183,6 +1185,7 @@ const OvertimeForm: React.FC<{
     location, locationCustom, locMoveStart, locMoveEnd, effectiveLocation, normalSegs,
     isReportPhase, hasChanges, isPureZero, changeReason, typeDetect, lateChoice, earlyChoice,
     absenceReviewerOk: (!reviewerId || isSelfReview) ? undefined : reviewerIsManager(reviewerId),
+    plannedLegal: isPlannedPhase && !fullDay && !clockOnlyMode ? legal : null,
   });
 
   const handleSubmit = async () => {
@@ -2093,12 +2096,11 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 法定チェック警告（本人側にも表示） */}
-      {!fullDay && !clockOnlyMode && hasInput && !legal.ok && (
+      {/* 法定チェック（2026-10-08）：事前（予定）は直すまで送れない。🚨 事後（実績）は本人に出さない＝直しようがないため。受理する人の一覧に印が出る */}
+      {!fullDay && !clockOnlyMode && hasInput && !legal.ok && isPlannedPhase && (
         <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
           <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404', lineHeight: 1.7 }}>
-            ⚠️ この日は労働{laborMin > 480 ? '8時間' : '6時間'}超のため、法律上{legal.requiredMinutes}分以上の休憩が必要です
-            （現在の休憩＋外出の合計：{legal.actualRestMinutes}分）。休憩時間を確認してください。このまま提出することもできます。
+            ⚠️ {legalBreakPlanMessage(legal)}。直すまで送信できません。
           </p>
         </div>
       )}
