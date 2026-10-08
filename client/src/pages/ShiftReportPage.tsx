@@ -255,7 +255,11 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
   const border = isDark ? '#495057' : '#dee2e6';
   const origMin = data.origDayOff ? 0 : segMinutes(data.origSegs);
   const hasAbsence = data.types.includes('absence');
-  const diffMin = !hasAbsence ? data.laborMin - origMin : -origMin;
+  // 早出・遅刻・早退の時間（予定の時刻と実際の時刻の差）。🚨 枠を出すかどうかもこれで決める。
+  //    以前は「実労働 − 休憩を引く前の予定の長さ」で決めていて、予定どおりの日でも休憩の分だけ差があるように見え、「遅刻：0:00」の枠が出ていた（2026-10-08）
+  const earlyStartMin = data.types.includes('early_start') ? Math.max(0, toMin(data.origStart) - toMin(data.actStart)) : 0;
+  const lateMin = data.types.includes('tardiness') ? Math.max(0, toMin(data.actStart) - toMin(data.origStart)) : 0;
+  const earlyLeaveMin = data.types.includes('early_leave') ? Math.max(0, toMin(data.origEnd) - toMin(data.actEnd)) : 0;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1100, display: 'flex', alignItems: 'flex-end' }}>
@@ -302,11 +306,11 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
               <CRow label="休憩"    value={`${data.breakMin}分`} textColor={text} />
               <CRow label="実労働"  value={formatMin(data.laborMin)} textColor={text} />
               {data.actNotes && <CRow label="備考" value={data.actNotes} textColor={text} />}
-              {!data.origDayOff && origMin > 0 && diffMin !== 0 && (
+              {!data.origDayOff && origMin > 0 && (earlyStartMin > 0 || lateMin > 0 || earlyLeaveMin > 0) && (
                 <div style={{ background: isDark ? '#1e3a5f' : '#eff6ff', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-                  {data.types.includes('early_start') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#22d3ee' }}>🌅 早出：{formatMin(Math.max(0, toMin(data.origStart) - toMin(data.actStart)))}</div>}
-                  {data.types.includes('tardiness') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c084fc' }}>🕐 遅刻：{formatMin(Math.max(0, toMin(data.actStart) - toMin(data.origStart)))}</div>}
-                  {data.types.includes('early_leave') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fb923c' }}>🏃 早退：{formatMin(Math.max(0, toMin(data.origEnd) - toMin(data.actEnd)))}</div>}
+                  {earlyStartMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#22d3ee' }}>🌅 早出：{formatMin(earlyStartMin)}</div>}
+                  {lateMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c084fc' }}>🕐 遅刻：{formatMin(lateMin)}</div>}
+                  {earlyLeaveMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fb923c' }}>🏃 早退：{formatMin(earlyLeaveMin)}</div>}
                 </div>
               )}
             </>
