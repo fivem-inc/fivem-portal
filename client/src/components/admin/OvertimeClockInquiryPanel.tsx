@@ -72,6 +72,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
   const [calendarKinds, setCalendarKinds] = useState<Record<string, CalendarKind | null>>({});
   const [existingDates, setExistingDates] = useState<Set<string>>(new Set());
+  // 本人が「定時」（シフト通り勤務した）と記録している日 → 記録した日時（2026-10-12）。問い合わせを送る前に分かるように
+  const [dayCheckAt, setDayCheckAt] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [msg, setMsg] = useState('');
@@ -138,13 +140,17 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   // 選んだ日の会社カレンダーと、すでに残業の記録がある日を取得
   useEffect(() => {
     const dates = rows.map(r => r.work_date);
-    if (!targetId || dates.length === 0) { setExistingDates(new Set()); return; }
+    if (!targetId || dates.length === 0) { setExistingDates(new Set()); setDayCheckAt({}); return; }
     (async () => {
       const { data: cal } = await supabase.from('company_calendar').select('date, kind').in('date', dates);
       setCalendarKinds(Object.fromEntries((cal ?? []).map(c => [c.date, c.kind as CalendarKind])));
       const { data: rep } = await supabase.from('overtime_reports')
         .select('work_date').eq('applicant_id', targetId).in('work_date', dates).neq('status', 'cancelled');
       setExistingDates(new Set((rep ?? []).map(r => r.work_date)));
+      const { data: chk, error: chkErr } = await supabase.from('overtime_day_checks')
+        .select('work_date, created_at').eq('user_id', targetId).in('work_date', dates);
+      if (chkErr) console.error('[打刻の確認] 定時の記録を読めませんでした', chkErr.message);
+      setDayCheckAt(Object.fromEntries((chk ?? []).map(c => [c.work_date as string, c.created_at as string])));
     })();
   }, [targetId, rows]);
 
@@ -326,6 +332,11 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                             : nsBands.map((b, bi) => (
                               <React.Fragment key={bi}>{bi > 0 && <br />}{b.start}〜{b.end}</React.Fragment>
                             ))}
+                        {!dup && dayCheckAt[r.work_date] && (
+                          <div style={{ marginTop: 3, fontSize: 11.5, color: text }}>
+                            本人の記録：<b>定時</b>（{new Date(dayCheckAt[r.work_date]).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })} に記録）
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '6px 8px' }}>
                         <input type="time" value={r.clock_in} disabled={dup}

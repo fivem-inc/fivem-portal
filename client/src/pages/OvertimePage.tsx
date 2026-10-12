@@ -43,6 +43,8 @@ import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { DAY_MARK_STYLE, DAY_MARK_LEGEND, loadDayMarks, monthRange, dayMarkBlocksForm, recordDayCheck, cancelDayCheck, fetchDayCheckEnabled } from '../lib/overtimeDayMark';
+import type { DayMark } from '../lib/overtimeDayMark';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
 // ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
@@ -290,7 +292,14 @@ const SingleDatePicker: React.FC<{
   minDate?: string;
   maxDate?: string;
   calendarKinds?: Record<string, CalendarKind>;
-}> = ({ value, onChange, isDark, minDate, maxDate, calendarKinds }) => {
+  /** 日ごとの印（残業申請のカレンダーの印・2026-10-12）。渡したときだけ印を出し、マスの高さをそろえる。
+   *  🚨 振替元の日付選びでは渡さない（印は出さない） */
+  dayInfo?: (dateStr: string) => { mark?: DayMark; shiftOff?: boolean };
+  /** 見ている月が変わったとき（印をその月の分だけ読むため） */
+  onViewChange?: (year: number, month0: number) => void;
+  /** カレンダーの下に出す1行（印の説明・読み込めなかった知らせ） */
+  footer?: React.ReactNode;
+}> = ({ value, onChange, isDark, minDate, maxDate, calendarKinds, dayInfo, onViewChange, footer }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const borderColor = isDark ? '#6c757d' : '#dee2e6';
   const base = value ? new Date(value + 'T00:00:00') : new Date();
@@ -302,6 +311,10 @@ const SingleDatePicker: React.FC<{
     const d = new Date(value + 'T00:00:00');
     setViewYear(d.getFullYear()); setViewMonth(d.getMonth());
   }, [value]);
+  // 見ている月を親に知らせる（呼び出し側の関数が毎回作り直されても、月が変わったときだけ呼ぶ）
+  const onViewChangeRef = useRef(onViewChange);
+  onViewChangeRef.current = onViewChange;
+  useEffect(() => { onViewChangeRef.current?.(viewYear, viewMonth); }, [viewYear, viewMonth]);
 
   const fmt = (y: number, m: number, d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -340,20 +353,32 @@ const SingleDatePicker: React.FC<{
           // 会社の休館日（全社員休み／社員出勤日）を背景で示す。選べる日かどうかは変えない
           const ck = calendarKinds?.[dateStr];
           const cs = ck && !disabled ? CALENDAR_CELL_STYLE[ck] : null;
+          // 印（上の段＝会社カレンダー、下の段＝印）。🚨 選べない日にも出す（事前申請の画面で過去の印が消えると「出していない」に見えるため）
+          const info = dayInfo?.(dateStr);
+          const ms = info?.mark ? DAY_MARK_STYLE[info.mark.kind] : null;
+          const shiftOff = !!info?.shiftOff && !cs && !ms;
           return (
             <button key={dateStr} type="button" disabled={disabled}
               onClick={() => onChange(dateStr)}
               title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
               style={{
-                padding: '10px 2px', minHeight: 40, borderRadius: 6,
+                // 🚨 印を出すときは全部のマスを同じ高さにする（2段のマスだけ伸びると、月を替えるたびに下のボタンが動く）
+                ...(dayInfo ? { padding: '4px 1px', height: 58, overflow: 'hidden' } : { padding: '10px 2px', minHeight: 40 }),
+                borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
                 background: isSelected ? TOGGLE_BLUE : cs ? cs.bg : 'transparent',
-                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : cs ? cs.text : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
+                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : cs ? cs.text : shiftOff ? (isDark ? '#868e96' : '#9aa0a6') : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
                 cursor: disabled ? 'default' : 'pointer', fontSize: 13,
                 fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2,
               }}>
               {day}
-              {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: isSelected ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
+              {cs && <div style={{ fontSize: dayInfo ? 9.5 : 8, fontWeight: 'bold', color: isSelected ? 'rgba(255,255,255,0.9)' : cs.text, whiteSpace: 'nowrap' }}>{cs.short}</div>}
+              {shiftOff && <div style={{ fontSize: 9.5, fontWeight: 'bold', color: isSelected ? 'rgba(255,255,255,0.9)' : (isDark ? '#868e96' : '#9aa0a6') }}>休み</div>}
+              {ms && (
+                <div style={{ marginTop: 2 }}>
+                  <span style={{ display: 'inline-block', fontSize: 10, fontWeight: 'bold', lineHeight: 1.35, padding: '0 3px', borderRadius: 4, background: ms.bg, color: ms.text, whiteSpace: 'nowrap' }}>{ms.label}</span>
+                </div>
+              )}
             </button>
           );
         })}
@@ -363,6 +388,7 @@ const SingleDatePicker: React.FC<{
           ✓ {parseInt(value.slice(5, 7))}/{parseInt(value.slice(8, 10))}（{dayNames[new Date(value + 'T00:00:00').getDay()]}）を選択中
         </p>
       )}
+      {footer}
     </div>
   );
 };
@@ -509,7 +535,11 @@ const OvertimeForm: React.FC<{
   appliedDates: Set<string>;
   onSaved: (gcalWarning?: string) => void;
   onClose: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose }) => {
+  /** カレンダーの印から、その申請を開く（実績を報告する・直して出し直す）。見つからなければ履歴へ */
+  onOpenExisting: (reportId: string) => void;
+  /** 履歴タブへ移る */
+  onGoHistory: () => void;
+}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
@@ -1349,6 +1379,85 @@ const OvertimeForm: React.FC<{
     ? `${normalTimes}${normalLoc}（休憩${formatMin(normalShift.break_minutes)}・労働${formatMin(normalShift.labor_minutes)}）`
     : '休み';
 
+  // ── カレンダーの印・定時の記録（2026-10-12 ユーザー確定・試す人だけ）──
+  // 🚨 判定・言葉・色は lib/overtimeDayMark.ts。ここは読み込みと案内だけ。
+  //    読むのは「見ている月」の分だけ・月を替えたときと記録したときだけ（定期的には読まない＝通信量のため）
+  const [dayMarkOn, setDayMarkOn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetchDayCheckEnabled().then(v => { if (alive) setDayMarkOn(v); });
+    return () => { alive = false; };
+  }, []);
+  const [dayMarks, setDayMarks] = useState<Record<string, DayMark>>({});
+  const [dayMarkErr, setDayMarkErr] = useState('');
+  const [viewYm, setViewYm] = useState<{ y: number; m: number } | null>(null);
+  const [dayMarkRev, setDayMarkRev] = useState(0);
+  const onPickerView = useCallback((y: number, m: number) => setViewYm({ y, m }), []);
+  useEffect(() => {
+    if (!dayMarkOn || !viewYm) return;
+    let alive = true;
+    const { from, to } = monthRange(viewYm.y, viewYm.m);
+    loadDayMarks(user.id, from, to, todayJstStr()).then(({ marks, error }) => {
+      if (!alive) return;
+      // 🚨 読めなかったときは印を消さずに知らせる（何もない日に見せない）
+      if (error) { setDayMarkErr(error); return; }
+      setDayMarkErr('');
+      setDayMarks(prev => ({ ...Object.fromEntries(Object.entries(prev).filter(([d]) => d < from || d > to)), ...marks }));
+    });
+    return () => { alive = false; };
+  }, [dayMarkOn, viewYm, user.id, dayMarkRev]);
+  // 本人のシフトが休みの曜日（勤務パターンが無い人には出さない＝全部「休み」に見えるため）
+  const dayInfo = useCallback((d: string) => ({
+    mark: dayMarks[d],
+    shiftOff: patterns.length > 0 && !resolveNormalShift(patterns, d, calendarKinds[d] ?? null).start_time,
+  }), [dayMarks, patterns, calendarKinds]);
+
+  const selMark: DayMark | undefined = dayMarkOn && date && !editTarget ? dayMarks[date] : undefined;
+  // 「残業があったので申請する」「打刻が遅れた日はこちら」を押した日は、入力欄を出す
+  const [formFor, setFormFor] = useState<string | null>(null);
+  const [teijiStep, setTeijiStep] = useState<'ask' | 'confirm'>('ask');
+  const [teijiBusy, setTeijiBusy] = useState(false);
+  const [teijiErr, setTeijiErr] = useState('');
+  const [teijiDone, setTeijiDone] = useState<string | null>(null);
+  useEffect(() => { setTeijiStep('ask'); setTeijiErr(''); }, [date]);
+  // 定時で記録するシフト＝勤務パターンそのもの（手で直した通常シフトは使わない＝直すなら申請で出す）
+  const teijiShift = useMemo(
+    () => (date ? resolveNormalShift(patterns, date, calendarKind) : null),
+    [date, patterns, calendarKind],
+  );
+  // 今日は、その日の勤務が終わるころを過ぎてから（実績報告と同じ考え方）
+  const teijiTimeOk = (() => {
+    if (!date || date < today) return true;
+    if (date > today) return false;
+    const gate = reportGateMin(teijiShift, []);
+    const n = new Date();
+    return gate == null || n.getHours() * 60 + n.getMinutes() >= gate;
+  })();
+  const teijiAsk = dayMarkOn && !editTarget && mode === 'posthoc' && !!date && !selMark
+    && !!teijiShift?.start_time && !closeLocked && !hasInput && !memoLink && !clockOnly && !fullDay
+    && teijiTimeOk && formFor !== date && teijiDone !== date;
+  const markBlocks = (!!selMark && formFor !== date && dayMarkBlocksForm(selMark)) || (!!date && teijiDone === date);
+  // 印の案内を出している間は、下の入力欄を出さない
+  const hideFormForMark = markBlocks || teijiAsk;
+  const dayTitle = date ? `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}（${dowLabel(date)}）` : '';
+
+  const doRecordTeiji = async () => {
+    if (!date || !teijiShift) return;
+    setTeijiBusy(true); setTeijiErr('');
+    const err = await recordDayCheck(date, teijiShift);
+    setTeijiBusy(false);
+    if (err) { setTeijiErr(err); return; }
+    setTeijiDone(date); setDayMarkRev(v => v + 1);
+  };
+  const doCancelTeiji = async () => {
+    if (!date) return;
+    setTeijiBusy(true); setTeijiErr('');
+    const err = await cancelDayCheck(date);
+    setTeijiBusy(false);
+    if (err) { setTeijiErr(err); return; }
+    setTeijiDone(null); setTeijiStep('ask'); setDayMarkRev(v => v + 1);
+  };
+
   // 入力内容をすべてクリア（新規フォームのみ）
   const handleClear = () => {
     setDate(''); setSegments([{ ...EMPTY_SEG }]); setBreakManual(false); setBreakManualMin('');
@@ -1521,12 +1630,108 @@ const OvertimeForm: React.FC<{
         ) : (
           <SingleDatePicker value={date} onChange={setDate} isDark={isDark} calendarKinds={calendarKinds}
             minDate={mode === 'advance' ? today : undefined}
-            maxDate={mode === 'posthoc' ? today : advanceMaxDate} />
+            maxDate={mode === 'posthoc' ? today : advanceMaxDate}
+            dayInfo={dayMarkOn ? dayInfo : undefined}
+            onViewChange={onPickerView}
+            footer={dayMarkOn ? (
+              <p style={{ margin: '8px 0 0', fontSize: 11, color: subText, lineHeight: 1.6 }}>
+                {dayMarkErr
+                  ? <span style={{ color: '#c62828' }}>印を読み込めませんでした（何もない日も、まだとは限りません）：{dayMarkErr}</span>
+                  : <>{DAY_MARK_LEGEND}／休み＝自分のシフトの休み・会社休＝会社の休み</>}
+              </p>
+            ) : undefined} />
         )}
       </div>
 
+      {/* 印のある日を押したとき：入力に進ませず、次にすることを出す（2026-10-12）。
+          🚨 date は下書き・メモ・依頼からも入るので、押した瞬間ではなく「選んでいる日」から毎回決める */}
+      {markBlocks && (
+        <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
+          {teijiDone === date ? (
+            <div style={{ background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, padding: '8px 10px' }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#1b5e20', lineHeight: 1.6 }}>✓ {dayTitle}を定時と記録しました</p>
+              <button type="button" onClick={doCancelTeiji} disabled={teijiBusy}
+                style={{ ...backBtn(isDark), marginTop: 8, padding: '6px 14px', fontSize: 12.5 }}>取り消す</button>
+            </div>
+          ) : selMark ? (
+            <>
+              <p style={{ margin: '0 0 8px', fontSize: 13, color: text, lineHeight: 1.7 }}>
+                {selMark.dayCheck ? (
+                  <>{dayTitle}は<b>定時</b>と記録しています（{new Date(selMark.dayCheck.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })} に記録）。</>
+                ) : selMark.furikaeOrigin ? (
+                  <>{dayTitle}は、振替休日の<b>振替元</b>として申請済みです。この日は別に申請できません。</>
+                ) : selMark.kind === 'returned' ? (
+                  <>{dayTitle}は<b>差し戻し</b>になっています。直して出し直してください。</>
+                ) : selMark.kind === 'unreported' ? (
+                  <>{dayTitle}は事前申請を出していますが、<b>実績の報告がまだ</b>です。</>
+                ) : selMark.kind === 'teiji' ? (
+                  <>{dayTitle}は<b>定時</b>（{selMark.clockOnly ? '打刻が遅れただけ' : '残業なし'}）として記録済みです。変更は履歴から行ってください。</>
+                ) : (
+                  <>{dayTitle}は申請済みです（{selMark.status && STATUS_INFO[selMark.status as OvertimeStatus] ? STATUS_INFO[selMark.status as OvertimeStatus].label : ''}）。同じ日に2件目は出せません。変更・取消は履歴から行ってください。</>
+                )}
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {selMark.dayCheck ? (
+                  <>
+                    <button type="button" onClick={doCancelTeiji} disabled={teijiBusy} style={{ ...backBtn(isDark), flex: 1 }}>記録を取り消す</button>
+                    <button type="button" onClick={() => setFormFor(date)} style={{ ...primaryBtn(), flex: 2 }}>残業があったので申請する</button>
+                  </>
+                ) : !selMark.furikaeOrigin && selMark.kind === 'returned' && selMark.reportId ? (
+                  <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>直して出し直す</button>
+                ) : !selMark.furikaeOrigin && selMark.kind === 'unreported' && selMark.reportId ? (
+                  <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>実績を報告する</button>
+                ) : (
+                  <button type="button" onClick={onGoHistory} style={{ ...backBtn(isDark), width: '100%' }}>履歴を見る</button>
+                )}
+              </div>
+              {selMark.dayCheck && (
+                <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>申請を出すと、この日の定時の記録は自動で消えます</p>
+              )}
+            </>
+          ) : null}
+          {teijiErr && <p style={{ margin: '8px 0 0', fontSize: 12.5, color: '#c62828' }}>{teijiErr}</p>}
+        </div>
+      )}
+
+      {/* 何もしていない過去の日（事後）：［定時で記録する］［残業を申請する］（2026-10-12・入口は1つ） */}
+      {teijiAsk && teijiShift && (
+        <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
+          {teijiStep === 'ask' ? (
+            <>
+              <p style={{ margin: '0 0 8px', fontSize: 13, color: text }}>{dayTitle}は、まだ何もしていません。</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setTeijiStep('confirm')} style={{ ...backBtn(isDark), flex: 1 }}>定時で記録する</button>
+                <button type="button" onClick={() => setFormFor(date)} style={{ ...primaryBtn(), flex: 1 }}>残業を申請する</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 4px', fontSize: 12.5, color: subText }}>{dayTitle}のシフト</p>
+              <p style={{ margin: '0 0 6px', fontSize: 14, fontWeight: 'bold', color: text }}>
+                {teijiShift.location ? `${teijiShift.location}　` : ''}{normalShiftTimeText(teijiShift)}・休憩{formatMin(teijiShift.break_minutes)}
+              </p>
+              <p style={{ margin: '0 0 8px', fontSize: 13, color: text }}>残業・遅刻・早退はありませんか？</p>
+              <p style={{ margin: '0 0 10px', fontSize: 12, color: subText, lineHeight: 1.6 }}>
+                打刻が遅れた日も、残業がなければこのボタンで大丈夫です。理由を残したい日・経理から確認が来た日は
+                <button type="button" onClick={() => { setClockOnly(true); setFormFor(date); }}
+                  style={{ background: 'none', border: 'none', padding: 0, margin: '0 2px', color: isDark ? '#8ec5f0' : '#1565c0', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}>
+                  打刻が遅れた日はこちら（理由を選ぶ）
+                </button>
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setTeijiStep('ask')} disabled={teijiBusy} style={{ ...backBtn(isDark), flex: 1 }}>戻る</button>
+                <button type="button" onClick={doRecordTeiji} disabled={teijiBusy} style={{ ...primaryBtn({ disabled: teijiBusy }), flex: 2 }}>
+                  {teijiBusy ? '記録中…' : '記録する'}
+                </button>
+              </div>
+            </>
+          )}
+          {teijiErr && <p style={{ margin: '8px 0 0', fontSize: 12.5, color: '#c62828' }}>{teijiErr}</p>}
+        </div>
+      )}
+
       {/* 締めロック予告：締め切りを過ぎた期の新規申請は送信できない（送信前に気づけるよう日付選択時に表示） */}
-      {closeLocked && (
+      {closeLocked && !markBlocks && (
         <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
           <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: '#842029' }}>
             🔒 この対象日は【{payMonthPeriodLabel(targetPeriodStart)}】の申請です
@@ -1538,7 +1743,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 締め後申請の許可依頼（本人→経理）。状態：依頼可能／依頼中／見送られた／給与データ確定済み */}
-      {closeLocked && (
+      {closeLocked && !markBlocks && (
         <div style={{ marginBottom: 14 }}>
           {payoutPassed ? (
             <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px' }}>
@@ -1662,7 +1867,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 締めロック中は、これ以降のフォーム本体（通常シフト表示〜送信ボタン）を表示しない */}
-      {!closeLocked && (
+      {!closeLocked && !hideFormForMark && (
       <>
       {/* 通常シフト自動表示 */}
       {date && (
@@ -2484,7 +2689,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // すでに申請がある日（メモの［申請］を出さない）。
   // 🚨 本人×日付で手動の申請は1件まで（uq_overtime_manual_per_day）。取消したものは数えない＝また申請できる
   const appliedDates = useMemo(
-    () => new Set(reports.filter(r => r.status !== 'cancelled').map(r => r.work_date)),
+    () => new Set(reports.filter(r => r.entry_type === 'manual' && r.status !== 'cancelled').map(r => r.work_date)),
     [reports],
   );
   const navigate = useNavigate();
@@ -3564,6 +3769,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 setEditTarget(null); setTab('history'); fetchOwn(); fetchOwnCard(); window.scrollTo({ top: 0 });
               }}
               onClose={() => setEditTarget(null)}
+              onOpenExisting={(id) => {
+                // カレンダーの印から開く。履歴に読み込んである申請ならそのまま開き、無ければ履歴へ
+                const r = reports.find(x => x.id === id);
+                if (r) { setEditTarget(r); window.scrollTo({ top: 0 }); }
+                else { setEditTarget(null); setTab('history'); window.scrollTo({ top: 0 }); }
+              }}
+              onGoHistory={() => { setEditTarget(null); setTab('history'); window.scrollTo({ top: 0 }); }}
             />
           ) : (
             <>

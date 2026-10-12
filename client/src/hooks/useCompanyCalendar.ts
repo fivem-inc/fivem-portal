@@ -35,11 +35,12 @@ export const useCompanyCalendar = (fromDate?: string, toDate?: string) => {
 /** カレンダーのセルに敷く色。休館日＝グレー、出勤日＝薄い黄色。
  *  既存の丸印（欠勤・遅刻など6色）とぶつからないよう、色ではなく「面」で区別する。
  *  ライト/ダーク共通の固定色（暗い背景でも文字が読めるトーンを選んでいる） */
-// short（セルに出す2文字）は「会社がどうなっているか」を表す。
-//   休み … 会社が休みで、社員も休み
+// short（セルに出す2〜3文字）は「会社がどうなっているか」を表す。
+//   会社休 … 会社が休みで、社員も休み（2026-10-12 「休み」から変更。本人のシフトの休み＝「休み」と分けるため）
+//            🚨 残業申請のカレンダーでは、本人のシフトが休みの曜日を「休み」（背景なし・薄い字）で出す
 //   休館 … 施設は閉まっているが、社員は出勤日（出勤日と有休奨励日の2つ。区別は色でする）
 export const CALENDAR_CELL_STYLE: Record<CalendarKind, { bg: string; text: string; short: string }> = {
-  closed_all:                { bg: '#e0e0e0', text: '#4a4a46', short: '休み' },
+  closed_all:                { bg: '#e0e0e0', text: '#4a4a46', short: '会社休' },
   work_on_closed:            { bg: '#fff3cd', text: '#7a4a06', short: '休館' },
   work_on_closed_encouraged: { bg: '#d4edda', text: '#1b5e34', short: '休館' },
 };

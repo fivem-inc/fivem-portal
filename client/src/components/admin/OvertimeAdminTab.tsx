@@ -6,7 +6,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { useRoles } from '../../hooks/useRoles';
 import { rankOf, rolesActingAs } from '../../lib/roleAttrs';
 import {
-  minToTime, formatMin, formatSignedMin, todayJstStr,
+  minToTime, formatMin, formatSignedMin, todayJstStr, calcPayPeriodStartJst,
   CALENDAR_KIND_LABELS,
 } from '../../lib/breakCalc';
 import type { CalendarKind } from '../../lib/breakCalc';
@@ -20,6 +20,7 @@ import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGra
 import { describeUpdate } from '../../lib/statusUpdate';
 import { computeBalance, type BalanceRow } from '../../lib/overtimeBalance';
 import { logFail } from '../../lib/logFail';
+import { DAY_MARK_STYLE } from '../../lib/overtimeDayMark';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -159,7 +160,10 @@ const CalendarChoiceRuleForm: React.FC<{
   inputStyle: React.CSSProperties;
   borderColor: string;
   onSave: (target: { role_title: string } | { user_id: string }, enabled: boolean) => void;
-}> = ({ staff, subText, inputStyle, borderColor, onSave }) => {
+  /** ボタンの言葉（既定は「選べるようにする／選べないようにする」） */
+  onLabel?: string;
+  offLabel?: string;
+}> = ({ staff, subText, inputStyle, borderColor, onSave, onLabel = '選べるようにする', offLabel = '選べないようにする' }) => {
   const [mode, setMode] = useState<'role' | 'user'>('role');
   const rolesAll = useRoles();
   const ROLE_CHOICES = rolesAll.filter(r => !r.is_fixed).map(r => r.name);
@@ -198,11 +202,11 @@ const CalendarChoiceRuleForm: React.FC<{
         </select>
       )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <button type="button" style={toggleStyle(enabled)} onClick={() => setEnabled(true)}>選べるようにする</button>
-        <button type="button" style={toggleStyle(!enabled)} onClick={() => setEnabled(false)}>選べないようにする</button>
+        <button type="button" style={toggleStyle(enabled)} onClick={() => setEnabled(true)}>{onLabel}</button>
+        <button type="button" style={toggleStyle(!enabled)} onClick={() => setEnabled(false)}>{offLabel}</button>
       </div>
       <p style={{ margin: '0 0 10px', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>
-        「選べないようにする」は、役職ごとの設定を特定の人だけ打ち消したいときに使います。
+        「{offLabel}」は、役職ごとの設定を特定の人だけ打ち消したいときに使います。
       </p>
       <button type="button" onClick={submit}
         style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: BTN_BLUE, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
@@ -213,6 +217,21 @@ const CalendarChoiceRuleForm: React.FC<{
 };
 
 // 役職の序列は roles.sort_order から（lib/roleAttrs.rankOf / rolesByRank）。役職名の表は書かない（2026-09-09 属性化）
+
+// 残業の一覧で読む範囲（2026-10-12）。月の数だけさかのぼった給与期間の初め（16日）から読む
+type OtLoadRange = '6' | '12' | 'all';
+const OT_LOAD_RANGES: { key: OtLoadRange; label: string }[] = [
+  { key: '6', label: '直近6か月' }, { key: '12', label: '直近1年' }, { key: 'all', label: 'すべて' },
+];
+function otLoadFrom(range: OtLoadRange): string | null {
+  if (range === 'all') return null;
+  const today = todayJstStr();
+  const [y, m] = today.split('-').map(Number);
+  const back = new Date(Date.UTC(y, m - 1 - Number(range), 1));
+  return calcPayPeriodStartJst(`${back.getUTCFullYear()}-${String(back.getUTCMonth() + 1).padStart(2, '0')}-16`);
+}
+/** 定時の記録の1行（一覧・Excel 用） */
+interface OtDayCheckRow { id: string; user_id: string; name: string; work_date: string; shift_snapshot: OvertimeRecord['normal_shift']; created_at: string }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 function dowLabelOt(dateStr: string): string {
@@ -237,6 +256,12 @@ const OvertimeAdminTab: React.FC = () => {
 
   // ─────────── 受理済み一覧（残業レコードの管理） ───────────
   const [otReports, setOtReports] = useState<OvertimeRecord[]>([]);
+  // 読む範囲（2026-10-12・300件の上限をやめた代わりに、範囲を選ぶ）
+  const [otLoadRange, setOtLoadRange] = useState<OtLoadRange>('6');
+  // 定時の記録（残業がなかった日・本人が任意で記録）。申請と同じ表に混ぜて出す
+  const [otDayChecks, setOtDayChecks] = useState<OtDayCheckRow[]>([]);
+  const [otShowTeiji, setOtShowTeiji] = useState(true);
+  const [otCsvTeiji, setOtCsvTeiji] = useState(true);
   const [otStatusMap, setOtStatusMap] = useState<Record<string, string>>({});
   // カレンダー掲載の状態（postHoc=事後報告か／share=本人の選択。null は未指定＝これまでどおり）
   const [otCalMap, setOtCalMap] = useState<Record<string, { postHoc: boolean; share: boolean | null }>>({});
@@ -296,35 +321,50 @@ const OvertimeAdminTab: React.FC = () => {
 
   const fetchOtReports = useCallback(async () => {
     setOtLoading(true); setOtErr('');
-    const { data, error } = await supabase.from('overtime_reports')
-      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation')
-      .eq('entry_type', 'manual')
-      .order('work_date', { ascending: false }).limit(300);
-    if (error) { setOtErr('読み込みに失敗しました：' + error.message); setOtLoading(false); return; }
-    const rows = data || [];
-    const ids = rows.map((r: { id: string }) => r.id);
-    const applicantIds = [...new Set(rows.map((r: { applicant_id: string }) => r.applicant_id))];
-    const [{ data: segs }, { data: profs }, { data: histIds }] = await Promise.all([
-      ids.length ? supabase.from('overtime_report_segments').select('report_id, phase, seg_no, start_min, end_min').in('report_id', ids) : Promise.resolve({ data: [] }),
-      applicantIds.length ? supabase.from('profiles').select('id, name').in('id', applicantIds) : Promise.resolve({ data: [] }),
-      ids.length ? supabase.from('overtime_report_history').select('report_id, change_kind, change_summary').in('report_id', ids) : Promise.resolve({ data: [] }),
-    ]);
+    // 🚨 2026-10-12：以前は「全員の新しい順 300件」だけ読んでいた。月に約100件ずつ増えるため、
+    //    11月ごろから古い申請が一覧と Excel から黙って抜けるところだった。
+    //    読む範囲（直近6か月／1年／すべて）を画面で選び、その範囲は件数に関係なく全部読む（1000件ずつ）。
+    //    時間帯・履歴は埋め込みで一緒に読む（申請の ID を .in() で並べると、件数が増えたとき URL が長すぎて失敗するため）
+    const from = otLoadFrom(otLoadRange);
+    type Row = { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null; is_post_hoc: boolean; show_on_calendar: boolean | null; late_situation: string | null; early_situation: string | null;
+      segments: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[] | null;
+      hist: { change_kind: string | null; change_summary: string | null }[] | null };
+    const rows: Row[] = [];
+    for (let off = 0; ; off += 1000) {
+      let q = supabase.from('overtime_reports')
+        .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
+        .eq('entry_type', 'manual');
+      if (from) q = q.gte('work_date', from);
+      const { data, error } = await q.order('work_date', { ascending: false }).order('id').range(off, off + 999);
+      if (error) { setOtErr('読み込みに失敗しました：' + error.message); setOtLoading(false); return; }
+      rows.push(...((data ?? []) as unknown as Row[]));
+      if ((data ?? []).length < 1000) break;
+    }
+    // 定時の記録（2026-10-12）。申請と同じ表に混ぜて出す（絞り込みで隠せる）
+    const dcRows: { id: string; user_id: string; work_date: string; shift_snapshot: OvertimeRecord['normal_shift']; created_at: string }[] = [];
+    for (let off = 0; ; off += 1000) {
+      let dcq = supabase.from('overtime_day_checks').select('id, user_id, work_date, shift_snapshot, created_at');
+      if (from) dcq = dcq.gte('work_date', from);
+      const { data: dcData, error: dcErr } = await dcq.order('work_date', { ascending: false }).order('id').range(off, off + 999);
+      if (dcErr) { setOtErr('定時の記録を読み込めませんでした：' + dcErr.message); setOtLoading(false); return; }
+      dcRows.push(...((dcData ?? []) as typeof dcRows));
+      if ((dcData ?? []).length < 1000) break;
+    }
+    const applicantIds = [...new Set([...rows.map(r => r.applicant_id), ...dcRows.map(c => c.user_id)])];
+    const { data: profs } = applicantIds.length ? await supabase.from('profiles').select('id, name').in('id', applicantIds) : { data: [] };
     // 実績報告の履歴は行に直接出すので「▶履歴」は出さない。
     // 管理者修正・差し戻し・取消など、開いて確認する価値がある例外だけボタンを出す
     setOtHistoryExistIds(new Set(
-      (histIds as { report_id: string; change_kind: string | null; change_summary: string | null }[] || [])
-        .filter(h => h.change_kind || !(h.change_summary ?? '').startsWith('実績報告'))
-        .map(h => h.report_id)
+      rows.filter(r => (r.hist ?? []).some(h => h.change_kind || !(h.change_summary ?? '').startsWith('実績報告'))).map(r => r.id)
     ));
     const nameMap = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    setOtDayChecks(dcRows.map(c => ({ ...c, name: nameMap[c.user_id] || '不明' })));
     const segMap: Record<string, { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[]> = {};
-    (segs || []).forEach((s: { report_id: string; phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }) => {
-      (segMap[s.report_id] = segMap[s.report_id] || []).push(s);
-    });
+    rows.forEach(r => { segMap[r.id] = r.segments ?? []; });
     const statusMap: Record<string, string> = {};
     // カレンダー掲載の状態は OvertimeRecord 型を広げずに別の表で持つ（status と同じやり方）
     const calMap: Record<string, { postHoc: boolean; share: boolean | null }> = {};
-    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null; is_post_hoc: boolean; show_on_calendar: boolean | null; late_situation: string | null; early_situation: string | null }) => {
+    setOtReports(rows.map(r => {
       statusMap[r.id] = r.status;
       calMap[r.id] = { postHoc: r.is_post_hoc, share: r.show_on_calendar };
       return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, furikae_origin_date: r.furikae_origin_date, furikae_origin_location: r.furikae_origin_location, created_at: r.created_at, confirmed_at: r.confirmed_at, change_reason: r.change_reason, late_situation: r.late_situation, early_situation: r.early_situation, segments: segMap[r.id] || [] };
@@ -332,7 +372,7 @@ const OvertimeAdminTab: React.FC = () => {
     setOtStatusMap(statusMap);
     setOtCalMap(calMap);
     setOtLoading(false);
-  }, [supabase]);
+  }, [supabase, otLoadRange]);
 
   useEffect(() => { if (section === 'reports') fetchOtReports(); }, [section, fetchOtReports]);
 
@@ -434,10 +474,11 @@ const OvertimeAdminTab: React.FC = () => {
   const otPersonOptions = useMemo(() => {
     const m = new Map<string, string>();
     otReports.forEach(r => m.set(r.applicant_id, r.applicantName || '不明'));
+    otDayChecks.forEach(c => { if (!m.has(c.user_id)) m.set(c.user_id, c.name); });
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja')) as [string, string][];
-  }, [otReports]);
+  }, [otReports, otDayChecks]);
   // 個人と給与期間を選んだときだけ出す「合計時間数」（2026-09-18 ユーザー確定・案1）。
-  // 🚨 この一覧の行（手で出した申請だけ・全員で新しい順300件まで）を足さない。
+  // 🚨 この一覧の行（手で出した申請だけ・読む範囲を選んで読んだ分だけ）を足さない。
   //    休暇由来の自動計上（leave_auto）が入っておらず、前の期間は途中で切れるため、部門集計と数字が食い違う。
   //    → その人のその期間の分を別に読み直し、部門集計と同じ computeBalance で数える（状況・種別の絞り込みは効かない）
   const [otBalanceRows, setOtBalanceRows] = useState<BalanceRow[] | null>(null);
@@ -491,6 +532,34 @@ const OvertimeAdminTab: React.FC = () => {
       return a.work_date.localeCompare(b.work_date) * dir;
     });
   }, [otReports, otStatusMap, otFilterStatus, otFilterPeriod, otFilterPerson, otFilterType, otSortKey, otSortAsc]);
+
+  // 定時の記録の行（2026-10-12）。状況「すべて／受理済み」・種別「全種別」のときだけ混ぜる（申請ではないため）
+  const visibleTeiji = useMemo(() => {
+    if (!otShowTeiji || (otFilterStatus !== 'all' && otFilterStatus !== 'done') || otFilterType !== 'all') return [];
+    return otDayChecks.filter(c =>
+      (otFilterPeriod === 'all' || payPeriodOf(c.work_date) === otFilterPeriod)
+      && (otFilterPerson === 'all' || c.user_id === otFilterPerson));
+  }, [otDayChecks, otShowTeiji, otFilterStatus, otFilterType, otFilterPeriod, otFilterPerson]);
+  // 申請と定時の行を、同じ並べ方で1本にする。🚨 定時の行には操作のボタンを出さない（申請の ID で動くため）
+  type OtListRow = { t: 'r'; r: OvertimeRecord } | { t: 'c'; c: OtDayCheckRow };
+  const mergedOtRows = useMemo((): OtListRow[] => {
+    const list: OtListRow[] = [
+      ...visibleOtReports.map(r => ({ t: 'r' as const, r })),
+      ...visibleTeiji.map(c => ({ t: 'c' as const, c })),
+    ];
+    if (visibleTeiji.length === 0) return list;
+    const dir = otSortAsc ? 1 : -1;
+    const key = (x: OtListRow) => x.t === 'r'
+      ? { name: x.r.applicantName || '', date: x.r.work_date, diff: x.r.diff_minutes ?? 0, created: String(x.r.created_at ?? '') }
+      : { name: x.c.name, date: x.c.work_date, diff: 0, created: x.c.created_at };
+    return list.sort((a, b) => {
+      const ka = key(a), kb = key(b);
+      if (otSortKey === 'name') return ka.name.localeCompare(kb.name, 'ja') * dir;
+      if (otSortKey === 'diff') return (ka.diff - kb.diff) * dir;
+      if (otSortKey === 'created_at') return ka.created.localeCompare(kb.created) * dir;
+      return ka.date.localeCompare(kb.date) * dir;
+    });
+  }, [visibleOtReports, visibleTeiji, otSortKey, otSortAsc]);
 
   // Excel出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する。
   //
@@ -574,6 +643,36 @@ const OvertimeAdminTab: React.FC = () => {
         dateTimeSerial(r.created_at), dateTimeSerial(r.confirmed_at),
       ];
     });
+    // 定時の記録（2026-10-12・出す／出さないを選べる）。差分は空欄＝合計の数字は変わらない
+    if (otCsvTeiji) {
+      const inRange = (c: OtDayCheckRow) => {
+        if (otCsvMode === 'period') return payPeriodOf(c.work_date) === otCsvPeriod;
+        const d = otCsvDateType === 'work' ? c.work_date : String(c.created_at ?? '').slice(0, 10);
+        if (otCsvFrom && d < otCsvFrom) return false;
+        if (otCsvTo && d > otCsvTo) return false;
+        return true;
+      };
+      const teijiRows = otDayChecks.filter(inRange).map(c => {
+        const ns = (c.shift_snapshot ?? {}) as Record<string, unknown>;
+        return { date: c.work_date, row: [
+          c.name, dateSerial(c.work_date), DAY_MARK_STYLE.teiji.label,
+          timeSerial(ns.start_time), timeSerial(ns.end_time), timeSerial(ns.start_time2), timeSerial(ns.end_time2),
+          typeof ns.break_minutes === 'number' ? ns.break_minutes : '', minSerial(ns.labor_minutes),
+          'シフト通り', typeof ns.break_minutes === 'number' ? ns.break_minutes : '', minSerial(ns.labor_minutes),
+          '', '',
+          typeof ns.location === 'string' ? ns.location : '',
+          '', '',
+          '定時の記録（本人）',
+          dateTimeSerial(c.created_at), '',
+        ] };
+      });
+      // 申請の行と同じく、対象日の新しい順に並べ直す
+      const merged = [
+        ...targets.map((r, i) => ({ date: r.work_date, row: rows[i] })),
+        ...teijiRows,
+      ].sort((a, b) => b.date.localeCompare(a.date));
+      rows.splice(0, rows.length, ...merged.map(x => x.row as typeof rows[number]));
+    }
     // ファイル名にも出力範囲を入れる（あとで見て何の期間か分かるように）
     const nameRange = otCsvMode === 'period'
       ? payPeriodLabel(otCsvPeriod)
@@ -696,15 +795,19 @@ const OvertimeAdminTab: React.FC = () => {
   // カレンダー掲載を自分で選べる人（役職ごと・個人ごと。個人が役職より優先）
   interface CalendarChoiceRule { id: string; role_title: string | null; user_id: string | null; enabled: boolean }
   const [calRules, setCalRules] = useState<CalendarChoiceRule[]>([]);
+  // 残業申請のカレンダーの印・定時の記録を使える人（2026-10-12・試しは三役の3人から）。役職は role_id で持つ
+  interface DayCheckRule { id: string; role_id: string | null; user_id: string | null; enabled: boolean }
+  const [dayRules, setDayRules] = useState<DayCheckRule[]>([]);
 
   const fetchSettings = useCallback(async () => {
-    const [setRes, grpRes, ruleRes, calRuleRes] = await Promise.all([
+    const [setRes, grpRes, ruleRes, calRuleRes, dayRuleRes] = await Promise.all([
       supabase.from('overtime_settings')
         .select('threshold_minutes, banner_group_names, notify_on_exceed, notify_days, notify_daily')
         .eq('id', 1).maybeSingle(),
       supabase.from('master_options').select('value').eq('category', 'group').order('sort_order'),
       supabase.from('overtime_threshold_rules').select('*'),
       supabase.from('overtime_calendar_choice_rules').select('*'),
+      supabase.from('overtime_day_check_rules').select('id, role_id, user_id, enabled'),
     ]);
     const th = (setRes.data?.threshold_minutes as number | undefined) ?? 600;
     setThresholdHours(String(Math.floor(th / 60)));
@@ -716,6 +819,8 @@ const OvertimeAdminTab: React.FC = () => {
     setNotifyDaily(Boolean(setRes.data?.notify_daily));
     setRules(((ruleRes.data as ThresholdRule[] | null) ?? []));
     setCalRules(((calRuleRes.data as CalendarChoiceRule[] | null) ?? []));
+    if (dayRuleRes.error) setSettingsErr('「カレンダーの印・定時の記録」の設定を読み込めませんでした：' + dayRuleRes.error.message);
+    setDayRules(((dayRuleRes.data as DayCheckRule[] | null) ?? []));
   }, [supabase]);
 
   useEffect(() => { if (section === 'settings') fetchSettings(); }, [section, fetchSettings]);
@@ -780,6 +885,34 @@ const OvertimeAdminTab: React.FC = () => {
   const deleteCalRule = async (id: string) => {
     const { error } = await supabase.from('overtime_calendar_choice_rules').delete().eq('id', id);
     if (error) { setSettingsErr('削除に失敗しました: ' + error.message); return; }
+    setSettingsMsg('削除しました');
+    fetchSettings();
+  };
+
+  /** カレンダーの印・定時の記録を使える人を1件保存する（同じ対象があれば上書き）。役職は名前から role_id に直す */
+  const saveDayRule = async (
+    target: { role_title: string } | { user_id: string },
+    enabled: boolean,
+  ) => {
+    setSettingsErr(''); setSettingsMsg('');
+    let row: { role_id: string } | { user_id: string };
+    if ('role_title' in target) {
+      const rid = roles.find(r => r.name === target.role_title)?.id;
+      if (!rid) { setSettingsErr('役職が見つかりませんでした'); return; }
+      row = { role_id: rid };
+    } else row = target;
+    const { error } = await supabase.from('overtime_day_check_rules')
+      .upsert({ ...row, enabled }, { onConflict: 'role_id' in row ? 'role_id' : 'user_id' });
+    if (error) { setSettingsErr('保存に失敗しました: ' + error.message); return; }
+    setSettingsMsg('設定を保存しました');
+    fetchSettings();
+  };
+
+  const deleteDayRule = async (id: string) => {
+    // 🚨 delete は0件でもエラーにならないので、件数を見る
+    const { data, error } = await supabase.from('overtime_day_check_rules').delete().eq('id', id).select('id');
+    if (error) { setSettingsErr('削除に失敗しました: ' + error.message); return; }
+    if (!data || data.length === 0) { setSettingsErr('削除できませんでした（もう無いか、権限がありません）'); fetchSettings(); return; }
     setSettingsMsg('削除しました');
     fetchSettings();
   };
@@ -997,6 +1130,17 @@ const OvertimeAdminTab: React.FC = () => {
                   </div>
                 )}
 
+                {/* 定時の記録（本人が「シフト通り勤務した」と記録した日）を入れるか（2026-10-12） */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={otCsvTeiji} onChange={e => setOtCsvTeiji(e.target.checked)} />
+                  定時の記録も入れる（差分は空欄・合計は変わりません）
+                </label>
+                {otLoadRange !== 'all' && (
+                  <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>
+                    出すのは、一覧で読み込んでいる範囲（{OT_LOAD_RANGES.find(x => x.key === otLoadRange)?.label}）の中だけです。もっと前の分は、一覧の「読む範囲」を広げてから出してください。
+                  </p>
+                )}
+
                 <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
                   <button onClick={() => setShowOtCsvModal(false)}
                     style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'none', color: subText, fontSize: 14, cursor: 'pointer' }}>
@@ -1030,6 +1174,17 @@ const OvertimeAdminTab: React.FC = () => {
           </div>
           {/* 絞り込み・並べ替え */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center', justifyContent: 'center' }}>
+            {/* 読む範囲（2026-10-12）。この範囲の申請は件数に関係なく全部読む */}
+            <select value={otLoadRange} onChange={e => setOtLoadRange(e.target.value as OtLoadRange)} title="読み込む範囲"
+              style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
+              {OT_LOAD_RANGES.map(o => <option key={o.key} value={o.key}>読む範囲：{o.label}</option>)}
+            </select>
+            {otDayChecks.length > 0 && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: text, cursor: 'pointer' }}>
+                <input type="checkbox" checked={otShowTeiji} onChange={e => setOtShowTeiji(e.target.checked)} />
+                定時の記録も出す
+              </label>
+            )}
             <select value={otFilterPeriod} onChange={e => setOtFilterPeriod(e.target.value)}
               style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
               <option value="all">全期間</option>
@@ -1058,7 +1213,7 @@ const OvertimeAdminTab: React.FC = () => {
                 ✕ クリア
               </button>
             )}
-            <span style={{ fontSize: 12, color: subText }}>{visibleOtReports.length}件</span>
+            <span style={{ fontSize: 12, color: subText }}>{mergedOtRows.length}件{visibleTeiji.length > 0 && `（うち定時 ${visibleTeiji.length}件）`}</span>
           </div>
           {/* 個人を選んだときだけの合計（1行・高さを取らない。2026-09-18 ユーザー指示）。数え方は部門集計と同じ */}
           {otFilterPerson !== 'all' && (
@@ -1105,7 +1260,36 @@ const OvertimeAdminTab: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleOtReports.map(r => {
+                  {mergedOtRows.map(row => {
+                    if (row.t === 'c') {
+                      // 定時の記録（本人が「シフト通り勤務した」と記録した日）。差分は空・操作なし
+                      const c = row.c;
+                      const cns = (c.shift_snapshot ?? {}) as { start_time?: string | null; end_time?: string | null; start_time2?: string | null; end_time2?: string | null; location?: string | null; break_minutes?: number; labor_minutes?: number };
+                      const ccell: React.CSSProperties = { padding: '7px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top', color: subText };
+                      return (
+                        <tr key={`dc-${c.id}`} style={{ background: isDarkMode ? '#2b3035' : '#fafafa' }}>
+                          <td style={{ ...ccell, fontWeight: 'bold', textAlign: 'left', color: text }}>{c.name}</td>
+                          <td style={{ ...ccell, whiteSpace: 'nowrap', color: text }}>
+                            {c.work_date}
+                            <div style={{ fontSize: 10, marginTop: 2 }}>
+                              記録 {new Date(c.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            </div>
+                          </td>
+                          <td style={{ ...ccell, textAlign: 'left', fontSize: 12 }}>
+                            <div style={{ fontSize: 11 }}>元 {normalShiftTimeText(cns) || '—'}</div>
+                            <div style={{ color: text }}>実 シフト通り</div>
+                          </td>
+                          <td style={{ ...ccell, fontSize: 12, whiteSpace: 'nowrap' }}>休{cns.break_minutes ?? 0}分<br />{formatMin(cns.labor_minutes ?? 0)}</td>
+                          <td style={{ ...ccell, fontSize: 12 }}>{cns.location || '—'}</td>
+                          <td style={{ ...ccell, whiteSpace: 'nowrap' }}>—</td>
+                          <td style={ccell}>
+                            <span style={{ padding: '2px 6px', borderRadius: 6, background: DAY_MARK_STYLE.teiji.bg, color: DAY_MARK_STYLE.teiji.text, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{DAY_MARK_STYLE.teiji.label}</span>
+                          </td>
+                          <td style={{ ...ccell, fontSize: 11 }}>本人の記録</td>
+                        </tr>
+                      );
+                    }
+                    const r = row.r;
                     const st = otStatusMap[r.id];
                     const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
                     const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
@@ -1782,6 +1966,43 @@ const OvertimeAdminTab: React.FC = () => {
             <CalendarChoiceRuleForm
               staff={staff} subText={subText}
               inputStyle={inputStyle} borderColor={borderColor} onSave={saveCalRule}
+            />
+          </div>
+
+          {/* カレンダーの印・定時の記録を使える人（2026-10-12・試しの段階） */}
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>カレンダーの印・定時の記録を使える人（試し）</p>
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              ここで指定した人の残業申請のカレンダーに、出した日の印（事前・未報告・報告済・事後・差戻・定時・休暇）が出ます。
+              事後報告で何もしていない日を押すと［定時で記録する］も使えます。
+              <strong style={{ color: text }}>個人の設定が役職の設定より優先</strong>されます。指定していない人の画面は今までどおりです。<br />
+              定時の記録は「受理済み一覧」と Excel に、申請と一緒に出ます（指定をやめても、記録は残ります）。
+            </p>
+            {dayRules.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                {dayRules.map(r => (
+                  <div key={r.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text,
+                    padding: '6px 0', borderBottom: `1px solid ${borderColor}`,
+                  }}>
+                    <span style={{ flex: 1 }}>
+                      {r.role_id
+                        ? `役職：${roles.find(x => x.id === r.role_id)?.name ?? '（不明な役職）'}`
+                        : `個人：${staff.find(x => x.id === r.user_id)?.name ?? '（退職などで不明）'}`}
+                    </span>
+                    <span style={{ color: r.enabled ? '#1565c0' : subText }}>
+                      {r.enabled ? '使える' : '使えない'}
+                    </span>
+                    <button type="button" onClick={() => deleteDayRule(r.id)}
+                      style={{ background: 'none', border: 'none', color: subText, cursor: 'pointer', fontSize: 13 }}>削除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <CalendarChoiceRuleForm
+              staff={staff} subText={subText}
+              inputStyle={inputStyle} borderColor={borderColor} onSave={saveDayRule}
+              onLabel="使えるようにする" offLabel="使えないようにする"
             />
           </div>
 
