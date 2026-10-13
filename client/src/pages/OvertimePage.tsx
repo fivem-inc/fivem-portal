@@ -539,7 +539,9 @@ const OvertimeForm: React.FC<{
   onOpenExisting: (reportId: string) => void;
   /** 履歴タブへ移る */
   onGoHistory: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory }) => {
+  /** 打刻の確認で本人が入れた正しい勤務時間（実績報告を開くときに最初から入れる・2026-10-13） */
+  prefillSegments?: { start: string; end: string }[] | null;
+}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory, prefillSegments }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
@@ -571,6 +573,7 @@ const OvertimeForm: React.FC<{
   });
   const [date, setDate] = useState(() => editTarget?.work_date ?? draft?.date ?? '');
   const [segments, setSegments] = useState<{ start: string; end: string }[]>(() => {
+    if (editTarget && prefillSegments && prefillSegments.length > 0) return prefillSegments.map(s => ({ ...s }));
     if (editTarget) {
       // 実績報告は予定をプリフィル、再提出は実績を復元
       const phase = isReportPhase ? 'planned' : 'actual';
@@ -2667,6 +2670,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const pageCalendarKinds = useCompanyCalendar();
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<OvertimeReport | null>(null);
+  // 打刻の確認の「時刻が違います」で入れた時刻（その申請を開いているときだけ使う）
+  const [editPrefill, setEditPrefill] = useState<{ reportId: string; segs: { start: string; end: string }[] } | null>(null);
   const [savedBanner, setSavedBanner] = useState(false);
   // 送信完了バナーは数秒で自動消去（アプリ標準の成功フィードバックに合わせる）
   useEffect(() => {
@@ -3374,6 +3379,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             // ※締め後の許可は確認の送信時に付いている。回答画面から戻るとフォームは
             //   作り直されるので、そのマウント時に最新の許可が読み込まれる
           }}
+          onOpenReport={async (reportId, segs) => {
+            // 申請がある日の答えのあと：実績の報告／出し直しの画面を開く（2026-10-13）
+            let r = reports.find(x => x.id === reportId) ?? null;
+            if (!r) {
+              const { data, error } = await supabase.from('overtime_reports')
+                .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:modified_from_id(work_date, diff_minutes, application_types, location)')
+                .eq('id', reportId).maybeSingle();
+              if (error) console.error('[打刻の確認] 申請を読み込めませんでした', error.message);
+              r = (data as OvertimeReport | null) ?? null;
+            }
+            setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('inquiry'); return n; });
+            setEditPrefill(r && segs && segs.length > 0 ? { reportId: r.id, segs } : null);
+            setEditTarget(r);
+            setTab(r ? 'form' : 'history');
+            window.scrollTo({ top: 0 });
+          }}
         />
       </div>
     );
@@ -3768,6 +3789,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
               editTarget={editTarget}
+              prefillSegments={editPrefill && editTarget && editPrefill.reportId === editTarget.id ? editPrefill.segs : null}
               canChooseCalendar={canChooseCalendar}
               canMemo={canMemoPerm}
               appliedDates={appliedDates}

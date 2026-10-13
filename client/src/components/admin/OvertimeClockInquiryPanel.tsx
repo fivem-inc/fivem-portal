@@ -6,12 +6,19 @@ import type { PatternRow } from '../../lib/overtimeShift';
 import type { CalendarKind } from '../../lib/breakCalc';
 import { todayJstStr } from '../../lib/breakCalc';
 import { dispatchEmail, getUserEmail } from '../../lib/notificationDispatch';
+import {
+  loadDayStates, answerLabel, segmentsText, reportKindText, diffFromShift, signedText, followUpOf,
+} from '../../lib/clockInquiry';
+import type { InquiryAnswer, DayStateRow, DayState } from '../../lib/clockInquiry';
+import { STATUS_INFO } from '../../lib/overtimeStatus';
+import type { OvertimeStatus } from '../../lib/overtimeStatus';
 
 // 経理（管理者）が「この日の打刻が遅いが残業か」を本人に確認する画面。
 // ・1人 × 複数日をまとめて送る（給与計算で1人ぶんのタイムカードを見ながら拾うため）
 // ・通常シフトは自動表示。経理が入れるのは打刻だけ（転記を減らすのが最大の時短）
 // ・送信すると、その日だけ締め後でも報告できる許可が自動で付く（RPC側）
-// ・すでに残業の記録がある日は送らない（二度聞きの防止）
+// ・申請がある日にも送れる（2026-10-13・経理担当の意見）。その日の申請の中身を横に出す。
+//   本人の答えは申請の状態で変わる（lib/clockInquiry.ts・DB の answer_overtime_clock_inquiry）
 
 interface StaffRow { id: string; name: string; role_title: string | null }
 
@@ -21,8 +28,17 @@ interface InquiryDay {
   // 第2の時間帯（テレワーク・中抜けなど）。無い日は null
   shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
-  answer: 'pending' | 'worked' | 'not_worked' | 'unknown';
+  answer: InquiryAnswer;
   answer_reason: string | null; answer_note: string | null; result_report_id: string | null;
+  existing_report_id: string | null; report_state: DayState | null;
+  answer_segments: { start_min: number; end_min: number }[] | null;
+  resolved_kind: 'edited' | 'cancelled' | 'kept' | null;
+}
+/** 答えの一覧で出す申請の中身（いまの状態） */
+interface ReportBrief {
+  id: string; status: string; is_post_hoc: boolean; application_types: string[] | null; diff_minutes: number | null;
+  normal_shift: { labor_minutes?: number } | null; furikae_origin_date: string | null; work_date: string;
+  segments: { phase: string; start_min: number; end_min: number }[] | null;
 }
 interface InquiryRow {
   id: string; user_id: string; sender_id: string; message: string | null;
@@ -39,9 +55,6 @@ const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dowOf = (d: string) => DOW[new Date(d + 'T00:00:00').getDay()];
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const hm = (t: string | null) => (t ? t.slice(0, 5) : '—');
-const ANSWER_LABEL: Record<string, string> = {
-  pending: '未回答', worked: '業務をしていた', not_worked: '打刻が遅れただけ', unknown: '思い出せない',
-};
 
 // 一言の文例。
 // ⚠️ 「残業ではないですよね」のように、答えを誘導する書き方は入れないこと。
@@ -71,7 +84,12 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const [message, setMessage] = useState('');
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
   const [calendarKinds, setCalendarKinds] = useState<Record<string, CalendarKind | null>>({});
-  const [existingDates, setExistingDates] = useState<Set<string>>(new Set());
+  // 送る日の申請の状態（2026-10-13・申請がある日も送れる。中身を出して見比べてもらう）
+  const [dayStates, setDayStates] = useState<Record<string, DayStateRow>>({});
+  const [dayStateErr, setDayStateErr] = useState('');
+  // 送った確認の一覧：申請の今の中身・対応待ちだけの絞り込み
+  const [reportBriefs, setReportBriefs] = useState<Record<string, ReportBrief>>({});
+  const [onlyAction, setOnlyAction] = useState(false);
   // 本人が「定時」（シフト通り勤務した）と記録している日 → 記録した日時（2026-10-12）。問い合わせを送る前に分かるように
   const [dayCheckAt, setDayCheckAt] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
@@ -130,7 +148,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
 
   // 対象者を選んだら曜日パターンを取得（通常シフトの自動表示に使う）
   useEffect(() => {
-    if (!targetId) { setPatterns([]); setExistingDates(new Set()); return; }
+    if (!targetId) { setPatterns([]); setDayStates({}); return; }
     (async () => {
       const { data } = await supabase.from('weekly_shift_patterns').select('*').eq('user_id', targetId);
       setPatterns((data ?? []) as PatternRow[]);
@@ -140,13 +158,12 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   // 選んだ日の会社カレンダーと、すでに残業の記録がある日を取得
   useEffect(() => {
     const dates = rows.map(r => r.work_date);
-    if (!targetId || dates.length === 0) { setExistingDates(new Set()); setDayCheckAt({}); return; }
+    if (!targetId || dates.length === 0) { setDayStates({}); setDayCheckAt({}); return; }
     (async () => {
       const { data: cal } = await supabase.from('company_calendar').select('date, kind').in('date', dates);
       setCalendarKinds(Object.fromEntries((cal ?? []).map(c => [c.date, c.kind as CalendarKind])));
-      const { data: rep } = await supabase.from('overtime_reports')
-        .select('work_date').eq('applicant_id', targetId).in('work_date', dates).neq('status', 'cancelled');
-      setExistingDates(new Set((rep ?? []).map(r => r.work_date)));
+      const st = await loadDayStates(targetId, dates);
+      setDayStates(st.map); setDayStateErr(st.error ?? '');
       const { data: chk, error: chkErr } = await supabase.from('overtime_day_checks')
         .select('work_date, created_at').eq('user_id', targetId).in('work_date', dates);
       if (chkErr) console.error('[打刻の確認] 定時の記録を読めませんでした', chkErr.message);
@@ -164,6 +181,15 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
       const byId: Record<string, InquiryDay[]> = {};
       (ds ?? []).forEach((d: InquiryDay) => { (byId[(d as InquiryDay & { inquiry_id: string }).inquiry_id] ??= []).push(d); });
       list.forEach(i => { i.days = byId[i.id] ?? []; });
+      // 答えに結び付いた申請の、いまの中身（状態・時間・差）
+      const ids = [...new Set((ds ?? []).flatMap((d: InquiryDay) => [d.existing_report_id, d.result_report_id]).filter((x): x is string => !!x))];
+      if (ids.length > 0) {
+        const { data: reps, error: repErr } = await supabase.from('overtime_reports')
+          .select('id, status, is_post_hoc, application_types, diff_minutes, normal_shift, furikae_origin_date, work_date, segments:overtime_report_segments(phase, start_min, end_min)')
+          .in('id', ids);
+        if (repErr) console.error('[打刻の確認] 申請の中身を読めませんでした', repErr.message);
+        setReportBriefs(Object.fromEntries(((reps ?? []) as ReportBrief[]).map(r => [r.id, r])));
+      }
     }
     setInquiries(list);
   }, []);
@@ -186,11 +212,12 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     setNewDate('');
   };
 
-  const sendable = useMemo(() => rows.filter(r => !existingDates.has(r.work_date)), [rows, existingDates]);
+  // 🚨 2026-10-13：申請がある日も送れる（前は除いていた）
+  const sendable = rows;
 
   const validate = (): string => {
     if (!targetId) return '対象者を選んでください';
-    if (sendable.length === 0) return '送れる日がありません（すでに記録がある日は送れません）';
+    if (sendable.length === 0) return '日を追加してください';
     for (const r of sendable) {
       if (!r.clock_out && !r.clock_in) return `${md(r.work_date)}の打刻を入力してください`;
     }
@@ -305,6 +332,9 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
           </button>
         </div>
 
+        {dayStateErr && (
+          <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#842029' }}>その日の申請を読み込めませんでした（{dayStateErr}）</p>
+        )}
         {rows.length > 0 && (
           <div style={{ overflowX: 'auto', marginBottom: 12 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -321,30 +351,40 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                 {rows.map((r, i) => {
                   const ns = resolveNormalShift(patterns, r.work_date, calendarKinds[r.work_date] ?? null);
                   const nsBands = normalShiftBands(ns);
-                  const dup = existingDates.has(r.work_date);
+                  const st = dayStates[r.work_date];
+                  const stText = st?.report_id
+                    ? `申請あり：${reportKindText(st)}${st.segments && st.segments.length > 0 ? ` ${segmentsText(st.segments)}` : ''}（${signedText(st.diff_minutes)}）・${st.status && STATUS_INFO[st.status as OvertimeStatus] ? STATUS_INFO[st.status as OvertimeStatus].label : ''}`
+                    : '';
                   return (
-                    <tr key={r.work_date} style={{ borderBottom: `1px solid ${border}`, opacity: dup ? 0.55 : 1 }}>
+                    <tr key={r.work_date} style={{ borderBottom: `1px solid ${border}` }}>
                       <td style={{ padding: '6px 8px', color: text, whiteSpace: 'nowrap' }}>{md(r.work_date)}（{dowOf(r.work_date)}）</td>
                       <td style={{ padding: '6px 8px', color: subText, whiteSpace: 'nowrap' }}>
                         {/* 列は nowrap なので、時間帯が2本ある日は横に伸ばさず改行する */}
-                        {dup ? '⚠️ この日は既に記録があります'
-                          : nsBands.length === 0 ? '—'
-                            : nsBands.map((b, bi) => (
-                              <React.Fragment key={bi}>{bi > 0 && <br />}{b.start}〜{b.end}</React.Fragment>
-                            ))}
-                        {!dup && dayCheckAt[r.work_date] && (
+                        {nsBands.length === 0 ? '—'
+                          : nsBands.map((b, bi) => (
+                            <React.Fragment key={bi}>{bi > 0 && <br />}{b.start}〜{b.end}</React.Fragment>
+                          ))}
+                        {stText && (
+                          <div style={{ marginTop: 3 }}>
+                            <span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', borderRadius: 4, padding: '1px 6px', background: '#e6f1fb', color: '#0c447c', whiteSpace: 'normal' }}>{stText}</span>
+                          </div>
+                        )}
+                        {st?.state === 'leave' && (
+                          <div style={{ marginTop: 3, fontSize: 11.5, color: '#b45309' }}>⚠️ この日は休暇の日です</div>
+                        )}
+                        {dayCheckAt[r.work_date] && (
                           <div style={{ marginTop: 3, fontSize: 11.5, color: text }}>
                             本人の記録：<b>定時</b>（{new Date(dayCheckAt[r.work_date]).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })} に記録）
                           </div>
                         )}
                       </td>
                       <td style={{ padding: '6px 8px' }}>
-                        <input type="time" value={r.clock_in} disabled={dup}
+                        <input type="time" value={r.clock_in}
                           onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, clock_in: e.target.value } : p))}
                           style={{ ...inputStyle, width: 110 }} />
                       </td>
                       <td style={{ padding: '6px 8px' }}>
-                        <input type="time" value={r.clock_out} disabled={dup}
+                        <input type="time" value={r.clock_out}
                           onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, clock_out: e.target.value } : p))}
                           style={{ ...inputStyle, width: 110 }} />
                       </td>
@@ -426,12 +466,22 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         )}
       </div>
 
-      {/* ② 送信した確認 */}
+      {/* ② 送信した確認（2026-10-13：日ごとのカード＋札。「対応待ちだけ」で絞れる） */}
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
-        <h4 style={{ margin: '0 0 10px', fontSize: 14, color: text }}>送信した確認</h4>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          <h4 style={{ margin: 0, fontSize: 14, color: text }}>送信した確認</h4>
+          {([['all', 'すべて'], ['action', '対応待ちだけ']] as const).map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setOnlyAction(k === 'action')}
+              style={{ padding: '3px 12px', borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 12,
+                background: onlyAction === (k === 'action') ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                color: onlyAction === (k === 'action') ? '#fff' : text, fontWeight: onlyAction === (k === 'action') ? 'bold' : 'normal' }}>
+              {l}
+            </button>
+          ))}
+        </div>
         {inquiries.length === 0 ? (
           <p style={{ margin: 0, fontSize: 12.5, color: subText }}>まだありません</p>
-        ) : inquiries.map(i => (
+        ) : inquiries.filter(i => !onlyAction || (i.days ?? []).some(d => followUpOf(d, d.existing_report_id ? reportBriefs[d.existing_report_id]?.status : null).kind === 'action')).map(i => (
           <div key={i.id} style={{ borderBottom: `1px solid ${border}`, padding: '10px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{names[i.user_id] ?? ''}</span>
@@ -443,6 +493,10 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                 {i.status === 'open' ? '未回答' : i.status === 'answered' ? '回答済み' : '取り下げ'}
               </span>
               <span style={{ fontSize: 11.5, color: subText }}>{i.created_at.slice(0, 10).replace(/-/g, '/')} 送信</span>
+              {(() => {
+                const n = (i.days ?? []).filter(d => followUpOf(d, d.existing_report_id ? reportBriefs[d.existing_report_id]?.status : null).kind === 'action').length;
+                return n > 0 ? <span style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10, background: '#b45309', color: '#fff' }}>対応待ち {n}日</span> : null;
+              })()}
               {i.status === 'open' && (
                 <button onClick={() => setWithdrawTarget(i.id)}
                   style={{ marginLeft: 'auto', background: 'none', border: `1px solid ${border}`, borderRadius: 6, cursor: 'pointer', padding: '3px 10px', fontSize: 11.5, color: subText }}>
@@ -459,17 +513,43 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                 </div>
               </div>
             )}
-            <div style={{ marginTop: 6 }}>
-              {(i.days ?? []).map(d => (
-                <div key={d.id} style={{ fontSize: 12, color: subText, lineHeight: 1.9 }}>
-                  {md(d.work_date)}（{dowOf(d.work_date)}）　シフト {normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '—'}　打刻 {hm(d.clock_in)}〜{hm(d.clock_out)}
-                  　→ <span style={{ color: d.answer === 'pending' ? subText : text, fontWeight: d.answer === 'pending' ? 'normal' : 'bold' }}>{ANSWER_LABEL[d.answer]}</span>
-                  {d.answer_reason && `（${d.answer_reason}）`}
-                  {d.answer_note && `（${d.answer_note}）`}
-                  {d.answer === 'worked' && !d.result_report_id && <span style={{ color: '#b45309' }}>　※残業の報告待ち</span>}
-                  {d.answer === 'not_worked' && !d.result_report_id && <span style={{ color: '#b45309' }}>　※打刻ズレの記録が未作成</span>}
-                </div>
-              ))}
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(i.days ?? []).map(d => {
+                const rb = d.existing_report_id ? reportBriefs[d.existing_report_id] : (d.result_report_id ? reportBriefs[d.result_report_id] : undefined);
+                const fu = followUpOf(d, rb?.status ?? null);
+                const rbSegs = rb?.segments
+                  ? rb.segments.filter(x => x.phase === (rb.segments!.some(y => y.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.start_min - b.start_min)
+                  : null;
+                const rbStatus = rb?.status && STATUS_INFO[rb.status as OvertimeStatus] ? STATUS_INFO[rb.status as OvertimeStatus].label : '';
+                const ansSegs = d.answer_segments ?? null;
+                const ansDiff = ansSegs ? diffFromShift(ansSegs.map(x => ({ startMin: x.start_min, endMin: x.end_min })), rb?.normal_shift?.labor_minutes ?? null) : null;
+                const tag = fu.kind === 'action' ? { bg: '#b45309', fg: '#fff' } : fu.kind === 'done' ? { bg: isDark ? '#1b3a1e' : '#e8f5e9', fg: isDark ? '#a5d6a7' : '#1b5e20' } : { bg: isDark ? '#495057' : '#e9ecef', fg: text };
+                const rowLabel: React.CSSProperties = { color: subText, width: 104, flexShrink: 0 };
+                return (
+                  <div key={d.id} style={{ border: `${fu.kind === 'action' ? 2 : 1}px solid ${fu.kind === 'action' ? '#b45309' : border}`, borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: text }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <b>{md(d.work_date)}（{dowOf(d.work_date)}）</b>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', padding: '1px 7px', borderRadius: 4, background: tag.bg, color: tag.fg }}>{fu.label}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}><span style={rowLabel}>シフト</span><span>{normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '—'}</span></div>
+                    {rb && (
+                      <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>申請</span>
+                        <span>{reportKindText({ application_types: rb.application_types, is_post_hoc: rb.is_post_hoc, furikae_origin: !!rb.furikae_origin_date && rb.work_date !== d.work_date })}{rbSegs && rbSegs.length > 0 ? ` ${segmentsText(rbSegs)}` : ''}（{signedText(rb.diff_minutes)}）・{rbStatus}</span></div>
+                    )}
+                    <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>本人の答え</span>
+                      <span style={{ fontWeight: d.answer === 'pending' ? 'normal' : 'bold', color: d.answer === 'pending' ? subText : text }}>
+                        {answerLabel(d.answer, d.report_state)}{d.answer_reason ? `（${d.answer_reason}）` : ''}
+                      </span></div>
+                    {ansSegs && (
+                      <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>本人が入れた<br />正しい時間</span>
+                        <span style={{ fontWeight: 'bold', color: isDark ? '#8ec5f0' : '#0c447c' }}>{segmentsText(ansSegs)}（{signedText(ansDiff)}）</span></div>
+                    )}
+                    <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>打刻</span><span>{hm(d.clock_in)}〜{hm(d.clock_out)}</span></div>
+                    {d.answer_note && <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>ひとこと</span><span>{d.answer_note}</span></div>}
+                    {d.answer === 'not_worked' && !d.result_report_id && <div style={{ color: '#b45309', marginTop: 2 }}>※ 打刻ズレの記録が未作成です（本人の画面で作れなかった）</div>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}

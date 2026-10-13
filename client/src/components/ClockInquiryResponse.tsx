@@ -7,6 +7,15 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
 import { primaryBtn } from '../lib/buttonStyles';
+import TimeInput from './TimeInput';
+import { toWorkSegments } from '../lib/overtimeSubmit';
+import { timeToMinutes } from '../lib/timeInput';
+import { minToTime } from '../lib/breakCalc';
+import {
+  loadDayStates, answerChoices, answerLabel, stateBandText, segmentsText, diffFromShift, signedText,
+  TIME_DIFFERS_NOTE_EXAMPLES,
+} from '../lib/clockInquiry';
+import type { InquiryAnswer, DayStateRow } from '../lib/clockInquiry';
 
 // 経理からの「打刻の確認」に答える画面。通知バナー → /overtime?inquiry=<id> から開く。
 //
@@ -23,22 +32,22 @@ interface DayRow {
   shift_start: string | null; shift_end: string | null;
   shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
-  answer: 'pending' | 'worked' | 'not_worked' | 'unknown';
+  answer: InquiryAnswer;
   answer_reason: string | null; answer_note: string | null;
   result_report_id: string | null;
+  report_state: DayStateRow['state'] | null;
+  answer_segments: { start_min: number; end_min: number }[] | null;
 }
 interface InquiryRow {
   id: string; user_id: string; sender_id: string; message: string | null;
   status: 'open' | 'answered' | 'withdrawn'; answered_at: string | null;
 }
 
-type Answer = 'worked' | 'not_worked' | 'unknown';
-
-const ANSWER_CHOICES: { value: Answer; label: string; desc: string }[] = [
-  { value: 'worked',     label: '業務をしていました',       desc: '残業として報告します' },
-  { value: 'not_worked', label: '業務は終わっていました',   desc: '打刻が遅れただけ・残業なし' },
-  { value: 'unknown',    label: '思い出せない・その他',     desc: '経理に相談します' },
-];
+// 🚨 答えの言葉・選べる答えは lib/clockInquiry.ts の answerChoices（経理の画面と共用・DB と同じ組み合わせ）
+type Answer = Exclude<InquiryAnswer, 'pending'>;
+type SegInput = { start: string; end: string };
+/** "HH:MM" に（入力欄用。翌日にまたぐ分は 24 を引いて入れる＝残業申請の入力と同じ扱い） */
+const toHHMM = (min: number) => { const m = min % 1440; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dowOf = (d: string) => DOW[new Date(d + 'T00:00:00').getDay()];
@@ -52,9 +61,11 @@ interface Props {
   onClose: () => void;
   /** 「この日の残業を報告する」→ 申請フォームを開く（日付・打刻をプリセット） */
   onReportOvertime: (workDate: string, clockOut: string | null) => void;
+  /** 申請がある日の答えのあと：その申請を開く（実績の報告・出し直し）。segs は「時刻が違います」で入れた時刻 */
+  onOpenReport: (reportId: string, segs?: SegInput[]) => void;
 }
 
-const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDark, onClose, onReportOvertime }) => {
+const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDark, onClose, onReportOvertime, onOpenReport }) => {
   const [inquiry, setInquiry] = useState<InquiryRow | null>(null);
   const [days, setDays] = useState<DayRow[]>([]);
   const [senderName, setSenderName] = useState('');
@@ -68,7 +79,11 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
   // 打刻ズレの記録を作れなかった日（2026-10-13）。🚨 前は黙って飛ばしていた。回答は記録済みなので、完了画面で知らせる
   const [failedDays, setFailedDays] = useState<{ date: string; msg: string }[]>([]);
 
-  const [picks, setPicks] = useState<Record<string, { answer: Answer | ''; reason: string; note: string }>>({});
+  const [picks, setPicks] = useState<Record<string, { answer: Answer | ''; reason: string; note: string; segs: SegInput[] }>>({});
+  // その日の申請の状態（答える時点のもの・2026-10-13）。🚨 読めないときは答えさせない（選べる答えが決まらないため）
+  const [dayStates, setDayStates] = useState<Record<string, DayStateRow>>({});
+  const [stateErr, setStateErr] = useState('');
+  const [statesLoaded, setStatesLoaded] = useState(false);
 
   const text = isDark ? '#e9ecef' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
@@ -92,6 +107,8 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         const { data: cal } = await supabase.from('company_calendar').select('date, kind').in('date', dates);
         setCalendarKinds(Object.fromEntries((cal ?? []).map(c => [c.date, c.kind as CalendarKind])));
       }
+      const st = await loadDayStates(inq.user_id, dates);
+      setDayStates(st.map); setStateErr(st.error ?? ''); setStatesLoaded(!st.error);
       setInquiry(inq as InquiryRow);
       setDays((ds ?? []) as DayRow[]);
       setPatterns((pat ?? []) as PatternRow[]);
@@ -101,7 +118,14 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
     })();
   }, [inquiryId]);
 
-  const canRespond = !!inquiry && inquiry.user_id === currentUserId && inquiry.status === 'open';
+  const canRespond = !!inquiry && inquiry.user_id === currentUserId && inquiry.status === 'open' && statesLoaded;
+  const reloadStates = async () => {
+    if (!inquiry) return;
+    const st = await loadDayStates(inquiry.user_id, days.map(d => d.work_date));
+    setDayStates(st.map); setStateErr(st.error ?? ''); setStatesLoaded(!st.error);
+    setPicks({});
+  };
+  const anyReport = days.some(d => dayStates[d.work_date]?.report_id);
 
   // 直前に選んだ理由を次の日の既定にする（同じ理由が続くことが多いので入力を減らす）
   const lastReason = useMemo(() => {
@@ -109,10 +133,17 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
     return vals.length > 0 ? vals[vals.length - 1] : '';
   }, [picks]);
 
-  const setPick = (dayId: string, patch: Partial<{ answer: Answer | ''; reason: string; note: string }>) => {
+  const setPick = (dayId: string, patch: Partial<{ answer: Answer | ''; reason: string; note: string; segs: SegInput[] }>) => {
     setPicks(prev => {
-      const cur = prev[dayId] ?? { answer: '', reason: '', note: '' };
+      const cur = prev[dayId] ?? { answer: '', reason: '', note: '', segs: [] };
       const next = { ...cur, ...patch };
+      // 「時刻が違います」を選んだら、申請の時間を最初から入れておく（違うところだけ直してもらう）
+      if (patch.answer === 'time_differs' && next.segs.length === 0) {
+        const day = days.find(x => x.id === dayId);
+        const st = day ? dayStates[day.work_date] : undefined;
+        next.segs = (st?.segments ?? []).map(sg => ({ start: toHHMM(sg.start_min), end: toHHMM(sg.end_min) }));
+        if (next.segs.length === 0) next.segs = [{ start: '', end: '' }];
+      }
       // 「業務は終わっていました」を選んだ直後は、直前の日と同じ理由を入れておく（変更可）
       if (patch.answer === 'not_worked' && !next.reason && lastReason) next.reason = lastReason;
       return { ...prev, [dayId]: next };
@@ -127,6 +158,15 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
       if (p.answer === 'not_worked' && !p.reason) return `${md(d.work_date)}（${dowOf(d.work_date)}）の理由を選んでください`;
       if (p.answer === 'not_worked' && p.reason === 'その他' && !p.note.trim()) return `${md(d.work_date)}（${dowOf(d.work_date)}）の理由を入力してください`;
       if (p.answer === 'unknown' && !p.note.trim()) return `${md(d.work_date)}（${dowOf(d.work_date)}）の状況を書いてください`;
+      if (p.answer === 'time_differs') {
+        const label = `${md(d.work_date)}（${dowOf(d.work_date)}）`;
+        const ws = toWorkSegments(p.segs);
+        if (ws.length === 0 || ws.length !== p.segs.filter(x => x.start || x.end).length) return `${label}の勤務時間を入れてください`;
+        const st = dayStates[d.work_date];
+        const same = JSON.stringify(ws.map(w => [w.startMin, w.endMin])) === JSON.stringify((st?.segments ?? []).map(x => [x.start_min, x.end_min]));
+        if (same) return `${label}は申請と同じ時刻です。申請の通りなら上の答えを選んでください`;
+        if (!p.note.trim()) return `${label}のひとことを書いてください`;
+      }
     }
     return '';
   };
@@ -144,13 +184,25 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
           day_id: d.id,
           answer: p.answer,
           reason: p.answer === 'not_worked' ? (p.reason === 'その他' ? p.note.trim() : p.reason) : null,
-          note: p.answer === 'unknown' ? p.note.trim() : null,
+          note: p.answer === 'unknown' || p.answer === 'time_differs' ? p.note.trim() : null,
+          segments: p.answer === 'time_differs'
+            ? toWorkSegments(p.segs).map(w => ({ start_min: w.startMin, end_min: w.endMin }))
+            : null,
         };
       });
       const { data: claimed, error: rErr } = await supabase.rpc('answer_overtime_clock_inquiry', {
         p_inquiry_id: inquiry.id, p_days: payload, p_note: null,
       });
-      if (rErr) { setError('回答の記録に失敗しました：' + rErr.message); setSaving(false); return; }
+      if (rErr) {
+        // 🚨 送ったあとに申請が出た・取り消されたなど。サーバーが断ったら状態を読み直して答え直してもらう
+        if (rErr.message.includes('CLOCK_INQ_STATE_CHANGED')) {
+          setError(rErr.message.replace(/^.*CLOCK_INQ_STATE_CHANGED:\s*/, ''));
+          await reloadStates();
+        } else {
+          setError('回答の記録に失敗しました：' + rErr.message.replace(/^.*CLOCK_INQ_[A-Z_]+:\s*/, ''));
+        }
+        setSaving(false); return;
+      }
       if (claimed === false) { setError('この確認はすでに回答済みです'); setSaving(false); return; }
 
       // 2) 「業務は終わっていました」の日だけ、打刻ズレの記録を作る。
@@ -212,10 +264,14 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
       setFailedDays(failed);
 
       // 3) 経理へメール（ベル・プッシュは RPC 側で作成済み）
-      const counts = { worked: 0, not_worked: 0, unknown: 0 };
+      const counts: Record<Answer, number> = { worked: 0, not_worked: 0, unknown: 0, as_reported: 0, time_differs: 0, will_resubmit: 0 };
       days.forEach(d => { const a = picks[d.id]?.answer; if (a) counts[a] += 1; });
+      // 🚨 文は DB の answer_overtime_clock_inquiry の経理あてベルと同じ並び・言葉
       const summary = [
-        counts.not_worked > 0 ? `打刻が遅れただけ ${counts.not_worked}日` : '',
+        counts.time_differs > 0 ? `時刻が違う ${counts.time_differs}日` : '',
+        counts.will_resubmit > 0 ? `申請を出し直す ${counts.will_resubmit}日` : '',
+        counts.as_reported > 0 ? `申請の通り ${counts.as_reported}日` : '',
+        counts.not_worked > 0 ? `定時（打刻が遅れただけ） ${counts.not_worked}日` : '',
         counts.worked > 0 ? `業務をしていた ${counts.worked}日` : '',
         counts.unknown > 0 ? `思い出せない ${counts.unknown}日` : '',
       ].filter(Boolean).join('／');
@@ -250,6 +306,17 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
   // 回答完了：残業として報告が必要な日をここから開く（回答は既に確定している）
   if (done) {
     const workedDays = days.filter(d => picks[d.id]?.answer === 'worked');
+    // 申請がある日の次の一手（事前申請だけ→実績の報告／差し戻し中→出し直し）
+    const nextSteps = days.flatMap(d => {
+      const st = dayStates[d.work_date]; const a = picks[d.id]?.answer;
+      if (!st?.report_id) return [];
+      if (st.state === 'planned' && (a === 'as_reported' || a === 'time_differs')) {
+        return [{ d, reportId: st.report_id, label: '実績を報告する →', segs: a === 'time_differs' ? picks[d.id].segs : undefined }];
+      }
+      if (st.state === 'returned' && a === 'will_resubmit') return [{ d, reportId: st.report_id, label: '申請を直して出し直す →', segs: undefined }];
+      return [];
+    });
+    const differsDays = days.filter(d => picks[d.id]?.answer === 'time_differs' && dayStates[d.work_date]?.state === 'reported');
     return (
       <div>
         <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '16px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -267,6 +334,31 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
               <p key={i} style={{ margin: '4px 0 0', fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>
                 {md(f.date)}（{dowOf(f.date)}）　{f.msg}
               </p>
+            ))}
+          </div>
+        )}
+
+        {differsDays.length > 0 && (
+          <div style={{ background: innerBg, border: `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+            <p style={{ margin: 0, fontSize: 12.5, color: text, lineHeight: 1.7 }}>
+              「時刻が違います」と答えた日（{differsDays.map(d => `${md(d.work_date)}（${dowOf(d.work_date)}）`).join('・')}）は、経理が確認して申請を直します。直したらお知らせが届きます。
+            </p>
+          </div>
+        )}
+
+        {nextSteps.length > 0 && (
+          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+            <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 'bold', color: '#664d03' }}>続けてしてほしいことがあります</p>
+            {nextSteps.map(n => (
+              <div key={n.d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+                <span style={{ fontSize: 12.5, color: '#664d03' }}>
+                  {md(n.d.work_date)}（{dowOf(n.d.work_date)}）{n.segs ? `　${n.segs.map(x => `${x.start}〜${x.end}`).join(' / ')}` : ''}
+                </span>
+                <button onClick={() => onOpenReport(n.reportId, n.segs)}
+                  style={{ background: '#856404', border: 'none', borderRadius: 8, cursor: 'pointer', padding: '7px 12px', fontSize: 12, fontWeight: 'bold', color: '#fff', flexShrink: 0 }}>
+                  {n.label}
+                </button>
+              </div>
             ))}
           </div>
         )}
@@ -315,25 +407,57 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             打刻とシフトの時間に差がありました。残業として処理すべきか確認させてください。<br />
             <b>片付け・準備・保護者対応など、仕事をしていた時間は残業です。</b>
             その場合は必ず「業務をしていました」を選んでください。
+            {anyReport && <><br />申請より長く仕事をしていたときは「時刻が違います」で終わりを直してください。</>}
           </p>
+        </div>
+      )}
+      {stateErr && (
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+          <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>その日の申請の状態を読み込めませんでした。画面を開き直してください（{stateErr}）</p>
         </div>
       )}
 
       {days.map(d => {
-        const p = picks[d.id] ?? { answer: '' as Answer | '', reason: '', note: '' };
-        const shown: Answer | '' = canRespond ? p.answer : (d.answer === 'pending' ? '' : d.answer);
+        const p = picks[d.id] ?? { answer: '' as Answer | '', reason: '', note: '', segs: [] as SegInput[] };
+        const st = dayStates[d.work_date];
+        // 答えたあとの表示は、答えた時点の状態（report_state）で言葉を決める
+        const shownLabel = d.answer === 'pending' ? '未回答' : answerLabel(d.answer, d.report_state);
+        const band = stateBandText(st);
+        const bandStyle = band.tone === 'app' ? { bg: '#e6f1fb', fg: '#0c447c' } : band.tone === 'ret' ? { bg: '#fdecea', fg: '#a32d2d' }
+          : band.tone === 'leave' ? { bg: '#fbeaf0', fg: '#72243e' } : { bg: isDark ? '#3a3f44' : '#f1f3f5', fg: isDark ? '#ced4da' : '#495057' };
+        const shiftText = normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '—';
+        const ws = p.answer === 'time_differs' ? toWorkSegments(p.segs) : [];
+        const shiftLabor = st?.normal_shift?.labor_minutes ?? null;
+        const newDiff = ws.length > 0 ? diffFromShift(ws, shiftLabor) : null;
+        const shiftEndMin = timeToMinutes(d.shift_end2 ?? d.shift_end);
+        const clockOutMin = timeToMinutes(d.clock_out);
+        // 近道：最後の時間帯の終わりだけを置き換える（開始と2本目は残す）
+        const setLastEnd = (min: number | null) => {
+          if (min == null || p.segs.length === 0) return;
+          const segs = p.segs.map((x, i) => (i === p.segs.length - 1 ? { ...x, end: toHHMM(min) } : x));
+          setPick(d.id, { segs });
+        };
         return (
           <div key={d.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: '12px 14px', marginBottom: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 'bold', color: text, marginBottom: 4 }}>
               {d.work_date.slice(0, 4)}/{md(d.work_date)}（{dowOf(d.work_date)}）
             </div>
-            <div style={{ fontSize: 12.5, color: subText, marginBottom: 10 }}>
-              シフト {normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '—'} ／ 打刻 {hm(d.clock_in)}〜{hm(d.clock_out)}
+            {/* その日の申請の状態を色の帯で（日によって選べる答えが違うので、取り違えないように） */}
+            {canRespond && (
+              <div style={{ background: bandStyle.bg, color: bandStyle.fg, borderRadius: 6, padding: '5px 8px', fontSize: 12, fontWeight: 'bold', marginBottom: 6, lineHeight: 1.5 }}>
+                {band.text}
+              </div>
+            )}
+            {/* 見比べるための枠：シフト・出している申請・打刻（固定色） */}
+            <div style={{ background: '#fffbea', border: '1px solid #f0d58a', borderRadius: 8, padding: '6px 10px', fontSize: 12.5, color: '#5c4400', lineHeight: 1.7, marginBottom: 10 }}>
+              シフト {shiftText}
+              {st?.report_id && st.segments && st.segments.length > 0 && <><br />出している申請 {segmentsText(st.segments)}（{signedText(st.diff_minutes)}）</>}
+              <br />打刻 {hm(d.clock_in)}〜<b>{hm(d.clock_out)}</b>
             </div>
 
             {canRespond ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {ANSWER_CHOICES.map(c => (
+                {answerChoices(st?.state ?? 'none').map(c => ({ ...c, value: c.value as Answer })).map(c => (
                   <button key={c.value} type="button" onClick={() => setPick(d.id, { answer: c.value })}
                     style={{
                       padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
@@ -347,7 +471,8 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
               </div>
             ) : (
               <div style={{ fontSize: 13, color: text }}>
-                回答：{ANSWER_CHOICES.find(c => c.value === shown)?.label ?? '未回答'}
+                回答：{shownLabel}
+                {d.answer === 'time_differs' && d.answer_segments && <span>（{segmentsText(d.answer_segments)}）</span>}
                 {d.answer_reason && <span style={{ color: subText }}>（{d.answer_reason}）</span>}
                 {d.answer_note && <div style={{ fontSize: 12.5, color: subText, marginTop: 4 }}>{d.answer_note}</div>}
               </div>
@@ -366,6 +491,51 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
                     placeholder="例：迎えを待っていた"
                     style={{ width: '100%', marginTop: 8, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 13, boxSizing: 'border-box' }} />
                 )}
+              </div>
+            )}
+
+            {canRespond && p.answer === 'time_differs' && (
+              <div style={{ marginTop: 10, background: innerBg, borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>実際の勤務時間（出勤〜退勤）</div>
+                {p.segs.map((sg, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <TimeInput value={sg.start} isDark={isDark} advance ariaLabel={`勤務${i + 1} 開始時刻`} style={{ flex: 1, minWidth: 0 }}
+                      onChange={v => setPick(d.id, { segs: p.segs.map((x, j) => (j === i ? { ...x, start: v } : x)) })} />
+                    <span style={{ color: subText }}>〜</span>
+                    <TimeInput value={sg.end} isDark={isDark} ariaLabel={`勤務${i + 1} 終了時刻`} style={{ flex: 1, minWidth: 0 }}
+                      onChange={v => setPick(d.id, { segs: p.segs.map((x, j) => (j === i ? { ...x, end: v } : x)) })} />
+                  </div>
+                ))}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+                  {clockOutMin != null && (
+                    <button type="button" onClick={() => setLastEnd(clockOutMin)}
+                      style={{ border: `1px solid ${border}`, background: cardBg, color: text, borderRadius: 14, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                      退勤の打刻（{minToTime(clockOutMin)}）
+                    </button>
+                  )}
+                  {shiftEndMin != null && (
+                    <button type="button" onClick={() => setLastEnd(shiftEndMin)}
+                      style={{ border: `1px solid ${border}`, background: cardBg, color: text, borderRadius: 14, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                      シフトの終わり（{minToTime(shiftEndMin)}）＝残業なし
+                    </button>
+                  )}
+                </div>
+                {newDiff != null && (
+                  <div style={{ marginTop: 8, fontSize: 12.5, color: text, background: cardBg, borderRadius: 6, padding: '4px 8px' }}>
+                    申請 {signedText(st?.diff_minutes)} → 正しい時間 <b>{signedText(newDiff)}</b>
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: subText, margin: '10px 0 4px' }}>ひとこと<span style={{ color: '#c62828', marginLeft: 4 }}>必須</span></div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                  {TIME_DIFFERS_NOTE_EXAMPLES.map(ex => (
+                    <button key={ex} type="button" onClick={() => setPick(d.id, { note: ex })}
+                      style={{ border: `1px solid ${p.note === ex ? '#1565c0' : border}`, background: p.note === ex ? '#e3f2fd' : cardBg, color: p.note === ex ? '#1565c0' : text, borderRadius: 14, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>
+                      {ex}
+                    </button>
+                  ))}
+                </div>
+                <input value={p.note} onChange={e => setPick(d.id, { note: e.target.value })} placeholder="ひとこと"
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 13, boxSizing: 'border-box' }} />
               </div>
             )}
 
@@ -394,7 +564,9 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         </button>
       ) : (
         <p style={{ fontSize: 12.5, color: subText, textAlign: 'center' }}>
-          {inquiry.status === 'answered' ? '回答済みです' : inquiry.status === 'withdrawn' ? 'この確認は取り下げられました' : 'この確認はあなた宛てではありません'}
+          {inquiry.status === 'answered' ? '回答済みです' : inquiry.status === 'withdrawn' ? 'この確認は取り下げられました'
+            : inquiry.user_id === currentUserId ? '申請の状態を読み込めないため、いまは回答できません。画面を開き直してください'
+            : 'この確認はあなた宛てではありません'}
         </p>
       )}
     </div>
