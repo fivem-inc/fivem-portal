@@ -38,11 +38,44 @@ export async function loadDayStates(userId: string, dates: string[]): Promise<{ 
 
 export interface AnswerChoice { value: InquiryAnswer; label: string; desc: string }
 
+/** 何について聞くか（2026-10-13 ユーザー確定）：after＝退勤のあと（今まで）／before＝出勤前／both＝両方。DB の ask_side と同じ値 */
+export type AskSide = 'after' | 'before' | 'both';
+export const ASK_SIDE_LABEL: Record<AskSide, string> = { after: '退勤のあと', before: '出勤前', both: '両方' };
+
+const hm5 = (t: string | null | undefined) => (t ? t.slice(0, 5) : '');
+
+/** 出勤の打刻がシフトの始まりより早いか（この日だけ「聞くこと」を選べる） */
+export function isEarlyClockIn(shiftStart: string | null | undefined, clockIn: string | null | undefined): boolean {
+  return !!hm5(shiftStart) && !!hm5(clockIn) && hm5(clockIn) < hm5(shiftStart);
+}
+
+/** 最初に選んでおく「聞くこと」。出勤が早く、退勤がシフトの終わりより遅くなければ「出勤前」、ほかは「退勤のあと」 */
+export function defaultAskSide(shiftStart: string | null | undefined, shiftEnd: string | null | undefined,
+  clockIn: string | null | undefined, clockOut: string | null | undefined): AskSide {
+  const late = !!hm5(shiftEnd) && !!hm5(clockOut) && hm5(clockOut) > hm5(shiftEnd);
+  return isEarlyClockIn(shiftStart, clockIn) && !late ? 'before' : 'after';
+}
+
+/** 本人の画面に出す「◯◯について確認されています」 */
+export function askSideNote(side: AskSide, shiftStart: string | null, shiftEnd: string | null, clockIn: string | null, clockOut: string | null): string {
+  const before = `出勤前（${hm5(clockIn) || '—'}〜${hm5(shiftStart) || '—'}）`;
+  const after = `退勤のあと（${hm5(shiftEnd) || '—'}〜${hm5(clockOut) || '—'}）`;
+  const what = side === 'before' ? before : side === 'both' ? `${before}と${after}` : after;
+  return `${what}について確認されています`;
+}
+
+/** 「定時でした」の言葉は、何について聞いたかで変える */
+const NOT_WORKED_LABEL: Record<AskSide, string> = {
+  after: '定時でした（打刻が遅れただけ）',
+  before: '定時でした（早く来ただけ）',
+  both: '定時でした（業務はしていません）',
+};
+
 /**
  * その日の状態で選べる答え。🚨 DB の answer_overtime_clock_inquiry の判定と同じ組み合わせ。
  * 申請が無い日は「業務をしていました」を先頭に置く（楽な答えを先頭にしない・2026-08 の方針）
  */
-export function answerChoices(state: DayState): AnswerChoice[] {
+export function answerChoices(state: DayState, askSide: AskSide = 'after'): AnswerChoice[] {
   const unknown: AnswerChoice = { value: 'unknown', label: '思い出せない・その他', desc: '経理に相談します' };
   switch (state) {
     case 'reported':
@@ -70,16 +103,17 @@ export function answerChoices(state: DayState): AnswerChoice[] {
     default:
       return [
         { value: 'worked', label: '業務をしていました', desc: '残業として報告します' },
-        { value: 'not_worked', label: '定時でした（打刻が遅れただけ）', desc: '残業なし・遅れた理由を選びます' },
+        { value: 'not_worked', label: NOT_WORKED_LABEL[askSide], desc: '残業なし・理由を選びます' },
         unknown,
       ];
   }
 }
 
 /** 答えの言葉（経理の画面・回答済みの表示）。状態で言い方が変わるもの（予定どおり）があるので state も渡す */
-export function answerLabel(answer: InquiryAnswer, state: DayState | null | undefined): string {
+export function answerLabel(answer: InquiryAnswer, state: DayState | null | undefined, askSide: AskSide = 'after'): string {
   if (answer === 'pending') return '未回答';
   if (answer === 'as_reported' && state === 'planned') return '予定どおり勤務しました';
+  if (answer === 'not_worked') return NOT_WORKED_LABEL[askSide];
   const found = answerChoices(state ?? 'none').find(c => c.value === answer)
     ?? [...answerChoices('reported'), ...answerChoices('returned'), ...answerChoices('none')].find(c => c.value === answer);
   return found?.label ?? answer;

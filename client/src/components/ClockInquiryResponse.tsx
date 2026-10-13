@@ -12,10 +12,10 @@ import { toWorkSegments } from '../lib/overtimeSubmit';
 import { timeToMinutes } from '../lib/timeInput';
 import { minToTime } from '../lib/breakCalc';
 import {
-  loadDayStates, answerChoices, answerLabel, stateBandText, segmentsText, diffFromShift, signedText,
+  loadDayStates, answerChoices, answerLabel, stateBandText, segmentsText, diffFromShift, signedText, askSideNote,
   TIME_DIFFERS_NOTE_EXAMPLES,
 } from '../lib/clockInquiry';
-import type { InquiryAnswer, DayStateRow } from '../lib/clockInquiry';
+import type { InquiryAnswer, DayStateRow, AskSide } from '../lib/clockInquiry';
 
 // 経理からの「打刻の確認」に答える画面。通知バナー → /overtime?inquiry=<id> から開く。
 //
@@ -32,6 +32,8 @@ interface DayRow {
   shift_start: string | null; shift_end: string | null;
   shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
+  /** 何について聞かれているか（2026-10-13）。古い確認は after */
+  ask_side: AskSide | null;
   answer: InquiryAnswer;
   answer_reason: string | null; answer_note: string | null;
   result_report_id: string | null;
@@ -54,13 +56,20 @@ const dowOf = (d: string) => DOW[new Date(d + 'T00:00:00').getDay()];
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const hm = (t: string | null) => (t ? t.slice(0, 5) : '—');
 
+/** 「業務をしていました」から事後報告を開くときに、入力画面の上の黄色い枠に出すもの（2026-10-13・段階3） */
+export interface ClockInquiryHint {
+  date: string; shift: string; clockIn: string | null; clockOut: string | null; note: string | null; from: string;
+  /** 何について聞かれたか：事後報告で空欄にする側（after＝終わり／before＝開始／both＝両方） */
+  askSide: AskSide;
+}
+
 interface Props {
   inquiryId: string;
   currentUserId: string;
   isDark: boolean;
   onClose: () => void;
   /** 「この日の残業を報告する」→ 申請フォームを開く（日付・打刻をプリセット） */
-  onReportOvertime: (workDate: string, clockOut: string | null) => void;
+  onReportOvertime: (workDate: string, hint: ClockInquiryHint) => void;
   /** 申請がある日の答えのあと：その申請を開く（実績の報告・出し直し）。segs は「時刻が違います」で入れた時刻 */
   onOpenReport: (reportId: string, segs?: SegInput[]) => void;
 }
@@ -271,7 +280,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         counts.time_differs > 0 ? `時刻が違う ${counts.time_differs}日` : '',
         counts.will_resubmit > 0 ? `申請を出し直す ${counts.will_resubmit}日` : '',
         counts.as_reported > 0 ? `申請の通り ${counts.as_reported}日` : '',
-        counts.not_worked > 0 ? `定時（打刻が遅れただけ） ${counts.not_worked}日` : '',
+        counts.not_worked > 0 ? `定時でした（業務なし） ${counts.not_worked}日` : '',
         counts.worked > 0 ? `業務をしていた ${counts.worked}日` : '',
         counts.unknown > 0 ? `思い出せない ${counts.unknown}日` : '',
       ].filter(Boolean).join('／');
@@ -371,7 +380,15 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
                 <span style={{ fontSize: 12.5, color: '#664d03' }}>
                   {md(d.work_date)}（{dowOf(d.work_date)}）　打刻 {hm(d.clock_out)}
                 </span>
-                <button onClick={() => onReportOvertime(d.work_date, d.clock_out)}
+                <button onClick={() => onReportOvertime(d.work_date, {
+                  date: d.work_date,
+                  shift: normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '',
+                  clockIn: d.clock_in ? d.clock_in.slice(0, 5) : null,
+                  clockOut: d.clock_out ? d.clock_out.slice(0, 5) : null,
+                  note: inquiry?.message ?? null,
+                  from: senderName,
+                  askSide: d.ask_side ?? 'after',
+                })}
                   style={{ background: '#856404', border: 'none', borderRadius: 8, cursor: 'pointer', padding: '7px 12px', fontSize: 12, fontWeight: 'bold', color: '#fff', flexShrink: 0 }}>
                   この日の残業を報告する →
                 </button>
@@ -421,7 +438,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         const p = picks[d.id] ?? { answer: '' as Answer | '', reason: '', note: '', segs: [] as SegInput[] };
         const st = dayStates[d.work_date];
         // 答えたあとの表示は、答えた時点の状態（report_state）で言葉を決める
-        const shownLabel = d.answer === 'pending' ? '未回答' : answerLabel(d.answer, d.report_state);
+        const shownLabel = d.answer === 'pending' ? '未回答' : answerLabel(d.answer, d.report_state, d.ask_side ?? 'after');
         const band = stateBandText(st);
         const bandStyle = band.tone === 'app' ? { bg: '#e6f1fb', fg: '#0c447c' } : band.tone === 'ret' ? { bg: '#fdecea', fg: '#a32d2d' }
           : band.tone === 'leave' ? { bg: '#fbeaf0', fg: '#72243e' } : { bg: isDark ? '#3a3f44' : '#f1f3f5', fg: isDark ? '#ced4da' : '#495057' };
@@ -453,11 +470,13 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
               シフト {shiftText}
               {st?.report_id && st.segments && st.segments.length > 0 && <><br />出している申請 {segmentsText(st.segments)}（{signedText(st.diff_minutes)}）</>}
               <br />打刻 {hm(d.clock_in)}〜<b>{hm(d.clock_out)}</b>
+              {/* 何について聞かれているか（出勤前／退勤のあと／両方・2026-10-13） */}
+              <br /><span style={{ color: '#b45309' }}>{askSideNote(d.ask_side ?? 'after', d.shift_start, d.shift_end2 ?? d.shift_end, d.clock_in, d.clock_out)}</span>
             </div>
 
             {canRespond ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {answerChoices(st?.state ?? 'none').map(c => ({ ...c, value: c.value as Answer })).map(c => (
+                {answerChoices(st?.state ?? 'none', d.ask_side ?? 'after').map(c => ({ ...c, value: c.value as Answer })).map(c => (
                   <button key={c.value} type="button" onClick={() => setPick(d.id, { answer: c.value })}
                     style={{
                       padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',

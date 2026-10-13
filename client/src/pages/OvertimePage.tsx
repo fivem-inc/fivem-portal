@@ -8,7 +8,7 @@ import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
-import ClockInquiryResponse from '../components/ClockInquiryResponse';
+import ClockInquiryResponse, { type ClockInquiryHint } from '../components/ClockInquiryResponse';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -513,6 +513,10 @@ interface FormDraft {
    *     ［メモを理由に入れる］のようなボタンも置かない（1タップで同じ事故に戻るため）。 */
   requestMemo?: string;
   requestFrom?: string;
+  /** 打刻の確認の「業務をしていました」から開いたとき（2026-10-13・段階3）。
+   *  入力画面の上に黄色い枠（シフト・打刻・経理のひとこと）を出し、終わりの時刻に退勤の打刻を入れる。
+   *  🚨 自動保存にも必ず書くこと（書かないと1文字打った瞬間に枠が消える） */
+  clockInquiryHint?: ClockInquiryHint;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -547,6 +551,8 @@ const OvertimeForm: React.FC<{
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
   const requestMemo = (draft?.requestMemo ?? '').trim();
   const requestFrom = (draft?.requestFrom ?? '').trim();
+  // 打刻の確認から開いたときの手がかり（日付を変えたら出さない）
+  const inquiryHint = draft?.clockInquiryHint ?? null;
   // 「申請の依頼」から開いたときは、**入力欄の先頭**まで移動する（2026-09-10 実機指摘）。
   // 🚨 ページ側でフォームの箱までスクロールしていたが、箱の先頭には注意事項の一覧があり、
   //    入力欄が画面に出なかった。移動先はこのフォームが自分で持つ（呼び出し側に持たせると、
@@ -741,6 +747,7 @@ const OvertimeForm: React.FC<{
       memoId: memoLink?.id,
       memoLabel: memoLink?.label,
       memoDate: memoLink?.date,
+      clockInquiryHint: draft?.clockInquiryHint,
     } satisfies FormDraft);
   }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd, memoLink]);
 
@@ -823,7 +830,16 @@ const OvertimeForm: React.FC<{
     if (filledForDateRef.current === date) return;
     filledForDateRef.current = date;
     const filled = normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }];
-    setSegments(filled);
+    // 打刻の確認の「業務をしていました」から来た日は、聞かれた側の時刻を空欄にする（2026-10-13 ユーザー確定）。
+    //   退勤のあと＝最後の終わり／出勤前＝最初の開始／両方＝その両方
+    // 🚨 打刻もシフトの時刻も入れない。打刻には着替えなども入り、シフトのままだと「残業なし」で出てしまう。
+    //    空欄なら「勤務◯の開始・終了を両方入力してください」で送れない＝本人が実際の時刻を必ず入れる。
+    //    autoFilledSegs はシフトのままにする＝空欄にした時点で「触った」扱い（［定時で記録する］を出さない）
+    const side = inquiryHint && inquiryHint.date === date ? (inquiryHint.askSide ?? 'after') : null;
+    let segs = filled;
+    if (side === 'after' || side === 'both') segs = segs.map((x, i) => (i === segs.length - 1 ? { ...x, end: '' } : x));
+    if (side === 'before' || side === 'both') segs = segs.map((x, i) => (i === 0 ? { ...x, start: '' } : x));
+    setSegments(segs);
     setAutoFilledSegs(JSON.stringify(filled));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, normalSegs]);
@@ -2186,6 +2202,18 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {!fullDay && !clockOnlyMode && inquiryHint && inquiryHint.date === date && (
+        <div style={{ background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12.5, color: isDark ? '#f5e3b0' : '#5c4400', lineHeight: 1.7 }}>
+          <b>実際に勤務した時間を入れてください</b><br />
+          {inquiryHint.shift ? <>シフト {inquiryHint.shift} ／ </> : null}打刻 {inquiryHint.clockIn ?? '—'}〜{inquiryHint.clockOut ?? '—'}<br />
+          {inquiryHint.note && <>{inquiryHint.from ? `${inquiryHint.from}さん` : '経理'}のひとこと：{inquiryHint.note}<br /></>}
+          <span>{(inquiryHint.askSide ?? 'after') === 'before'
+            ? '開始の時刻は空欄にしています。実際に勤務を始めた時刻を入れてください（入れないと送れません）。'
+            : inquiryHint.askSide === 'both'
+              ? '開始と終わりの時刻は空欄にしています。実際に勤務を始めた時刻・終えた時刻を入れてください（入れないと送れません）。'
+              : '終わりの時刻は空欄にしています。実際に勤務を終えた時刻を入れてください（入れないと送れません）。'}</span>
+        </div>
+      )}
       {!fullDay && !clockOnlyMode && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>{isReportPhase ? '実際に勤務した時間' : (mode === 'advance' && !(editTarget && isResubmit && (editTarget.segments ?? []).some(s => s.phase === 'actual')) ? '予定の勤務時間' : '実務の勤務時間')}{req}</span>
@@ -3383,16 +3411,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           currentUserId={user.id}
           isDark={isDark}
           onClose={() => setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('inquiry'); return n; })}
-          onReportOvertime={(workDate) => {
+          onReportOvertime={(workDate, hint) => {
             // 回答は既に確定済み。ここでは残業の報告フォームを開くだけ。
-            // 時間帯は空にしておき、日付を選んだときの通常シフト自動入力に任せる
-            // （実際の退勤時刻は完了画面に打刻として出しているので、そこを見て直してもらう）
+            // 時間帯は空にしておき、日付を選んだときの通常シフト自動入力に任せる。
+            // 終わりには退勤の打刻が入り、上の黄色い枠にシフト・打刻・経理のひとことが出る（2026-10-13・段階3）
             const d: FormDraft = {
               mode: 'posthoc', date: workDate,
               segments: [{ start: '', end: '' }],
               breakManual: false, breakManualMin: '',
               reason: '', location: '', locationCustom: '', reviewerId: '',
               normOverride: false, normStart: '', normEnd: '',
+              clockInquiryHint: hint,
             };
             saveDraft(DRAFT_KEYS.overtime, d);
             setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('inquiry'); return n; });
