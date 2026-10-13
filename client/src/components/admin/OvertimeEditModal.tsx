@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { timeToMin, minToTime, formatMin, formatSignedMin, type WorkSegment } from '../../lib/breakCalc';
-import { editPhaseOf, editFigures, editChanges, saveAdminOvertimeEdit, EDIT_FIELD_LABELS } from '../../lib/overtimeAdminEdit';
+import { editPhaseOf, editFigures, editChanges, saveAdminOvertimeEdit, EDIT_FIELD_LABELS, typesForClockOnlyEdit } from '../../lib/overtimeAdminEdit';
+import { OT_TYPE_INFO, isOvertimeType } from '../../lib/overtimeTypes';
 
 // 管理者が残業レコードの内容を直接修正するモーダル。
 // 休憩・実労働・差分・法定警告は申請フォームと同じ breakCalc で再計算（エンジン二重化を回避）。
@@ -112,8 +113,13 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
     [record, workDate, workSegments, breakMin, diffMin, effectiveLocation, reason],
   );
 
-  const changedCount = Object.keys(changes).length;
-  const FIELD_LABELS = EDIT_FIELD_LABELS;
+  // 打刻ズレの時間を変えて差が出たら、種類も直す（2026-10-13）
+  const fixTypes = typesForClockOnlyEdit(record.application_types, workSegments, diffMin, record.normal_shift as { start_time?: string | null; end_time?: string | null; end_time2?: string | null } | null);
+  const typeName = (ts: string[]) => ts.map(t => (isOvertimeType(t) ? OT_TYPE_INFO[t].label : t)).join('・');
+  const allChanges = fixTypes ? { ...changes, application_types: { old: '打刻ズレ', new: typeName(fixTypes) } } : changes;
+  const allSummary = fixTypes ? summary.replace(/を修正$/, '・種別を修正') : summary;
+  const changedCount = Object.keys(allChanges).length;
+  const FIELD_LABELS: Record<string, string> = { ...EDIT_FIELD_LABELS, application_types: '種別' };
 
   const setRow = (i: number, key: 'start' | 'end', v: string) => setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, [key]: v } : r)));
   const addRow = () => setRows(prev => (prev.length >= 3 ? prev : [...prev, { start: '', end: '' }]));
@@ -137,7 +143,8 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
     const res = await saveAdminOvertimeEdit({
       record, workDate, segs: workSegments,
       breakManual, breakMin, laborMin, diffMin, legalOk,
-      reason: reason.trim(), location: effectiveLocation, changes, summary,
+      reason: reason.trim(), location: effectiveLocation, changes: allChanges, summary: allSummary,
+      applicationTypes: fixTypes ?? undefined,
       changeReason: changeReason.trim(),
       clockInquiryDayId: clockInquiry?.dayId,
     });
@@ -204,6 +211,11 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
                 : <div style={{ fontSize: 12, color: sub }}>自動休憩：{autoBreak}分</div>}
             </div>
             <div style={{ fontSize: 12, color: sub }}>実労働 {formatMin(laborMin)}　差分 {formatSignedMin(diffMin)}{!legal.ok && <span style={{ color: '#dc3545', marginLeft: 8 }}>⚠️ 休憩が法定基準に不足</span>}</div>
+            {fixTypes && (
+              <div style={{ padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffe0a3', fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
+                ⚠️ この記録は「打刻ズレ（残業なし）」です。時間を変えて差が出たので、保存すると種類を「{typeName(fixTypes)}」に直します。
+              </div>
+            )}
             <div>
               <label style={labelStyle}>校</label>
               <select style={{ ...inputStyle, width: '100%' }} value={locMode === 'other' ? 'その他' : location}
@@ -234,7 +246,7 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ padding: 12, background: isDarkMode ? '#2a1e00' : '#fff8f0', border: '1px solid #fd7e14', borderRadius: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#ffe082' : '#7c4d00', marginBottom: 8 }}>以下の内容で修正し、{record.applicantName ?? ''}さんに通知が届きます</div>
-              {Object.entries(changes).map(([k, d]) => (
+              {Object.entries(allChanges).map(([k, d]) => (
                 <div key={k} style={{ fontSize: 12, color: text, marginBottom: 3 }}>
                   <span style={{ fontWeight: 'bold' }}>{FIELD_LABELS[k] ?? k}</span>：
                   <span style={{ color: isDarkMode ? '#f0999b' : '#a32d2d' }}>{String(d.old) || '(空)'}</span>

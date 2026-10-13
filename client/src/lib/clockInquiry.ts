@@ -9,7 +9,8 @@ import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES } from './overtimeTypes';
 import { STATUS_INFO } from './overtimeStatus';
 import type { OvertimeStatus } from './overtimeStatus';
 
-export type InquiryAnswer = 'pending' | 'worked' | 'not_worked' | 'unknown' | 'as_reported' | 'time_differs' | 'will_resubmit';
+// adjusted＝時間調整をしました（早退・遅出）（2026-10-13・申請を出し忘れた時間調整の日に「打刻が遅れただけ」を選ばれないように）
+export type InquiryAnswer = 'pending' | 'worked' | 'adjusted' | 'not_worked' | 'unknown' | 'as_reported' | 'time_differs' | 'will_resubmit';
 /** その日の申請の状態（DB の clock_inquiry_day_state と同じ値） */
 export type DayState = 'none' | 'leave' | 'reported' | 'planned' | 'returned' | 'fullday';
 
@@ -112,6 +113,7 @@ export function answerChoices(state: DayState, askSide: AskSide = 'after'): Answ
     default:
       return [
         { value: 'worked', label: '業務をしていました', desc: '残業として報告します' },
+        { value: 'adjusted', label: '時間調整をしました（早退・遅出）', desc: '回答のあと、時間調整の申請を出します' },
         { value: 'not_worked', label: NOT_WORKED_LABEL[askSide], desc: '残業なし・理由を選びます' },
         unknown,
       ];
@@ -185,6 +187,7 @@ export function followUpOf(d: {
   }
   if (d.answer === 'time_differs' || d.answer === 'unknown') return { kind: 'action', label: '対応待ち' };
   if (d.answer === 'worked' && !d.result_report_id) return { kind: 'waiting', label: '本人の残業報告待ち' };
+  if (d.answer === 'adjusted' && !d.result_report_id) return { kind: 'waiting', label: '本人の時間調整の申請待ち' };
   if (d.answer === 'not_worked' && !d.result_report_id) return { kind: 'action', label: '対応待ち' };
   if (d.answer === 'as_reported' && d.report_state === 'planned'
       && (currentReportStatus === 'requested' || currentReportStatus === 'request_confirmed')) {

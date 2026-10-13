@@ -275,7 +275,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
       setFailedDays(failed);
 
       // 3) 経理へメール（ベル・プッシュは RPC 側で作成済み）
-      const counts: Record<Answer, number> = { worked: 0, not_worked: 0, unknown: 0, as_reported: 0, time_differs: 0, will_resubmit: 0 };
+      const counts: Record<Answer, number> = { worked: 0, adjusted: 0, not_worked: 0, unknown: 0, as_reported: 0, time_differs: 0, will_resubmit: 0 };
       days.forEach(d => { const a = picks[d.id]?.answer; if (a) counts[a] += 1; });
       // 🚨 文は DB の answer_overtime_clock_inquiry の経理あてベルと同じ並び・言葉
       const summary = [
@@ -284,6 +284,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         counts.as_reported > 0 ? `申請の通り ${counts.as_reported}日` : '',
         counts.not_worked > 0 ? `定時でした（業務なし） ${counts.not_worked}日` : '',
         counts.worked > 0 ? `業務をしていた ${counts.worked}日` : '',
+        counts.adjusted > 0 ? `時間調整をした ${counts.adjusted}日` : '',
         counts.unknown > 0 ? `思い出せない ${counts.unknown}日` : '',
       ].filter(Boolean).join('／');
       const senderEmail = await getUserEmail(inquiry.sender_id);
@@ -317,6 +318,8 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
   // 回答完了：残業として報告が必要な日をここから開く（回答は既に確定している）
   if (done) {
     const workedDays = days.filter(d => picks[d.id]?.answer === 'worked');
+    // 時間調整をしました：事後報告で調整早退／調整遅出を出してもらう（開始も終わりも空欄から本人が入れる）
+    const adjustedDays = days.filter(d => picks[d.id]?.answer === 'adjusted');
     // 申請がある日の次の一手（事前申請だけ→実績の報告／差し戻し中→出し直し）
     const nextSteps = days.flatMap(d => {
       const st = dayStates[d.work_date]; const a = picks[d.id]?.answer;
@@ -393,6 +396,31 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
                 })}
                   style={{ background: '#856404', border: 'none', borderRadius: 8, cursor: 'pointer', padding: '7px 12px', fontSize: 12, fontWeight: 'bold', color: '#fff', flexShrink: 0 }}>
                   この日の残業を報告する →
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {adjustedDays.length > 0 && (
+          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+            <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 'bold', color: '#664d03' }}>時間調整の申請が必要な日があります</p>
+            {adjustedDays.map(d => (
+              <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+                <span style={{ fontSize: 12.5, color: '#664d03' }}>
+                  {md(d.work_date)}（{dowOf(d.work_date)}） 打刻 {hm(d.clock_in)}〜{hm(lastClockOut(d))}
+                </span>
+                <button onClick={() => onReportOvertime(d.work_date, {
+                  date: d.work_date,
+                  shift: normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '',
+                  clockIn: d.clock_in ? d.clock_in.slice(0, 5) : null,
+                  clockOut: lastClockOut(d) ? lastClockOut(d)!.slice(0, 5) : null,
+                  note: inquiry?.message ?? null,
+                  from: senderName,
+                  askSide: 'both',
+                })}
+                  style={{ background: '#856404', border: 'none', borderRadius: 8, cursor: 'pointer', padding: '7px 12px', fontSize: 12, fontWeight: 'bold', color: '#fff', flexShrink: 0 }}>
+                  時間調整の申請を出す →
                 </button>
               </div>
             ))}

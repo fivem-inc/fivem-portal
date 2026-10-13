@@ -42,6 +42,29 @@ export const segsLabel = (segs: WorkSegment[]) =>
 
 export const EDIT_FIELD_LABELS: Record<string, string> = { work_date: '勤務日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
 
+/**
+ * 打刻ズレ（残業なし・clock_only）の時間を直して差が出たときの、正しい種類（2026-10-13）。
+ * 🚨 打刻ズレのまま差が出ると、一覧では「残業なし」に見えるのに合計時間が変わる（本番で2件起きた）。
+ *    始まり・終わりをシフトと比べて、調整遅出／早出／調整早退／残業を決める。差が0なら null（種類はそのまま）
+ */
+export function typesForClockOnlyEdit(
+  types: string[] | null | undefined, segs: WorkSegment[], diffMin: number,
+  ns: { start_time?: string | null; end_time?: string | null; end_time2?: string | null } | null,
+): string[] | null {
+  if (!(types ?? []).includes('clock_only') || diffMin === 0 || segs.length === 0) return null;
+  const toMin = (t?: string | null) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
+  const sStart = toMin(ns?.start_time);
+  let sEnd = toMin(ns?.end_time2 ?? ns?.end_time);
+  if (sStart != null && sEnd != null && sEnd <= sStart) sEnd += 1440;
+  const first = Math.min(...segs.map(x => x.startMin));
+  const last = Math.max(...segs.map(x => x.endMin));
+  const out: string[] = [];
+  if (sStart != null) { if (first > sStart) out.push('late_start_adj'); else if (first < sStart) out.push('early_start'); }
+  if (sEnd != null) { if (last < sEnd) out.push('early_end_adj'); else if (last > sEnd) out.push('overtime'); }
+  if (out.length === 0) out.push(diffMin < 0 ? 'early_end_adj' : 'overtime');
+  return out;
+}
+
 /** 変更点（履歴に残す）と、その要約 */
 export function editChanges(record: EditableReport, next: {
   workDate: string; segs: WorkSegment[]; breakMin: number; diffMin: number; location: string; reason: string;
@@ -69,6 +92,8 @@ export async function saveAdminOvertimeEdit(a: {
   changeReason: string;
   /** 打刻の確認のカードから直したとき（その日の確認を「直しました」にする） */
   clockInquiryDayId?: string;
+  /** 種類も直すとき（打刻ズレの時間を変えて差が出たとき・2026-10-13）。渡さなければ種類はそのまま */
+  applicationTypes?: string[];
 }): Promise<{ error?: string; resolveError?: string; gcalFailed?: boolean }> {
   const { record } = a;
   const { error: rpcErr } = await supabase.rpc('admin_edit_overtime_report', {
@@ -86,6 +111,7 @@ export async function saveAdminOvertimeEdit(a: {
     p_changes: a.changes,
     p_change_summary: a.summary,
     p_change_reason: a.changeReason,
+    p_application_types: a.applicationTypes ?? null,
   });
   if (rpcErr) return { error: '保存に失敗しました: ' + rpcErr.message };
 

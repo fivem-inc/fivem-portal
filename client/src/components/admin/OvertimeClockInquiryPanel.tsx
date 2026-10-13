@@ -4,7 +4,7 @@ import SearchableSelect from '../common/SearchableSelect';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText } from '../../lib/overtimeShift';
 import type { PatternRow } from '../../lib/overtimeShift';
 import type { CalendarKind } from '../../lib/breakCalc';
-import { todayJstStr } from '../../lib/breakCalc';
+import { todayJstStr, calcPayPeriodStartJst, shiftPayPeriod, payPeriodLabel } from '../../lib/breakCalc';
 import { dispatchEmail, getUserEmail } from '../../lib/notificationDispatch';
 import {
   loadDayStates, answerLabel, segmentsText, reportKindText, diffFromShift, signedText, followUpOf,
@@ -232,13 +232,19 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     setInquiries(list);
   }, []);
 
+  // 打刻ズレの一覧は給与期間（16日〜翌15日）ごと（2026-10-13・前は新しい順60件だけで、期間で突き合わせられなかった）
+  const [clockPeriod, setClockPeriod] = useState(() => calcPayPeriodStartJst(todayJstStr()));
+  const [clockOnlyUnchecked, setClockOnlyUnchecked] = useState(false);
+  const [clockErr, setClockErr] = useState('');
   const loadClockRows = useCallback(async () => {
-    const { data } = await supabase.from('overtime_reports')
+    const { data, error } = await supabase.from('overtime_reports')
       .select('id, applicant_id, work_date, reason, clock_in_reported, clock_out_reported, accounting_checked_at')
       .contains('application_types', ['clock_only']).neq('status', 'cancelled')
-      .order('work_date', { ascending: false }).limit(60);
+      .eq('pay_period_start', clockPeriod)
+      .order('work_date', { ascending: false }).limit(1000);
+    setClockErr(error ? '打刻ズレの記録を読み込めませんでした：' + error.message : '');
     setClockRows((data ?? []) as ClockOnlyRow[]);
-  }, []);
+  }, [clockPeriod]);
 
   useEffect(() => { loadInquiries(); loadClockRows(); }, [loadInquiries, loadClockRows]);
 
@@ -850,13 +856,34 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         <p style={{ margin: '0 0 10px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
           突き合わせが済んだら「確認済み」にしてください。<b>確認済みにすると本人は取り消せなくなります</b>。
         </p>
-        {clockRows.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 12.5, color: subText }}>まだありません</p>
+        {(() => {
+          const unchecked = clockRows.filter(r => !r.accounting_checked_at).length;
+          const arrow: React.CSSProperties = { background: 'none', border: 'none', fontSize: 18, lineHeight: 1, padding: '2px 8px', cursor: 'pointer', color: text };
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              <button type="button" aria-label="前の給与期間" onClick={() => setClockPeriod(p => shiftPayPeriod(p, -1))} style={arrow}>‹</button>
+              <span style={{ fontSize: 12.5, color: text, fontWeight: 'bold' }}>{payPeriodLabel(clockPeriod)}</span>
+              <button type="button" aria-label="次の給与期間" onClick={() => setClockPeriod(p => shiftPayPeriod(p, 1))} style={arrow}>›</button>
+              {([[false, 'すべて'], [true, '未確認だけ']] as const).map(([v, l]) => (
+                <button key={l} type="button" onClick={() => setClockOnlyUnchecked(v)}
+                  style={{ padding: '3px 12px', borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 12,
+                    background: clockOnlyUnchecked === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                    color: clockOnlyUnchecked === v ? '#fff' : text, fontWeight: clockOnlyUnchecked === v ? 'bold' : 'normal' }}>{l}</button>
+              ))}
+              <span style={{ fontSize: 12, color: unchecked > 0 ? '#b45309' : subText, fontWeight: unchecked > 0 ? 'bold' : 'normal' }}>
+                未確認 {unchecked}件 ／ 全 {clockRows.length}件
+              </span>
+            </div>
+          );
+        })()}
+        {clockErr && <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#842029' }}>{clockErr}</p>}
+        {clockRows.filter(r => !clockOnlyUnchecked || !r.accounting_checked_at).length === 0 ? (
+          <p style={{ margin: 0, fontSize: 12.5, color: subText }}>{clockOnlyUnchecked && clockRows.length > 0 ? 'この期間の記録はすべて確認済みです' : 'この期間の記録はありません'}</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
               <tbody>
-                {clockRows.map(r => (
+                {clockRows.filter(r => !clockOnlyUnchecked || !r.accounting_checked_at).map(r => (
                   <tr key={r.id} style={{ borderBottom: `1px solid ${border}` }}>
                     <td style={{ padding: '7px 8px', whiteSpace: 'nowrap' }}>
                       <input type="checkbox" checked={!!r.accounting_checked_at} onChange={() => toggleChecked(r)} />
