@@ -789,6 +789,8 @@ const OvertimeAdminTab: React.FC = () => {
   const [notifyOnExceed, setNotifyOnExceed] = useState(true);
   const [notifyDays, setNotifyDays] = useState<number[]>([25, 5]);
   const [notifyDaily, setNotifyDaily] = useState(false);
+  // 実績報告の受理がまだのとき、届いてから何日たったら上長へ毎朝知らせるか（2026-10-13・既定2日）
+  const [reportRemindDays, setReportRemindDays] = useState('2');
   // 役職ごと・個人ごとのしきい値と除外（優先順位：個人 > 役職 > 全員の既定）
   interface ThresholdRule {
     id: string; role_title: string | null; user_id: string | null;
@@ -805,7 +807,7 @@ const OvertimeAdminTab: React.FC = () => {
   const fetchSettings = useCallback(async () => {
     const [setRes, grpRes, ruleRes, calRuleRes, dayRuleRes] = await Promise.all([
       supabase.from('overtime_settings')
-        .select('threshold_minutes, banner_group_names, notify_on_exceed, notify_days, notify_daily')
+        .select('threshold_minutes, banner_group_names, notify_on_exceed, notify_days, notify_daily, report_review_remind_days')
         .eq('id', 1).maybeSingle(),
       supabase.from('master_options').select('value').eq('category', 'group').order('sort_order'),
       supabase.from('overtime_threshold_rules').select('*'),
@@ -820,6 +822,7 @@ const OvertimeAdminTab: React.FC = () => {
     setNotifyOnExceed(setRes.data?.notify_on_exceed !== false);
     setNotifyDays((setRes.data?.notify_days as number[] | null) ?? [25, 5]);
     setNotifyDaily(Boolean(setRes.data?.notify_daily));
+    setReportRemindDays(String((setRes.data?.report_review_remind_days as number | undefined) ?? 2));
     setRules(((ruleRes.data as ThresholdRule[] | null) ?? []));
     setCalRules(((calRuleRes.data as CalendarChoiceRule[] | null) ?? []));
     if (dayRuleRes.error) setSettingsErr('「カレンダーの印・定時の記録」の設定を読み込めませんでした：' + dayRuleRes.error.message);
@@ -836,6 +839,11 @@ const OvertimeAdminTab: React.FC = () => {
       setSettingsErr('しきい値は「時間（0以上）」「分（0〜59）」で入力してください');
       return;
     }
+    const rd = parseInt(reportRemindDays, 10);
+    if (isNaN(rd) || rd < 1 || rd > 14) {
+      setSettingsErr('実績報告の受理がまだのお知らせは「1〜14日」で入力してください');
+      return;
+    }
     const { error } = await supabase.from('overtime_settings')
       .update({
         threshold_minutes: h * 60 + m,
@@ -843,6 +851,7 @@ const OvertimeAdminTab: React.FC = () => {
         notify_on_exceed: notifyOnExceed,
         notify_days: notifyDays,
         notify_daily: notifyDaily,
+        report_review_remind_days: rd,
       })
       .eq('id', 1);
     if (error) { setSettingsErr('保存に失敗しました: ' + error.message); return; }
@@ -1862,6 +1871,22 @@ const OvertimeAdminTab: React.FC = () => {
               <input type="number" inputMode="numeric" min={0} max={59} step={1} value={thresholdMins}
                 onChange={e => setThresholdMins(e.target.value)} style={{ ...inputStyle, width: 70, textAlign: 'right' }} />
               <span style={{ fontSize: 13, color: text }}>分</span>
+            </div>
+          </div>
+
+          {/* 実績報告の受理がまだのお知らせ（上長あて・2026-10-13） */}
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>実績報告の受理がまだのとき（上長あて）</p>
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              実績報告が届いてからこの日数がたっても受理されていなければ、申請先の上長へ毎朝9時ごろにベル・プッシュでお知らせします。<br />
+              「受理がまだの残業申請が◯件あります」のお知らせに件数を足します（お知らせの ON/OFF は通知設定の「受理がまだの残業申請」）。<br />
+              予定どおりの実績報告は受理なしで確認済みになるので、ここには入りません。
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 13, color: text }}>届いてから</span>
+              <input type="number" inputMode="numeric" min={1} max={14} step={1} value={reportRemindDays}
+                onChange={e => setReportRemindDays(e.target.value)} style={{ ...inputStyle, width: 70, textAlign: 'right' }} />
+              <span style={{ fontSize: 13, color: text }}>日たったら知らせる（1〜14日）</span>
             </div>
           </div>
 

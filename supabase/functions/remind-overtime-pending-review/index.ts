@@ -21,6 +21,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // 🚨 ①と②で event_key を分ける。同じにすると①の掃除で②まで消えてしまう。
 // 🚨 pile-up防止（①のみ）：毎回まず未処理(dismissed=false)の①を全削除し、
 //    いま受理まちの確認者にだけ付け直す。
+// 【2026-10-13 追加】実績報告（status=reported）が届いてから N 日たっても受理されていない分も①に混ぜる。
+//    N は残業の管理画面の設定（overtime_settings.report_review_remind_days・既定2日）。
+//    届いた日時は updated_at（実績報告を出したときに書き換わる）。新しい通知の種類は作らない。
 // 🚨 文言に board 誤判定語（リマインド／お知らせ／メッセージが届き）を入れない。
 //    App.tsx が本文で連絡板の通知かどうかを判定しているため、入れるとタップで /board に飛ぶ。
 
@@ -52,7 +55,20 @@ serve(async () => {
     .eq("status", "requested")
     .eq("entry_type", "manual");
 
+  // 実績報告の受理がまだの分（届いてから N 日たったもの）
+  const { data: setRow } = await supabase.from("overtime_settings").select("report_review_remind_days").eq("id", 1).maybeSingle();
+  const reportDays = Math.min(14, Math.max(1, Number((setRow as { report_review_remind_days?: number } | null)?.report_review_remind_days ?? 2)));
+  const reportCutoff = new Date(Date.now() - reportDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data: repRows, error: repErr } = await supabase
+    .from("overtime_reports")
+    .select("id, applicant_id, reviewer_id, work_date, created_at, advance_remind_sent_at")
+    .eq("status", "reported")
+    .eq("entry_type", "manual")
+    .lte("updated_at", reportCutoff);
+  if (repErr) console.error("[pending-review] 実績報告の受理まちを読めませんでした", repErr.message);
+
   const all = (rows ?? []) as Row[];
+  const reported = (repRows ?? []) as Row[];
   const overdueByReviewer = new Map<string, Row[]>();
   const advanceByReviewer = new Map<string, Row[]>();
   for (const r of all) {
@@ -69,6 +85,14 @@ serve(async () => {
     }
   }
 
+  // 実績報告の受理まちは①（毎日）に混ぜる。🚨 自分あて（自己受理）は対象外
+  for (const r of reported) {
+    if (!r.reviewer_id || r.reviewer_id === r.applicant_id) continue;
+    const arr = overdueByReviewer.get(r.reviewer_id) ?? [];
+    arr.push(r);
+    overdueByReviewer.set(r.reviewer_id, arr);
+  }
+
   // pile-up防止は①（毎日出す分）だけ。②は1回きりなので消さない
   await supabase.from("notifications").delete()
     .eq("event_key", "overtime:pending_review").eq("dismissed", false);
@@ -81,7 +105,7 @@ serve(async () => {
 
   // 宛先（確認者）と申請者の名前をまとめて取得。🚨 退職者（is_active=false）には送らない
   const ids = new Set<string>();
-  for (const r of all) { if (r.reviewer_id) ids.add(r.reviewer_id); ids.add(r.applicant_id); }
+  for (const r of [...all, ...reported]) { if (r.reviewer_id) ids.add(r.reviewer_id); ids.add(r.applicant_id); }
   const { data: profs } = await supabase
     .from("profiles").select("id, name, email, is_active").in("id", [...ids]);
   const profById = new Map(((profs ?? []) as Prof[]).map((p) => [p.id, p]));
