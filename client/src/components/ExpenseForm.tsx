@@ -127,6 +127,8 @@ interface ExpenseFormProps {
   profileName?: string;
   pendingTemplates?: Expense[];
   onTemplateApplied?: () => void;
+  /** 雇用形態（useAuth の値・役職プレビューで切り替わる）。パートには定期券の6か月の注意を出さない（2026-10-14） */
+  employmentType?: string;
 }
 
 const TRANSPORT_PRESETS = ['JR', '阪急', '京阪', '京都地下鉄', '京都市バス'];
@@ -174,7 +176,7 @@ function checkExpense(e: Expense, existing: Expense[]): { msg: string; fields: s
   return null;
 }
 
-const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName, pendingTemplates, onTemplateApplied }) => {
+const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName, pendingTemplates, onTemplateApplied, employmentType }) => {
   // 会社の休館日。カレンダーの色分けと、選んだあとの注意書きに使う。
   // 休館日なのに交通費を申請するケースが毎月出ていたため
   const calendarKinds = useCompanyCalendar();
@@ -649,7 +651,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         <p style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#1a4a5a', margin: '0 0 8px' }}>【注意事項】</p>
         <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDarkMode ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
           <li>定期券の申請と他の申請（単発・出張）は混ぜないでください。別々に申請してください。</li>
-          <li>定期券は原則6か月定期で申請してください。（入社6か月未満の方は3か月定期）</li>
+          {/* 🚨 正社員だけ（2026-10-14 ユーザー確定）。締め日のお知らせの「定期券」の行（app_settings payroll_close_notice）と同じ文。決まりが変わったら両方を直す */}
+          {employmentType !== 'パート' && <li>定期券は、原則6か月定期で購入してください（入社6か月未満の方は3か月定期）。</li>}
           <li>磁気定期の方は、IC定期へ切り替えてください。</li>
         </ol>
       </div>

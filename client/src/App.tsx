@@ -7,6 +7,8 @@ import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
 import { BTN_BLUE } from './lib/buttonStyles';
 import RetireChecklistBanner from './components/RetireChecklistBanner';
+import PayrollCloseBanner from './components/PayrollCloseBanner';
+import { EXPENSE_FORM_ANCHOR_ID } from './lib/payrollClose';
 import { todayJstStr, payPeriodCloseCutoff, calcPayPeriodStartJst } from './lib/breakCalc';
 import { accessUntilLabel } from './lib/retire';
 import { BELL_REFRESH_EVENT } from './lib/notifications';
@@ -1378,6 +1380,10 @@ const classifyNotif = (n: NotifLike) => {
     //    どちらもホームに専用バナーがあるので、event_key で先に拾ってホームへ返す（2026-08-18 修正）
     if (n.event_key === 'announcement:new' || n.event_key === 'announcement:remind') return { path: '/', closeOnTap: true };
     if (n.event_key === 'reminder:scheduled') return { path: '/', closeOnTap: true };
+    // 給与の締め日のお知らせ（2026-10-14）。ホームのバナーへ。閉じていても ?payroll=1 で開き直す（15日の終わりまで）
+    // 🚨 isBoard（文言で判定）より先に見る。push-dispatch の EVENT_MAP（payroll:close_notice）と同じ行き先
+    if (n.source_type === 'payroll_close') return { path: '/?payroll=1', closeOnTap: true };
+    if (n.source_type === 'payroll_close_test') return { path: '/', closeOnTap: true };
     if (isBoard || isUnconfirmedReminder) {
       return { path: n.reference_id ? `/board?openInboxId=${n.reference_id}` : '/board', closeOnTap: false };
     }
@@ -2385,6 +2391,8 @@ const Dashboard: React.FC = () => {
           rejectedCount={submissions.filter(sb => sb.user_id === user.id && sb.status === 'rejected').length}
         />
       )}
+      {/* 給与の締め日のお知らせは退職者（申請できる期間中）にも出す（2026-10-14 ユーザー確定。中身は退職者に許した機能だけ） */}
+      {isRetiree && <PayrollCloseBanner />}
 
       {/* 🚨 ここから下のバナーは、上長向け・全体向け・組織の情報を読むものばかり。
           退職者には**出さないだけでなく、中の読み込みごと止まる**（出さなければフックも走らない）。
@@ -2404,6 +2412,9 @@ const Dashboard: React.FC = () => {
 
       {/* ⓪-3 定期リマインド（月目標の記入など）。完了 or 後で（翌朝再表示） */}
       <ScheduledReminderBanner userId={user.id} />
+
+      {/* ⓪-4 給与の締め日のお知らせ（毎月14日〜15日・送った相手だけ・閉じられる・2026-10-14） */}
+      <PayrollCloseBanner />
 
       {/* ① お知らせ通知バナー（申請者向け） */}
       {!isAdmin && <NotificationBanner userId={user.id} />}
@@ -2483,8 +2494,10 @@ const Dashboard: React.FC = () => {
           ここはホーム（/）なのでページごとリダイレクトはできない。
           管理画面の公開設定・役職トグルがOFFの人にはフォームだけ出さない */}
       {(isAdmin || canExpense) && isFeaturePublished('expense', featurePublishState, isAdmin, roleTitle) && (
+      <div id={EXPENSE_FORM_ANCHOR_ID}>
       <ExpenseForm
         user={user}
+        employmentType={employmentType}
         onSubmissionComplete={fetchExpenses}
         expenses={expenses}
         setExpenses={setExpenses}
@@ -2492,6 +2505,7 @@ const Dashboard: React.FC = () => {
         pendingTemplates={templateQueue}
         onTemplateApplied={() => setTemplateQueue([])}
       />
+      </div>
       )}
 
       {/* 月別申請状況 - 一般ユーザーのみ表示 */}

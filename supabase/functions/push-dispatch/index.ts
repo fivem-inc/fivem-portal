@@ -175,6 +175,9 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   "reminder:scheduled":       { app: "リマインド", word: "新着", text: "定期リマインドが届いています", url: "/" },
   // 有休奨励日は回答をホームのバナーでする。/leave（休暇申請）に飛ばすと、ふつうの休暇申請から出してしまう（2026-09-19）
   "reminder:encouragement":   { app: "休暇申請", word: "新着", text: "有休奨励日の回答期限が近づいています", url: "/?enc=1" },
+  // 給与の締め日のお知らせ（2026-10-14・毎月14日 10:00・DB の payroll_close_notice_daily）。ホームのバナーへ（閉じていても ?payroll=1 で開き直す）
+  // 🚨 App.tsx の classifyNotif（source_type 'payroll_close'）と同じ行き先。文は固定（日付は差し込めない）
+  "payroll:close_notice":     { app: "締め日", word: "確認", text: "15日は給与の締め日です。申請の確認をお願いします", url: "/?payroll=1" },
   // 社内お知らせ（作成時の連絡・終了日が近づいたリマインド）
   // word は安全語ホワイトリスト（新着）のみ。自由文は Android で警告表示に化けるため不可。
   "announcement:new":         { app: "お知らせ", word: "新着", text: "社内お知らせが届いています", url: "/" },

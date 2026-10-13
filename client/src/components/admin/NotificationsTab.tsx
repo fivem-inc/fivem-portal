@@ -7,6 +7,7 @@ import type { RoleRow } from '../../lib/roleAttrs';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
 import { describeUpdate } from '../../lib/statusUpdate';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
+import PayrollCloseNoticeSection from './PayrollCloseNoticeSection';
 import GcalCalendarSection from './GcalCalendarSection';
 import LeaveShiftAlertSection from './LeaveShiftAlertSection';
 import ShiftAdjustSettingsSection from './ShiftAdjustSettingsSection';
@@ -1046,6 +1047,9 @@ const NotificationsTab: React.FC = () => {
       {previewModal}
 
       <PushBannerSettingsSection />
+
+      {/* 給与の締め日のお知らせ（2026-10-14・文面と届け方。誰に届くかは権限管理で決まる） */}
+      <PayrollCloseNoticeSection />
 
       <GcalCalendarSection />
 
