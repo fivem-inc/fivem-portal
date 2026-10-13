@@ -2385,7 +2385,7 @@ const OvertimeForm: React.FC<{
 
       {/* 種別の選択（遅刻/早退か、それ以外＝調整か を本人に確認）。
           2026-09-26 ユーザー確定：4つ（時間調整・会社の予定・テレワーク・遅刻/早退）を2列で。種別は増やさない（上3つは調整）。
-          2026-10-04：「短期・イベントなど」を足して5つ。いちばん下（遅刻／早退＝種別が変わる唯一のもの）は横長にして上の4つと分ける。
+          2026-10-04：「短期・イベントなど」を足して5つ。いちばん下（遅刻／早退＝種別が変わる唯一のもの）は横長にして上の4つと分ける。2026-10-13：「試合・遠征など」を足して6つ（上は5つ）。
           🚨 文言・値は lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES（表入力と共用） */}
       {!fullDay && !clockOnlyMode && hasInput && typeDetect.lateQ && (
         <div style={{ marginBottom: 12 }}>
@@ -2404,7 +2404,7 @@ const OvertimeForm: React.FC<{
               </button>
             ))}
           </div>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。遅刻でなければ上の4つから選んでください</p>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。遅刻でなければ上の5つから選んでください</p>
         </div>
       )}
       {!fullDay && !clockOnlyMode && hasInput && typeDetect.earlyQ && (
@@ -2424,7 +2424,7 @@ const OvertimeForm: React.FC<{
               </button>
             ))}
           </div>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。早退でなければ上の4つから選んでください</p>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。早退でなければ上の5つから選んでください</p>
         </div>
       )}
 

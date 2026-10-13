@@ -114,17 +114,19 @@ export function detectOvertimeTypes(args: {
  *    以前は「時間調整」と「遅刻」の2択で、大掃除・会議・テレワークで時間をずらした人が「どちらでもない」と迷っていた。
  * 🚨 1件フォームと表入力の両方がこの配列を使う（文言を2か所に書かない）
  */
-export type LateChoice = 'adj' | 'short_term' | 'event' | 'telework' | 'tardiness';
-export type EarlyChoice = 'adj' | 'short_term' | 'event' | 'telework' | 'early_leave';
+// match＝練習・試合・遠征など（2026-10-13 ユーザー確定・スタッフから「試合・遠征の日に言葉を選べない」）
+export type LateChoice = 'adj' | 'short_term' | 'match' | 'event' | 'telework' | 'tardiness';
+export type EarlyChoice = 'adj' | 'short_term' | 'match' | 'event' | 'telework' | 'early_leave';
 // ✅ 文言はユーザー確定（2026-09-26・2026-10-04）。
 //    'short_term'＝短期・イベントなど（2026-10-04 新設）／'event'＝会議・大掃除など／'telework'＝出張・直行直帰・在宅など
 // 🚨 'event' は 2026-09-26〜10-03 の間「イベント・会議・大掃除など」の意味だった。分けたとき、それまでの記録（3件）が
 //    大掃除などで短期ではなかったので、**値 'event' を「会議・大掃除など」に引き継いだ**（記録は書き換えていない）。
 //    値の名前と意味がずれているが、変えると過去の記録の書き換えが要るので変えない
-// 🚨 遅刻・早退（いちばん下）は種別が変わる唯一の選択肢。1件フォームでは横長にして上の4つと分けて見せる
+// 🚨 遅刻・早退（いちばん下）は種別が変わる唯一の選択肢。1件フォームでは横長にして上の5つと分けて見せる
 export const LATE_CHOICES: { value: LateChoice; label: string; short: string }[] = [
   { value: 'adj',        label: '時間調整で遅く出勤',     short: '時間調整' },
   { value: 'short_term', label: '短期・イベントなど',     short: '短期・イベントなど' },
+  { value: 'match',      label: '練習・試合・遠征など',     short: '練習・試合・遠征など' },
   { value: 'event',      label: '会議・大掃除など',       short: '会議・大掃除など' },
   { value: 'telework',   label: '出張・直行直帰・在宅など', short: '出張・在宅など' },
   { value: 'tardiness',  label: '寝坊・私用などで遅刻',     short: '遅刻' },
@@ -132,13 +134,15 @@ export const LATE_CHOICES: { value: LateChoice; label: string; short: string }[]
 export const EARLY_CHOICES: { value: EarlyChoice; label: string; short: string }[] = [
   { value: 'adj',         label: '時間調整で早退',         short: '時間調整' },
   { value: 'short_term',  label: '短期・イベントなど',     short: '短期・イベントなど' },
+  { value: 'match',       label: '練習・試合・遠征など',     short: '練習・試合・遠征など' },
   { value: 'event',       label: '会議・大掃除など',       short: '会議・大掃除など' },
   { value: 'telework',    label: '出張・直行直帰・在宅など', short: '出張・在宅など' },
   { value: 'early_leave', label: '体調・私用などで早退',     short: '早退' },
 ];
 /** 押した選択肢から「事情」（理由の文例に使う）。遅刻・早退・時間調整は null */
-export function situationOf(late: LateChoice | null, early: EarlyChoice | null): 'short_term' | 'event' | 'telework' | null {
+export function situationOf(late: LateChoice | null, early: EarlyChoice | null): 'short_term' | 'match' | 'event' | 'telework' | null {
   if (late === 'short_term' || early === 'short_term') return 'short_term';
+  if (late === 'match' || early === 'match') return 'match';
   if (late === 'event' || early === 'event') return 'event';
   if (late === 'telework' || early === 'telework') return 'telework';
   return null;
