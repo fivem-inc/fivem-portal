@@ -932,6 +932,22 @@ const OvertimeForm: React.FC<{
   //    判定は lib/overtimeSubmit の segmentIssuesOf（表の入力と共用）。
   const segmentIssues = useMemo(() => segmentIssuesOf(segments), [segments]);
   const hasSegmentIssue = segmentIssues.some(Boolean);
+  // 勤務の時間帯を、となりの帯とそっくり入れ替える（2026-10-13 ユーザー確定・交通費の［⇄］と同じ形）。
+  // 🚨 勝手に並べ替えない。押したときだけ入れ替える
+  const swapSegments = (i: number) => setSegments(prev => {
+    if (i < 1 || i >= prev.length) return prev;
+    const next = [...prev];
+    [next[i - 1], next[i]] = [next[i], next[i - 1]];
+    return next;
+  });
+  // 入れ替えると直る行だけ「あいだの［⇅］を押すと…」を添える（重なっているだけの行には出さない）
+  const swapFixes = useMemo(() => segments.map((_, i) => {
+    if (i < 1 || !segmentIssues[i]) return false;
+    const next = [...segments];
+    [next[i - 1], next[i]] = [next[i], next[i - 1]];
+    const after = segmentIssuesOf(next);
+    return !after[i - 1] && !after[i];
+  }), [segments, segmentIssues]);
 
   const autoBreak = useMemo(() => calcTotalBreak(workSegments), [workSegments]);
   // 🚨 休憩・労働・差分の計算は lib/overtimeShift の buildWorkDiff 1か所に集約している（2026-09-09）。
@@ -2178,6 +2194,13 @@ const OvertimeForm: React.FC<{
         )}
         {segments.map((s, i) => (
           <div key={i} style={{ marginBottom: 8 }}>
+            {i > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'center', margin: '-4px 0 4px' }}>
+                <button type="button" onClick={() => swapSegments(i)}
+                  aria-label={`勤務${i}と勤務${i + 1}を入れ替える`} title={`勤務${i}と勤務${i + 1}を入れ替える`}
+                  style={{ background: isDark ? '#495057' : '#f0f0f0', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 16, lineHeight: 1.2, color: isDark ? '#fff' : '#555' }}>⇅</button>
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>勤務{i + 1}</span>
               <TimeInput value={s.start} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, start: v } : p))} isDark={isDark} advance invalid={!!segmentIssues[i]} ariaLabel={`勤務${i + 1} 開始時刻`} style={{ flex: 1, minWidth: 0 }} />
@@ -2192,7 +2215,7 @@ const OvertimeForm: React.FC<{
             {/* 打ち間違いはその場で理由まで出す。24時間表記の案内もここでだけ伝える（常設の説明は増やさない） */}
             {segmentIssues[i] && (
               <p style={{ margin: '4px 0 0 52px', fontSize: 11.5, lineHeight: 1.6, color: isDark ? '#f5b5ba' : '#c62828' }}>
-                {segmentIssues[i]}
+                {segmentIssues[i]}{swapFixes[i] && <>。<br />あいだの［⇅］を押すと入れ替わります</>}
               </p>
             )}
           </div>

@@ -21,14 +21,17 @@ import { describeUpdate } from '../../lib/statusUpdate';
 import { computeBalance, type BalanceRow } from '../../lib/overtimeBalance';
 import { logFail } from '../../lib/logFail';
 import { DAY_MARK_STYLE } from '../../lib/overtimeDayMark';
+import { STATUS_INFO } from '../../lib/overtimeStatus';
 
+// 言葉はスタッフの画面（lib/overtimeStatus の STATUS_INFO）と同じものを使う（2026-10-13 ユーザー確定）。
+// 🚨 ここに言葉を書き写さない。色だけ管理画面の今の色のまま
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
-  requested:         { label: '事前申請', color: '#f59e0b' },
-  request_confirmed: { label: '事前受理済み', color: '#2e7d32' },
-  reported:          { label: '実績報告', color: '#f59e0b' },
-  confirmed:         { label: '確認済み', color: '#1565c0' },
-  returned:          { label: '差し戻し', color: '#dc3545' },
-  cancelled:         { label: '取消済み', color: '#6c757d' },
+  requested:         { label: STATUS_INFO.requested.label, color: '#f59e0b' },
+  request_confirmed: { label: STATUS_INFO.request_confirmed.label, color: '#2e7d32' },
+  reported:          { label: STATUS_INFO.reported.label, color: '#f59e0b' },
+  confirmed:         { label: STATUS_INFO.confirmed.label, color: '#1565c0' },
+  returned:          { label: STATUS_INFO.returned.label, color: '#dc3545' },
+  cancelled:         { label: STATUS_INFO.cancelled.label, color: '#6c757d' },
 };
 const OT_FIELD_LABELS: Record<string, string> = { work_date: '対象日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
 const OT_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再提出' };
