@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { calcTotalBreak, calcLaborMinutes, checkLegalBreak, timeToMin, minToTime, formatSignedMin, formatMin, type WorkSegment } from '../../lib/breakCalc';
-import { notifyOvertimeAdminEdited } from '../../lib/overtimeNotify';
+import { timeToMin, minToTime, formatMin, formatSignedMin, type WorkSegment } from '../../lib/breakCalc';
+import { editPhaseOf, editFigures, editChanges, saveAdminOvertimeEdit, EDIT_FIELD_LABELS } from '../../lib/overtimeAdminEdit';
 
 // 管理者が残業レコードの内容を直接修正するモーダル。
 // 休憩・実労働・差分・法定警告は申請フォームと同じ breakCalc で再計算（エンジン二重化を回避）。
 // entry_type='manual' 限定（自動計上行は対象外）。理由必須 → 確認 → 原子的RPC → 本人通知。
+// 計算・変更点・保存は lib/overtimeAdminEdit.ts（打刻の確認のカードの［この時刻で申請を直す］と共用）。
 
 interface Seg { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number; }
 export interface OvertimeRecord {
@@ -38,19 +39,24 @@ interface Props {
   record: OvertimeRecord;
   isDarkMode: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  /** warning：保存はできたが、カレンダーや打刻の確認の札だけ失敗したとき（打刻の確認から開いたときだけ渡す） */
+  onSaved: (warning?: string) => void;
+  /** 打刻の確認のカードの「休憩なども直す」から開いたとき（2026-10-13）。本人が入れた時間で始め、保存したら確認を「直しました」にする */
+  clockInquiry?: { dayId: string; segments: { start_min: number; end_min: number }[] | null; note: string | null };
 }
 
 // 分→"HH:MM"（翌日跨ぎは24時間で丸めて入力欄用に戻す）
 const minToInput = (m: number): string => minToTime(m).replace('翌', '').padStart(5, '0');
 
-const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved }) => {
+const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved, clockInquiry }) => {
   // 編集対象phase：実績があれば実績、無ければ予定
-  const phase: 'planned' | 'actual' = record.segments.some(s => s.phase === 'actual') ? 'actual' : 'planned';
+  const phase = editPhaseOf(record);
   const initialSegs = record.segments.filter(s => s.phase === phase).sort((a, b) => a.seg_no - b.seg_no);
+  // 打刻の確認から開いたときは、本人が入れた正しい時間から始める
+  const startSegs = clockInquiry?.segments && clockInquiry.segments.length > 0 ? clockInquiry.segments : initialSegs;
 
   const [rows, setRows] = useState<{ start: string; end: string }[]>(
-    initialSegs.length ? initialSegs.map(s => ({ start: minToInput(s.start_min), end: minToInput(s.end_min % 1440) })) : [{ start: '', end: '' }],
+    startSegs.length ? startSegs.map(s => ({ start: minToInput(s.start_min), end: minToInput(s.end_min % 1440) })) : [{ start: '', end: '' }],
   );
   const [breakManual, setBreakManual] = useState(record.break_manual);
   const [breakManualMin, setBreakManualMin] = useState(String(record.break_minutes ?? 0));
@@ -59,7 +65,7 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
   const [location, setLocation] = useState(record.location ?? '');   // select時に選んだ校
   const [locationOther, setLocationOther] = useState('');            // その他（自由記載）
   const [workDate, setWorkDate] = useState(record.work_date);
-  const [changeReason, setChangeReason] = useState('');
+  const [changeReason, setChangeReason] = useState(clockInquiry?.segments && clockInquiry.segments.length > 0 ? '打刻の確認のお答えのとおり' : '');
   const [workplaces, setWorkplaces] = useState<string[]>([]);
   const [step, setStep] = useState<'edit' | 'confirm'>('edit');
   const [saving, setSaving] = useState(false);
@@ -97,31 +103,17 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
     }).filter((s): s is WorkSegment => s !== null),
   [rows]);
 
-  const autoBreak = useMemo(() => calcTotalBreak(workSegments), [workSegments]);
-  const breakMin = breakManual ? (parseInt(breakManualMin, 10) || 0) : autoBreak;
-  const laborMin = calcLaborMinutes(workSegments, breakMin);
   const baseLabor = record.normal_shift?.labor_minutes ?? 0;
-  const diffMin = laborMin - baseLabor;
-  const legal = checkLegalBreak(workSegments, breakMin);
+  const { autoBreak, breakMin, laborMin, diffMin, legalOk } = editFigures(workSegments, breakManual, parseInt(breakManualMin, 10) || 0, baseLabor);
+  const legal = { ok: legalOk };
 
-  const segLabel = (segs: WorkSegment[]) => (segs.length ? segs.map(s => `${minToTime(s.startMin)}〜${minToTime(s.endMin)}`).join('、') : '(なし)');
-  const oldSegs: WorkSegment[] = initialSegs.map(s => ({ startMin: s.start_min, endMin: s.end_min }));
-
-  const changes = useMemo(() => {
-    const c: Record<string, { old: unknown; new: unknown }> = {};
-    if (record.work_date !== workDate) c.work_date = { old: record.work_date, new: workDate };
-    if (segLabel(oldSegs) !== segLabel(workSegments)) c.segments = { old: segLabel(oldSegs), new: segLabel(workSegments) };
-    if ((record.break_minutes ?? 0) !== breakMin) c.break_minutes = { old: `${record.break_minutes ?? 0}分`, new: `${breakMin}分` };
-    if ((record.diff_minutes ?? 0) !== diffMin) c.diff_minutes = { old: formatSignedMin(record.diff_minutes ?? 0), new: formatSignedMin(diffMin) };
-    if ((record.location ?? '') !== effectiveLocation) c.location = { old: record.location ?? '', new: effectiveLocation };
-    if ((record.reason ?? '') !== reason) c.reason = { old: record.reason ?? '', new: reason };
-    return c;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [record, workDate, workSegments, breakMin, diffMin, effectiveLocation, reason]);
+  const { changes, summary } = useMemo(
+    () => editChanges(record, { workDate, segs: workSegments, breakMin, diffMin, location: effectiveLocation, reason }),
+    [record, workDate, workSegments, breakMin, diffMin, effectiveLocation, reason],
+  );
 
   const changedCount = Object.keys(changes).length;
-  const FIELD_LABELS: Record<string, string> = { work_date: '勤務日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
-  const summary = Object.keys(changes).map(k => FIELD_LABELS[k] ?? k).join('・') + 'を修正';
+  const FIELD_LABELS = EDIT_FIELD_LABELS;
 
   const setRow = (i: number, key: 'start' | 'end', v: string) => setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, [key]: v } : r)));
   const addRow = () => setRows(prev => (prev.length >= 3 ? prev : [...prev, { start: '', end: '' }]));
@@ -142,40 +134,24 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
   const handleSave = async () => {
     setSaving(true);
     setError('');
-    const segPayload = workSegments.map((s, i) => ({ seg_no: i + 1, start_min: s.startMin, end_min: s.endMin }));
-    const { error: rpcErr } = await supabase.rpc('admin_edit_overtime_report', {
-      p_id: record.id,
-      p_work_date: workDate,
-      p_break_minutes: breakMin,
-      p_break_manual: breakManual,
-      p_labor_minutes: laborMin,
-      p_diff_minutes: diffMin,
-      p_legal_warning: !legal.ok,
-      p_reason: reason.trim(),
-      p_location: effectiveLocation,
-      p_phase: phase,
-      p_segments: segPayload,
-      p_changes: changes,
-      p_change_summary: summary,
-      p_change_reason: changeReason.trim(),
+    const res = await saveAdminOvertimeEdit({
+      record, workDate, segs: workSegments,
+      breakManual, breakMin, laborMin, diffMin, legalOk,
+      reason: reason.trim(), location: effectiveLocation, changes, summary,
+      changeReason: changeReason.trim(),
+      clockInquiryDayId: clockInquiry?.dayId,
     });
-    if (rpcErr) { setSaving(false); setError('保存に失敗しました: ' + rpcErr.message); return; }
+    if (res.error) { setSaving(false); setError(res.error); return; }
+    const gcalMsg = 'Googleカレンダーへの反映に失敗しました。時間をおいて再度保存するか、管理者にご連絡ください。';
 
-    await notifyOvertimeAdminEdited({
-      reportId: record.id,
-      applicantId: record.applicant_id,
-      dateLabel: record.work_date,
-      summary,
-      reason: changeReason.trim(),
-    }).then(null, () => {});
-
-    // 受理後修正でカレンダーが古い日付・時刻のまま残らないよう再同期（冪等な再計算）
-    const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
-      body: { action: 'sync', source_type: 'overtime', source_id: record.id },
-    });
-    const sr = syncRes as { success?: boolean } | null;
-    if (syncErr || sr?.success === false) {
-      setError('修正は保存されましたが、Googleカレンダーへの反映に失敗しました。時間をおいて再度保存するか、管理者にご連絡ください。');
+    if (clockInquiry) {
+      // 打刻の確認から開いたとき：保存はできているので閉じる（失敗した部分は打刻の確認の画面に出す）
+      setSaving(false);
+      onSaved([res.resolveError, res.gcalFailed ? '修正は保存されましたが、' + gcalMsg : ''].filter(Boolean).join(' ') || undefined);
+      return;
+    }
+    if (res.gcalFailed) {
+      setError('修正は保存されましたが、' + gcalMsg);
       setSaving(false);
       return;
     }
@@ -194,6 +170,13 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
 
         {step === 'edit' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {clockInquiry && (
+              <div style={{ padding: '8px 10px', borderRadius: 8, background: isDarkMode ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDarkMode ? '#8a6d1f' : '#ffe08a'}`, fontSize: 12.5, color: text, lineHeight: 1.7 }}>
+                打刻の確認のお答え：{clockInquiry.segments && clockInquiry.segments.length > 0
+                  ? clockInquiry.segments.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '（時間の答えはありません）'}
+                {clockInquiry.note && <><br />ひとこと：{clockInquiry.note}</>}
+              </div>
+            )}
             <div>
               <label style={labelStyle}>勤務日</label>
               <input type="date" style={{ ...inputStyle, width: '100%' }} value={workDate} onChange={e => setWorkDate(e.target.value)} />

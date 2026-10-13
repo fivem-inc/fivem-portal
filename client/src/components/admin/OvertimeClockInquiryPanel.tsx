@@ -12,6 +12,11 @@ import {
 import type { InquiryAnswer, DayStateRow, DayState } from '../../lib/clockInquiry';
 import { STATUS_INFO } from '../../lib/overtimeStatus';
 import type { OvertimeStatus } from '../../lib/overtimeStatus';
+import type { WorkSegment } from '../../lib/breakCalc';
+import { editFigures, editChanges, saveAdminOvertimeEdit, segsLabel, currentSegsOf } from '../../lib/overtimeAdminEdit';
+import { notifyOvertimeAdminCancelled } from '../../lib/overtimeNotify';
+import { primaryBtn, backBtn, tintBtn } from '../../lib/buttonStyles';
+import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 
 // 経理（管理者）が「この日の打刻が遅いが残業か」を本人に確認する画面。
 // ・1人 × 複数日をまとめて送る（給与計算で1人ぶんのタイムカードを見ながら拾うため）
@@ -19,6 +24,10 @@ import type { OvertimeStatus } from '../../lib/overtimeStatus';
 // ・送信すると、その日だけ締め後でも報告できる許可が自動で付く（RPC側）
 // ・申請がある日にも送れる（2026-10-13・経理担当の意見）。その日の申請の中身を横に出す。
 //   本人の答えは申請の状態で変わる（lib/clockInquiry.ts・DB の answer_overtime_clock_inquiry）
+// ・段階2（2026-10-13 ユーザー確定）：答えのカードから経理が対応する
+//   ［この時刻で申請を直す］…カードの中で「前→後」を見せて［直す］（計算と保存は lib/overtimeAdminEdit・［📋修正］と共用）
+//   ［取り消して定時にする］…本人の正しい時間が残業なし（±0:00）で、残業・早出だけの申請のとき。DB の resolve_clock_inquiry_cancel 1回
+//   ［直さずに終える］（理由必須）／［この日をもう一度聞く］（上の送る欄に入れる。送ったら前の日は「このまま」）
 
 interface StaffRow { id: string; name: string; role_title: string | null }
 
@@ -33,12 +42,20 @@ interface InquiryDay {
   existing_report_id: string | null; report_state: DayState | null;
   answer_segments: { start_min: number; end_min: number }[] | null;
   resolved_kind: 'edited' | 'cancelled' | 'kept' | null;
+  resolved_at: string | null; resolved_by: string | null; resolved_note: string | null;
 }
 /** 答えの一覧で出す申請の中身（いまの状態） */
 interface ReportBrief {
   id: string; status: string; is_post_hoc: boolean; application_types: string[] | null; diff_minutes: number | null;
   normal_shift: { labor_minutes?: number } | null; furikae_origin_date: string | null; work_date: string;
   segments: { phase: string; start_min: number; end_min: number }[] | null;
+}
+/** 残業・早出だけの申請か（定時にしてよいのはこれだけ。DB の resolve_clock_inquiry_cancel と同じ条件） */
+const onlyOvertimeTypes = (types: string[] | null) => (types ?? []).every(t => t === 'overtime' || t === 'early_start');
+/** カードの中の［直す］の確認に出すもの */
+interface EditDraft {
+  dayId: string; record: OvertimeRecord; segs: WorkSegment[];
+  fig: ReturnType<typeof editFigures>; changes: Record<string, { old: unknown; new: unknown }>; summary: string;
 }
 interface InquiryRow {
   id: string; user_id: string; sender_id: string; message: string | null;
@@ -64,6 +81,9 @@ const MESSAGE_EXAMPLES = [
   '業務をしていた場合は、残業として報告してください',
   '給与計算のため確認させてください',
 ];
+
+// ［直さずに終える］の理由の文例（押すと入る）
+const KEEP_NOTE_EXAMPLES = ['申請の通りで問題なし', '本人と話して確認済み'];
 
 interface Props { staff: StaffRow[]; isDark: boolean }
 
@@ -107,6 +127,16 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const [showAllMessages, setShowAllMessages] = useState(false);
   const [withdrawTarget, setWithdrawTarget] = useState<string | null>(null);
   const [clockRows, setClockRows] = useState<ClockOnlyRow[]>([]);
+  // 段階2：答えのカードでの対応（開いている操作は1つだけ）
+  const [op, setOp] = useState<{ dayId: string; kind: 'cancel' | 'keep' } | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [keepNote, setKeepNote] = useState('');
+  const [opBusy, setOpBusy] = useState(false);
+  const [opErr, setOpErr] = useState<{ dayId: string; msg: string } | null>(null);
+  const [modal, setModal] = useState<{ record: OvertimeRecord; clockInquiry: { dayId: string; segments: { start_min: number; end_min: number }[] | null; note: string | null } } | null>(null);
+  // ［この日をもう一度聞く］で上の欄に入れた日（送れたら前の確認を「このまま」にする）
+  const [reask, setReask] = useState<{ dayId: string; userId: string; workDate: string }[]>([]);
+  const sendRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => { setNames(Object.fromEntries(staff.map(s => [s.id, s.name]))); }, [staff]);
 
@@ -257,6 +287,15 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         }, { applicant: email }).then(null, () => {});
       }
 
+      // ［この日をもう一度聞く］から送った日は、前の確認を「このまま（もう一度聞いた）」にする
+      const sentDates = new Set(payload.map(p => p.work_date));
+      for (const r of reask.filter(x => x.userId === targetId && sentDates.has(x.workDate))) {
+        const { error: kErr } = await supabase.rpc('resolve_clock_inquiry_day', {
+          p_day_id: r.dayId, p_kind: 'kept', p_note: `もう一度聞きました（${md(todayJstStr())} に送信）`,
+        });
+        if (kErr) console.error('[打刻の確認] 前の確認を「このまま」にできませんでした', kErr.message);
+      }
+      setReask([]);
       setMsg(`${names[targetId] ?? ''}さんに${payload.length}日ぶんの確認を送りました`);
       // 送った一言を「よく使う履歴」の先頭に反映（次回すぐ押せるように）
       const sent = message.trim();
@@ -273,6 +312,104 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     const { error } = await supabase.rpc('withdraw_overtime_clock_inquiry', { p_inquiry_id: id });
     setWithdrawTarget(null);
     if (error) { setErr('取り下げに失敗しました：' + error.message); return; }
+    loadInquiries();
+  };
+
+  // ── 段階2：答えのカードでの対応 ──
+  const closeOp = () => { setOp(null); setEditDraft(null); setKeepNote(''); setOpErr(null); };
+
+  /** 申請の今の中身を、［📋修正］と同じ形で読む */
+  const loadRecord = async (id: string, applicantId: string): Promise<OvertimeRecord | string> => {
+    const { data, error } = await supabase.from('overtime_reports')
+      .select('*, segments:overtime_report_segments(phase, seg_no, start_min, end_min)').eq('id', id).maybeSingle();
+    if (error) return '申請を読み込めませんでした：' + error.message;
+    if (!data) return 'この日の申請が見つかりません（取り消された可能性があります）';
+    return { ...(data as OvertimeRecord), applicantName: names[applicantId] ?? '' };
+  };
+
+  /** ［この時刻で申請を直す］→ カードの中に「前→後」を出す */
+  const startEdit = async (i: InquiryRow, d: InquiryDay, reportId: string) => {
+    closeOp(); setOpBusy(true);
+    const rec = await loadRecord(reportId, i.user_id);
+    setOpBusy(false);
+    if (typeof rec === 'string') { setOpErr({ dayId: d.id, msg: rec }); return; }
+    if (!['reported', 'confirmed'].includes((rec as OvertimeRecord & { status: string }).status)) {
+      setOpErr({ dayId: d.id, msg: 'この申請はいま直せる状態ではありません（実績報告のあとに直せます）' }); return;
+    }
+    const segs: WorkSegment[] = (d.answer_segments ?? []).map(x => ({ startMin: x.start_min, endMin: x.end_min }));
+    // 休憩を手で直してある申請は、その分数のまま（自動の休憩なら新しい時間で計算し直す）
+    const fig = editFigures(segs, rec.break_manual, rec.break_minutes ?? 0, rec.normal_shift?.labor_minutes ?? 0);
+    const { changes, summary } = editChanges(rec, {
+      workDate: rec.work_date, segs, breakMin: fig.breakMin, diffMin: fig.diffMin, location: rec.location ?? '', reason: rec.reason ?? '',
+    });
+    if (Object.keys(changes).length === 0) { setOpErr({ dayId: d.id, msg: '申請はすでにこの時間になっています。［直さずに終える］を使ってください' }); return; }
+    setEditDraft({ dayId: d.id, record: rec, segs, fig, changes, summary });
+  };
+
+  const doEdit = async () => {
+    if (!editDraft) return;
+    const { record: rec, segs, fig, changes, summary, dayId } = editDraft;
+    setOpBusy(true); setOpErr(null);
+    const res = await saveAdminOvertimeEdit({
+      record: rec, workDate: rec.work_date, segs,
+      breakManual: rec.break_manual, breakMin: fig.breakMin, laborMin: fig.laborMin, diffMin: fig.diffMin, legalOk: fig.legalOk,
+      reason: rec.reason ?? '', location: rec.location ?? '', changes, summary,
+      changeReason: `打刻の確認のお答えのとおり、${segsLabel(segs)} に直しました`,
+      clockInquiryDayId: dayId,
+    });
+    setOpBusy(false);
+    if (res.error) { setOpErr({ dayId, msg: res.error }); return; }
+    closeOp();
+    afterOp(`${rec.applicantName ?? ''}さんの ${md(rec.work_date)} の申請を ${segsLabel(segs)} に直しました`,
+      [res.resolveError, res.gcalFailed ? '申請は直しましたが、Googleカレンダーへの反映に失敗しました。時間をおいて［📋修正］から保存し直してください。' : '']);
+  };
+
+  /** ［取り消して定時にする］（確認のあと） */
+  const doCancel = async (i: InquiryRow, d: InquiryDay, reportId: string) => {
+    setOpBusy(true); setOpErr(null);
+    const { error } = await supabase.rpc('resolve_clock_inquiry_cancel', { p_day_id: d.id, p_note: null });
+    if (error) { setOpBusy(false); setOpErr({ dayId: d.id, msg: '取り消せませんでした：' + error.message.replace(/^CLOCK_INQ_[A-Z_]+: ?/, '') }); return; }
+    await notifyOvertimeAdminCancelled({
+      reportId, applicantId: i.user_id,
+      dateLabel: `${d.work_date}（打刻の確認のお答えにより、定時（打刻ズレ）の記録にしました）`,
+    }).then(null, () => {});
+    const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'sync', source_type: 'overtime', source_id: reportId },
+    });
+    setOpBusy(false);
+    closeOp();
+    afterOp(`${names[i.user_id] ?? ''}さんの ${md(d.work_date)} の申請を取り消し、定時の記録にしました`,
+      [syncErr || (syncRes as { success?: boolean } | null)?.success === false ? '取り消しましたが、Googleカレンダーから消せませんでした。管理者にご連絡ください。' : '']);
+    loadClockRows();
+  };
+
+  /** ［直さずに終える］ */
+  const doKeep = async (d: InquiryDay) => {
+    if (!keepNote.trim()) { setOpErr({ dayId: d.id, msg: '理由を入れてください' }); return; }
+    setOpBusy(true); setOpErr(null);
+    const { error } = await supabase.rpc('resolve_clock_inquiry_day', { p_day_id: d.id, p_kind: 'kept', p_note: keepNote.trim() });
+    setOpBusy(false);
+    if (error) { setOpErr({ dayId: d.id, msg: '終えられませんでした：' + error.message.replace(/^CLOCK_INQ_[A-Z_]+: ?/, '') }); return; }
+    closeOp();
+    afterOp(`${md(d.work_date)} を直さずに終えました`, []);
+  };
+
+  /** ［この日をもう一度聞く］：上の送る欄にその人・その日・打刻を入れる（送るのは経理が押したとき） */
+  const startReask = (i: InquiryRow, d: InquiryDay) => {
+    closeOp();
+    setTargetId(i.user_id);
+    setRows([{ work_date: d.work_date, clock_in: d.clock_in ? d.clock_in.slice(0, 5) : '', clock_out: d.clock_out ? d.clock_out.slice(0, 5) : '' }]);
+    setReask([{ dayId: d.id, userId: i.user_id, workDate: d.work_date }]);
+    setConfirming(false); setErr('');
+    sendRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  /** 対応のあと：緑の知らせ・失敗した部分は赤・一覧を読み直す */
+  const afterOp = (done: string, warnings: (string | undefined)[]) => {
+    const w = warnings.filter(Boolean).join(' ');
+    if (w) setErr(w);
+    setMsg(done);
+    setTimeout(() => setMsg(''), 4000);
     loadInquiries();
   };
 
@@ -303,7 +440,15 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
       )}
 
       {/* ① 確認を送る */}
-      <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
+      <div ref={sendRef} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
+        {reask.length > 0 && reask[0].userId === targetId && (
+          <div style={{ background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 12.5, color: text, lineHeight: 1.7 }}>
+            {md(reask[0].workDate)} をもう一度聞きます。打刻を確かめて、ひとことを入れて送ってください。<br />
+            <span style={{ color: subText }}>送ると、前の確認は「このまま（もう一度聞いた）」になります</span>
+            <button type="button" onClick={() => { setReask([]); setRows([]); }}
+              style={{ marginLeft: 8, background: 'none', border: 'none', color: isDark ? '#8ec5f0' : '#1565c0', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+          </div>
+        )}
         <h4 style={{ margin: '0 0 10px', fontSize: 14, color: text }}>打刻の確認を送る</h4>
         <p style={{ margin: '0 0 12px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
           通常シフトは自動で出ます。<b>打刻だけ</b>入力してください。<br />
@@ -547,6 +692,93 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                     <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>打刻</span><span>{hm(d.clock_in)}〜{hm(d.clock_out)}</span></div>
                     {d.answer_note && <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>ひとこと</span><span>{d.answer_note}</span></div>}
                     {d.answer === 'not_worked' && !d.result_report_id && <div style={{ color: '#b45309', marginTop: 2 }}>※ 打刻ズレの記録が未作成です（本人の画面で作れなかった）</div>}
+                    {d.resolved_kind && (
+                      <div style={{ marginTop: 6, padding: '5px 8px', borderRadius: 6, background: isDark ? '#1b3a1e' : '#e8f5e9', color: isDark ? '#a5d6a7' : '#1b5e20', lineHeight: 1.6 }}>
+                        {d.resolved_at ? md(d.resolved_at.slice(0, 10)) + ' ' : ''}{d.resolved_by ? `${names[d.resolved_by] ?? '経理'}が` : ''}
+                        {d.resolved_kind === 'edited' ? `申請を ${d.resolved_note ?? ''} に直しました`
+                          : d.resolved_kind === 'cancelled' ? '申請を取り消し、定時の記録にしました'
+                          : `直さずに終えました${d.resolved_note ? `（${d.resolved_note}）` : ''}`}
+                      </div>
+                    )}
+                    {fu.kind === 'action' && (() => {
+                      const repId = d.existing_report_id ?? d.result_report_id;
+                      const canFix = !!rb && !!repId && (rb.status === 'reported' || rb.status === 'confirmed');
+                      const hasAns = !!ansSegs && ansSegs.length > 0;
+                      // 本人の正しい時間が残業なし（±0:00）で、残業・早出だけの申請 → 定時にする
+                      const toTeiji = canFix && hasAns && d.answer === 'time_differs' && ansDiff === 0
+                        && onlyOvertimeTypes(rb!.application_types) && rb!.work_date === d.work_date && !rb!.furikae_origin_date;
+                      const small: React.CSSProperties = { fontSize: 12.5, padding: '6px 12px', borderRadius: 8 };
+                      const isEditing = editDraft?.dayId === d.id;
+                      return (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${border}` }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                            {canFix && hasAns && d.answer === 'time_differs' && !toTeiji && (
+                              <button type="button" disabled={opBusy} onClick={() => startEdit(i, d, repId!)} style={{ ...primaryBtn({ disabled: opBusy }), ...small }}>この時刻で申請を直す</button>
+                            )}
+                            {toTeiji && (
+                              <button type="button" disabled={opBusy} onClick={() => { closeOp(); setOp({ dayId: d.id, kind: 'cancel' }); }} style={{ ...primaryBtn({ danger: true, disabled: opBusy }), ...small }}>取り消して定時にする</button>
+                            )}
+                            <button type="button" disabled={opBusy} onClick={() => { closeOp(); setOp({ dayId: d.id, kind: 'keep' }); }} style={{ ...backBtn(isDark), ...small }}>直さずに終える</button>
+                            <button type="button" disabled={opBusy} onClick={() => startReask(i, d)} style={{ ...tintBtn(isDark), ...small }}>この日をもう一度聞く</button>
+                            {canFix && (d.answer !== 'time_differs' || toTeiji || !hasAns) && (
+                              <button type="button" disabled={opBusy} onClick={async () => {
+                                closeOp(); setOpBusy(true);
+                                const rec = await loadRecord(repId!, i.user_id);
+                                setOpBusy(false);
+                                if (typeof rec === 'string') { setOpErr({ dayId: d.id, msg: rec }); return; }
+                                setModal({ record: rec, clockInquiry: { dayId: d.id, segments: d.answer_segments, note: d.answer_note } });
+                              }} style={{ background: 'none', border: 'none', color: isDark ? '#8ec5f0' : '#1565c0', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}>申請を直す →</button>
+                            )}
+                          </div>
+                          {isEditing && editDraft && (
+                            <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: isDark ? '#1e3a5f' : '#e7f1ff', border: `1px solid ${isDark ? '#4a90d9' : '#9ec5fe'}`, lineHeight: 1.8 }}>
+                              申請の時間を直します<br />
+                              前：{segsLabel(currentSegsOf(editDraft.record))}（{signedText(editDraft.record.diff_minutes)}）<br />
+                              後：<b>{segsLabel(editDraft.segs)}（{signedText(editDraft.fig.diffMin)}）</b><br />
+                              {editDraft.record.break_manual && <span style={{ color: subText }}>休憩は手で直した {editDraft.fig.breakMin}分 のままです<br /></span>}
+                              {!editDraft.fig.legalOk && <span style={{ color: '#dc3545' }}>⚠️ 休憩が法定の基準に足りません<br /></span>}
+                              <span style={{ color: subText }}>本人にお知らせが届きます。前の時刻は履歴に残ります。</span>
+                              <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <button type="button" disabled={opBusy} onClick={closeOp} style={{ ...backBtn(isDark), ...small }}>やめる</button>
+                                <button type="button" disabled={opBusy} onClick={doEdit} style={{ ...primaryBtn({ disabled: opBusy }), ...small }}>{opBusy ? '直しています…' : '直す'}</button>
+                                <button type="button" disabled={opBusy} onClick={() => { const rec = editDraft.record; closeOp(); setModal({ record: rec, clockInquiry: { dayId: d.id, segments: d.answer_segments, note: d.answer_note } }); }}
+                                  style={{ background: 'none', border: 'none', color: isDark ? '#8ec5f0' : '#1565c0', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}>休憩なども直す →</button>
+                              </div>
+                            </div>
+                          )}
+                          {op?.dayId === d.id && op.kind === 'cancel' && (
+                            <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: isDark ? '#3a1414' : '#f8d7da', border: '1px solid #f5c2c7', color: isDark ? '#fca5a5' : '#842029', lineHeight: 1.7 }}>
+                              この申請（{rbSegs && rbSegs.length > 0 ? segmentsText(rbSegs) : ''}）を取り消し、「定時（打刻ズレ）」の記録に置き替えます。<br />
+                              本人にお知らせが届きます。前の申請は履歴に残ります。
+                              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                                <button type="button" disabled={opBusy} onClick={closeOp} style={{ ...backBtn(isDark), ...small, background: isDark ? 'transparent' : '#fff' }}>やめる</button>
+                                <button type="button" disabled={opBusy} onClick={() => doCancel(i, d, repId!)} style={{ ...primaryBtn({ danger: true, disabled: opBusy }), ...small }}>{opBusy ? '取り消しています…' : '取り消して定時にする'}</button>
+                              </div>
+                            </div>
+                          )}
+                          {op?.dayId === d.id && op.kind === 'keep' && (
+                            <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: innerBg, border: `1px solid ${border}` }}>
+                              <div style={{ marginBottom: 4 }}>直さずに終える理由</div>
+                              <input value={keepNote} onChange={e => setKeepNote(e.target.value)} placeholder="例：申請の通りで問題なし"
+                                style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }} />
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0' }}>
+                                {KEEP_NOTE_EXAMPLES.map(ex => (
+                                  <button key={ex} type="button" onClick={() => setKeepNote(ex)}
+                                    style={{ padding: '2px 10px', borderRadius: 12, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 11.5, cursor: 'pointer' }}>{ex}</button>
+                                ))}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button type="button" disabled={opBusy} onClick={closeOp} style={{ ...backBtn(isDark), ...small }}>やめる</button>
+                                <button type="button" disabled={opBusy} onClick={() => doKeep(d)} style={{ ...primaryBtn({ disabled: opBusy }), ...small }}>{opBusy ? '保存しています…' : '終える'}</button>
+                              </div>
+                            </div>
+                          )}
+                          {opErr?.dayId === d.id && (
+                            <div style={{ marginTop: 6, color: isDark ? '#fca5a5' : '#842029' }}>{opErr.msg}</div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -583,6 +815,20 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
           </div>
         )}
       </div>
+
+      {modal && (
+        <OvertimeEditModal
+          record={modal.record}
+          isDarkMode={isDark}
+          clockInquiry={modal.clockInquiry}
+          onClose={() => setModal(null)}
+          onSaved={(warning?: string) => {
+            const rec = modal.record;
+            setModal(null);
+            afterOp(`${rec.applicantName ?? ''}さんの ${md(rec.work_date)} の申請を直しました`, [warning]);
+          }}
+        />
+      )}
     </div>
   );
 };
