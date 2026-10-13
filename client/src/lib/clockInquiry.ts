@@ -38,6 +38,15 @@ export async function loadDayStates(userId: string, dates: string[]): Promise<{ 
 
 export interface AnswerChoice { value: InquiryAnswer; label: string; desc: string }
 
+/** 打刻（2組目があれば「9:20〜11:45 / 15:41〜20:31」）。2組目は外出・戻りなど（2026-10-13 経理担当の意見） */
+export function clockText(d: { clock_in: string | null; clock_out: string | null; clock_in2?: string | null; clock_out2?: string | null }): string {
+  const h = (t: string | null | undefined) => (t ? t.slice(0, 5) : '—');
+  const first = `${h(d.clock_in)}〜${h(d.clock_out)}`;
+  return d.clock_in2 || d.clock_out2 ? `${first} / ${h(d.clock_in2)}〜${h(d.clock_out2)}` : first;
+}
+/** 最後の退勤の打刻（2組目があればそちら）。［退勤の打刻］ボタン・「退勤のあと」の判断・打刻ズレの記録に使う */
+export const lastClockOut = (d: { clock_out: string | null; clock_out2?: string | null }): string | null => d.clock_out2 ?? d.clock_out;
+
 /** 何について聞くか（2026-10-13 ユーザー確定）：after＝退勤のあと（今まで）／before＝出勤前／both＝両方。DB の ask_side と同じ値 */
 export type AskSide = 'after' | 'before' | 'both';
 export const ASK_SIDE_LABEL: Record<AskSide, string> = { after: '退勤のあと', before: '出勤前', both: '両方' };

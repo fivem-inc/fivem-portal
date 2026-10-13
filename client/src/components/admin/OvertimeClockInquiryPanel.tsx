@@ -8,7 +8,7 @@ import { todayJstStr } from '../../lib/breakCalc';
 import { dispatchEmail, getUserEmail } from '../../lib/notificationDispatch';
 import {
   loadDayStates, answerLabel, segmentsText, reportKindText, diffFromShift, signedText, followUpOf,
-  isEarlyClockIn, defaultAskSide, ASK_SIDE_LABEL,
+  isEarlyClockIn, defaultAskSide, ASK_SIDE_LABEL, clockText,
 } from '../../lib/clockInquiry';
 import type { InquiryAnswer, DayStateRow, DayState, AskSide } from '../../lib/clockInquiry';
 import { STATUS_INFO } from '../../lib/overtimeStatus';
@@ -33,12 +33,17 @@ import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 interface StaffRow { id: string; name: string; role_title: string | null }
 
 /** ask_side：何について聞くか（2026-10-13）。null＝打刻を見て自動（defaultAskSide）。出勤が早い日だけ経理が選べる */
-interface DayInput { work_date: string; clock_in: string; clock_out: string; ask_side: AskSide | null }
+interface DayInput {
+  work_date: string; clock_in: string; clock_out: string; ask_side: AskSide | null;
+  /** 2組目の打刻（外出・戻りなど・2026-10-13）。two＝2組目の欄を出しているか */
+  two: boolean; clock_in2: string; clock_out2: string;
+}
 interface InquiryDay {
   id: string; work_date: string; shift_start: string | null; shift_end: string | null;
   // 第2の時間帯（テレワーク・中抜けなど）。無い日は null
   shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
+  clock_in2: string | null; clock_out2: string | null;
   answer: InquiryAnswer;
   answer_reason: string | null; answer_note: string | null; result_report_id: string | null;
   existing_report_id: string | null; report_state: DayState | null;
@@ -241,7 +246,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     if (!newDate) return;
     if (rows.some(r => r.work_date === newDate)) { setErr('その日はすでに追加されています'); return; }
     setErr('');
-    setRows(prev => [...prev, { work_date: newDate, clock_in: '', clock_out: '', ask_side: null }].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)));
+    setRows(prev => [...prev, { work_date: newDate, clock_in: '', clock_out: '', ask_side: null, two: false, clock_in2: '', clock_out2: '' }].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)));
     setNewDate('');
   };
 
@@ -251,7 +256,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   /** 何について聞くか。出勤が早くない日はいつも「退勤のあと」（選ぶ欄も出さない） */
   const askSideOf = (r: DayInput, ns: { start_time?: string | null; end_time?: string | null; end_time2?: string | null }): AskSide => {
     if (!isEarlyClockIn(ns.start_time, r.clock_in)) return 'after';
-    return r.ask_side ?? defaultAskSide(ns.start_time, ns.end_time2 ?? ns.end_time, r.clock_in, r.clock_out);
+    // 退勤は最後の打刻（2組目があればそちら）
+    return r.ask_side ?? defaultAskSide(ns.start_time, ns.end_time2 ?? ns.end_time, r.clock_in, (r.two && r.clock_out2) ? r.clock_out2 : r.clock_out);
   };
 
   const validate = (): string => {
@@ -278,6 +284,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
           shift_end: ns.end_time ? ns.end_time.slice(0, 5) : null,
           clock_in: r.clock_in || null,
           clock_out: r.clock_out || null,
+          clock_in2: r.two ? (r.clock_in2 || null) : null,
+          clock_out2: r.two ? (r.clock_out2 || null) : null,
           ask_side: askSideOf(r, ns),
         };
       });
@@ -408,7 +416,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const startReask = (i: InquiryRow, d: InquiryDay) => {
     closeOp();
     setTargetId(i.user_id);
-    setRows([{ work_date: d.work_date, clock_in: d.clock_in ? d.clock_in.slice(0, 5) : '', clock_out: d.clock_out ? d.clock_out.slice(0, 5) : '', ask_side: d.ask_side ?? null }]);
+    setRows([{ work_date: d.work_date, clock_in: d.clock_in ? d.clock_in.slice(0, 5) : '', clock_out: d.clock_out ? d.clock_out.slice(0, 5) : '', ask_side: d.ask_side ?? null,
+      two: !!(d.clock_in2 || d.clock_out2), clock_in2: d.clock_in2 ? d.clock_in2.slice(0, 5) : '', clock_out2: d.clock_out2 ? d.clock_out2.slice(0, 5) : '' }]);
     setReask([{ dayId: d.id, userId: i.user_id, workDate: d.work_date }]);
     setConfirming(false); setErr('');
     sendRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -553,11 +562,27 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                         <input type="time" value={r.clock_in}
                           onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, clock_in: e.target.value } : p))}
                           style={{ ...inputStyle, width: 110 }} />
+                        {r.two && (
+                          <input type="time" value={r.clock_in2} aria-label="2組目の出勤打刻"
+                            onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, clock_in2: e.target.value } : p))}
+                            style={{ ...inputStyle, width: 110, marginTop: 4, display: 'block' }} />
+                        )}
                       </td>
                       <td style={{ padding: '6px 8px' }}>
                         <input type="time" value={r.clock_out}
                           onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, clock_out: e.target.value } : p))}
                           style={{ ...inputStyle, width: 110 }} />
+                        {r.two && (
+                          <input type="time" value={r.clock_out2} aria-label="2組目の退勤打刻"
+                            onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, clock_out2: e.target.value } : p))}
+                            style={{ ...inputStyle, width: 110, marginTop: 4, display: 'block' }} />
+                        )}
+                        {/* 打刻を2組（外出・戻りなど・2026-10-13 経理担当の意見） */}
+                        <button type="button"
+                          onClick={() => setRows(prev => prev.map((p, j) => j === i ? (p.two ? { ...p, two: false, clock_in2: '', clock_out2: '' } : { ...p, two: true }) : p))}
+                          style={{ display: 'block', marginTop: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11.5, color: r.two ? subText : (isDark ? '#8ec5f0' : '#1565c0'), textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                          {r.two ? '2組目を外す ✕' : '＋ 打刻を追加（外出・戻りなど）'}
+                        </button>
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                         {/* ✕ を使う（🚫 は環境によって□に化ける） */}
@@ -675,6 +700,12 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                 </button>
               )}
             </div>
+            {/* 自分が送った一言（何件も送ると、何を聞いたか分からなくなるため・2026-10-13 経理担当の意見） */}
+            {i.message && (
+              <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 6, background: innerBg, border: `1px solid ${border}`, fontSize: 12.5, color: text, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                <span style={{ color: subText }}>送った一言：</span>{i.message}
+              </div>
+            )}
             {withdrawTarget === i.id && (
               <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', margin: '8px 0' }}>
                 <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#842029' }}>この確認を取り下げます（本人には出なくなります）</p>
@@ -715,7 +746,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                       <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>本人が入れた<br />正しい時間</span>
                         <span style={{ fontWeight: 'bold', color: isDark ? '#8ec5f0' : '#0c447c' }}>{segmentsText(ansSegs)}（{signedText(ansDiff)}）</span></div>
                     )}
-                    <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>打刻</span><span>{hm(d.clock_in)}〜{hm(d.clock_out)}{d.ask_side && d.ask_side !== 'after' ? `（聞いたこと：${ASK_SIDE_LABEL[d.ask_side]}）` : ''}</span></div>
+                    <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>打刻</span><span>{clockText(d)}{d.ask_side && d.ask_side !== 'after' ? `（聞いたこと：${ASK_SIDE_LABEL[d.ask_side]}）` : ''}</span></div>
                     {d.answer_note && <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>ひとこと</span><span>{d.answer_note}</span></div>}
                     {d.answer === 'not_worked' && !d.result_report_id && <div style={{ color: '#b45309', marginTop: 2 }}>※ 打刻ズレの記録が未作成です（本人の画面で作れなかった）</div>}
                     {d.resolved_kind && (

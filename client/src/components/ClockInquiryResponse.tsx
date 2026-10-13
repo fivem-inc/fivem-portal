@@ -12,7 +12,7 @@ import { toWorkSegments } from '../lib/overtimeSubmit';
 import { timeToMinutes } from '../lib/timeInput';
 import { minToTime } from '../lib/breakCalc';
 import {
-  loadDayStates, answerChoices, answerLabel, stateBandText, segmentsText, diffFromShift, signedText, askSideNote,
+  loadDayStates, answerChoices, answerLabel, stateBandText, segmentsText, diffFromShift, signedText, askSideNote, clockText, lastClockOut,
   TIME_DIFFERS_NOTE_EXAMPLES,
 } from '../lib/clockInquiry';
 import type { InquiryAnswer, DayStateRow, AskSide } from '../lib/clockInquiry';
@@ -32,6 +32,8 @@ interface DayRow {
   shift_start: string | null; shift_end: string | null;
   shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
+  /** 2組目の打刻（外出・戻りなど・2026-10-13）。無い日は null */
+  clock_in2: string | null; clock_out2: string | null;
   /** 何について聞かれているか（2026-10-13）。古い確認は after */
   ask_side: AskSide | null;
   answer: InquiryAnswer;
@@ -243,7 +245,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
           reason: `残業ではありません（理由：${reasonText}）`,
           location: ns.location ?? '',
           application_types: ['clock_only'],
-          clock_in_reported: d.clock_in, clock_out_reported: d.clock_out,
+          clock_in_reported: d.clock_in, clock_out_reported: lastClockOut(d),
           reviewer_id: inquiry.user_id,
           confirmed_by: inquiry.user_id, confirmed_at: new Date().toISOString(),
         }).select('id').single();
@@ -378,13 +380,13 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             {workedDays.map(d => (
               <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
                 <span style={{ fontSize: 12.5, color: '#664d03' }}>
-                  {md(d.work_date)}（{dowOf(d.work_date)}）　打刻 {hm(d.clock_out)}
+                  {md(d.work_date)}（{dowOf(d.work_date)}）　打刻 {hm(lastClockOut(d))}
                 </span>
                 <button onClick={() => onReportOvertime(d.work_date, {
                   date: d.work_date,
                   shift: normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '',
                   clockIn: d.clock_in ? d.clock_in.slice(0, 5) : null,
-                  clockOut: d.clock_out ? d.clock_out.slice(0, 5) : null,
+                  clockOut: lastClockOut(d) ? lastClockOut(d)!.slice(0, 5) : null,
                   note: inquiry?.message ?? null,
                   from: senderName,
                   askSide: d.ask_side ?? 'after',
@@ -447,7 +449,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         const shiftLabor = st?.normal_shift?.labor_minutes ?? null;
         const newDiff = ws.length > 0 ? diffFromShift(ws, shiftLabor) : null;
         const shiftEndMin = timeToMinutes(d.shift_end2 ?? d.shift_end);
-        const clockOutMin = timeToMinutes(d.clock_out);
+        const clockOutMin = timeToMinutes(lastClockOut(d));
         // 近道：最後の時間帯の終わりだけを置き換える（開始と2本目は残す）
         const setLastEnd = (min: number | null) => {
           if (min == null || p.segs.length === 0) return;
@@ -469,9 +471,9 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             <div style={{ background: '#fffbea', border: '1px solid #f0d58a', borderRadius: 8, padding: '6px 10px', fontSize: 12.5, color: '#5c4400', lineHeight: 1.7, marginBottom: 10 }}>
               シフト {shiftText}
               {st?.report_id && st.segments && st.segments.length > 0 && <><br />出している申請 {segmentsText(st.segments)}（{signedText(st.diff_minutes)}）</>}
-              <br />打刻 {hm(d.clock_in)}〜<b>{hm(d.clock_out)}</b>
+              <br />打刻 <b>{clockText(d)}</b>
               {/* 何について聞かれているか（出勤前／退勤のあと／両方・2026-10-13） */}
-              <br /><span style={{ color: '#b45309' }}>{askSideNote(d.ask_side ?? 'after', d.shift_start, d.shift_end2 ?? d.shift_end, d.clock_in, d.clock_out)}</span>
+              <br /><span style={{ color: '#b45309' }}>{askSideNote(d.ask_side ?? 'after', d.shift_start, d.shift_end2 ?? d.shift_end, d.clock_in, lastClockOut(d))}</span>
             </div>
 
             {canRespond ? (
