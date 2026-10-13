@@ -18,6 +18,7 @@ import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { toDbTime } from '../lib/timeInput';
 import { tintBtn } from '../lib/buttonStyles';
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
+import { isFullDayReport } from '../lib/overtimeTypes';
 
 // ───────────────────────────────────────────────────────────────
 // シフト調整の作業場（勤怠カレンダーの中のタブ）
@@ -447,6 +448,8 @@ const SlotDetail: React.FC<{
   const [candTeam, setCandTeam] = useState<string>(targetTeam);
   const [partTeam, setPartTeam] = useState<string>(targetTeam);
   const [busy, setBusy] = useState<BusyMap>({});
+  /** 残業申請の終日の休み（時間外調整休・振替休日・欠勤）で、まだ受理されていない人。選べるが書き添える（2026-10-14 ユーザー確定 A） */
+  const [pendingRest, setPendingRest] = useState<BusyMap>({});
   const [candLoaded, setCandLoaded] = useState(false);
   const [candErr, setCandErr] = useState('');
   const [where, setWhere] = useState('');
@@ -683,7 +686,7 @@ const SlotDetail: React.FC<{
   const loadCandidates = useCallback(async () => {
     setCandErr('');
     const d = slot.target_date;
-    const [{ data: pat, error: patErr }, { data: att }, { data: lv }] = await Promise.all([
+    const [{ data: pat, error: patErr }, { data: att }, { data: lv }, { data: ot, error: otErr }] = await Promise.all([
       // 🚨 曜日で絞らずに読む（2026-09-14）。その日に有効な行が1つも無い人＝「週のシフト未登録」を見分けるため。
       //    曜日で絞っていたので、9/16 から登録したパートが 9/15 に全員「この日は休み」と出ていた
       supabase.from('weekly_shift_patterns')
@@ -695,6 +698,8 @@ const SlotDetail: React.FC<{
       supabase.from('leave_requests').select('user_id, leave_dates, start_date, end_date, status')
         .in('status', ['manager_approved', 'admin_approved', 'approved'])
         .lte('start_date', d).gte('end_date', d),
+      // 🚨 2026-10-14：10/16 から調整休が残業申請に移る。残業申請の終日の休みも見る（勤怠カレンダーと同じ関数＝見る権限も同じ）
+      supabase.rpc('calendar_overtime_events', { p_from: d, p_to: d }),
     ]);
     if (patErr) {
       // 🚨 権限が無いと読めない。黙って0件にしない
@@ -724,7 +729,17 @@ const SlotDetail: React.FC<{
       } catch { hit = true; }
       if (hit) b[l.user_id] = 'この日は休み';
     }
+    // 残業申請の終日の休み。受理済みは選べない／申請中は選べるが「この日は休みの申請中」と添える
+    const pr: BusyMap = {};
+    if (otErr) console.error('[シフト調整] 残業申請の休みを読めませんでした', otErr.message);
+    for (const o of ((ot as { applicant_id: string; application_types: string[] | null; status: string; origin_of: string | null }[] | null) ?? [])) {
+      if (o.origin_of) continue;   // 振替休日の振替元（休日出勤した日）の行は休みではない
+      if (!isFullDayReport(o.application_types)) continue;
+      if (o.status === 'confirmed') b[o.applicant_id] = b[o.applicant_id] ?? 'この日は休み';
+      else if (o.status === 'requested') pr[o.applicant_id] = 'この日は休みの申請中';
+    }
     setBusy(b);
+    setPendingRest(pr);
     setCandLoaded(true);
   }, [slot.target_date]);
 
@@ -1961,7 +1976,7 @@ const SlotDetail: React.FC<{
                         )}
                         <CandidateRow name={p.name || ''} team={teamText(p)}
                           role={p.role_title || (p.employment_type === 'パート' ? 'パート' : '')}
-                          shift={shiftTextOf(p.id)} loc={locOf(p.id) !== place ? locOf(p.id) : ''} note={busy[p.id] ?? ''} isDark={isDark}
+                          shift={shiftTextOf(p.id)} loc={locOf(p.id) !== place ? locOf(p.id) : ''} note={busy[p.id] ?? pendingRest[p.id] ?? ''} isDark={isDark}
                           action={busy[p.id] ? null : addBtn(p.id)} />
                       </React.Fragment>
                     );
