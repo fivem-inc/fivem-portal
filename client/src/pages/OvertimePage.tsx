@@ -9,6 +9,8 @@ import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
 import ClockInquiryResponse, { type ClockInquiryHint } from '../components/ClockInquiryResponse';
+import { useAuth } from '../hooks/useAuth';
+import { useOvertimeUnifyCutoff, cutoffLabel } from '../lib/overtimeUnify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -1181,6 +1183,22 @@ const OvertimeForm: React.FC<{
   // ── 実績報告フェーズの「予定→実績」差分検知（案A）──
   // editTarget は update 前なので本体値＝予定値。planned セグメント＋本体値をベースラインにする。
   const [changeReason, setChangeReason] = useState('');
+  // 10/16 から残業申請を使い始める人（区切りより前の勤務日に残業の記録が1件も無い人）は、区切りより前の日を出せない（2026-10-13）。
+  // 🚨 新しく開いた日（10/14・15）に試しに出すと本番の記録になり、休暇申請の時間調整と二重になるため。読めないときは止めない
+  const unifyCutoff = useOvertimeUnifyCutoff();
+  const [hasPreCutoffOt, setHasPreCutoffOt] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!unifyCutoff) return;
+    let alive = true;
+    supabase.from('overtime_reports').select('id').eq('applicant_id', user.id).eq('entry_type', 'manual')
+      .neq('status', 'cancelled').lt('work_date', unifyCutoff).limit(1)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { console.error('[残業] 区切り前の記録を確かめられませんでした', error.message); setHasPreCutoffOt(true); return; }
+        setHasPreCutoffOt((data ?? []).length > 0);
+      });
+    return () => { alive = false; };
+  }, [unifyCutoff, user.id]);
   const [showPlanDetail, setShowPlanDetail] = useState(false);
   const plannedBaseline = useMemo(() => {
     if (!isReportPhase || !editTarget) return null;
@@ -1265,6 +1283,10 @@ const OvertimeForm: React.FC<{
 
   const handleSubmit = async () => {
     setError('');
+    if (!editTarget && unifyCutoff && date && date < unifyCutoff && hasPreCutoffOt === false) {
+      setError(`${cutoffLabel(unifyCutoff)}より前の勤務日は、今までどおりの方法で申請してください（残業申請は${cutoffLabel(unifyCutoff)}以降の勤務日から使います）`);
+      return;
+    }
     const v = validate();
     if (v) {
       setError(v);
@@ -3088,11 +3110,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   // ---- 受理・差し戻し・取消（Edge Function overtime-approve に集約） ----
   // ステータス更新・通知・GCal同期をサーバー側で直列実行し、同期失敗を握りつぶさず表示する。
+  // 終日（時間外調整休・振替休日・欠勤）を受理するときの「シフト調整：必要／調整不要」（2026-10-13・休暇の受理と同じ）。
+  // 🚨 既定は「必要」（触らずに受理すれば、シフト調整の場が「未調整」でできる）。選べるのは「シフト調整の記録」の権限の人と管理者
+  const { canLeaveShiftAdjust } = useAuth();
+  const canChooseShiftAdjust = isAdmin || canLeaveShiftAdjust;
+  const [shiftNotNeededFor, setShiftNotNeededFor] = useState<Record<string, boolean>>({});
   const callApproveFunction = async (
-    reportId: string, action: 'approve' | 'return' | 'cancel', comment?: string,
+    reportId: string, action: 'approve' | 'return' | 'cancel', comment?: string, shiftNotNeeded?: boolean,
   ): Promise<{ ok: boolean; error?: string; gcalOk?: boolean }> => {
     const { data, error } = await supabase.functions.invoke('overtime-approve', {
-      body: { report_id: reportId, action, comment },
+      body: { report_id: reportId, action, comment, shift_not_needed: shiftNotNeeded === true },
     });
     const res = data as { success?: boolean; error?: string; gcal_ok?: boolean } | null;
     if (error || !res?.success) return { ok: false, error: res?.error ?? error?.message ?? '通信エラー' };
@@ -3195,7 +3222,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const doApprove = async (r: OvertimeReport) => {
     setActingId(r.id);
     setActionError('');
-    const res = await callApproveFunction(r.id, 'approve');
+    const res = await callApproveFunction(r.id, 'approve', undefined, isFullDayReport(r.application_types) && !!shiftNotNeededFor[r.id]);
     if (!res.ok) {
       setActionError('受理に失敗しました：' + (res.error ?? ''));
     } else if (res.gcalOk === false) {
@@ -3769,6 +3796,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     </div>
                   </div>
                 ) : (
+                  <>
+                  {isFullDayReport(r.application_types) && canChooseShiftAdjust && (
+                    <div style={{ margin: '0 0 10px' }}>
+                      <div style={{ fontSize: 12.5, color: subText, marginBottom: 6 }}>シフト調整</div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {([[false, '必要'], [true, '調整不要']] as const).map(([v, l]) => {
+                          const on = !!shiftNotNeededFor[r.id] === v;
+                          return (
+                            <button key={l} type="button" onClick={() => setShiftNotNeededFor(p => ({ ...p, [r.id]: v }))}
+                              style={{ padding: '6px 14px', borderRadius: 16, fontSize: 13, fontWeight: 'bold', border: 'none', cursor: 'pointer',
+                                background: on ? '#1976d2' : '#e3f2fd', color: on ? '#fff' : '#1565c0' }}>{l}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => doApprove(r)} disabled={actingId === r.id}
                       style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 1 }}>
@@ -3779,6 +3822,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       差し戻し
                     </button>
                   </div>
+                  </>
                 )}
               </div>
             );

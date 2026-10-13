@@ -59,7 +59,8 @@ serve(async (req) => {
     const caller = userData.user
     const isAdmin = (caller.app_metadata?.role ?? '') === 'admin'
 
-    const { report_id, action, comment } = await req.json()
+    // shift_not_needed：終日（時間外調整休・振替休日・欠勤）を受理するときの「シフト調整：調整不要」（2026-10-13）
+    const { report_id, action, comment, shift_not_needed } = await req.json()
     if (!report_id || !['approve', 'return', 'cancel'].includes(action)) {
       return json({ success: false, error: '不正なリクエストです' }, 400)
     }
@@ -110,9 +111,27 @@ serve(async (req) => {
       // 終日は実績報告が無いため、事前申請の受理でも confirmed 直行
       // 事前受理は日時も残す。残さないと status が reported に進んだ時点で
       // 「事前に受理したのか、受理を飛ばして報告されたのか」が分からなくなる（2026-08-25）
-      const next = (isAdvance && !isFullDay)
+      const next: Record<string, unknown> = (isAdvance && !isFullDay)
         ? { status: 'request_confirmed', request_confirmed_at: new Date().toISOString() }
         : { status: 'confirmed', confirmed_by: caller.id, confirmed_at: new Date().toISOString() }
+      // 終日の受理で「調整不要」を選んだとき（2026-10-13）。受理と同じ1回の保存で書く（別々だと受理だけ通ることがある）。
+      // 🚨 選べるのは「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者だけ（休暇の受理と同じ）
+      if (isFullDay && shift_not_needed === true) {
+        let canShift = isAdmin
+        if (!canShift) {
+          const { data: me } = await db.from('profiles').select('role_id').eq('id', caller.id).maybeSingle()
+          if (me?.role_id) {
+            const { data: fp } = await db.from('feature_permissions').select('enabled')
+              .eq('role_id', me.role_id).eq('feature_key', 'leave_shift_adjust').maybeSingle()
+            canShift = fp?.enabled === true
+          }
+        }
+        if (canShift) {
+          next.shift_adjust_not_needed = true
+          next.shift_adjusted_by = caller.id
+          next.shift_adjusted_at = new Date().toISOString()
+        }
+      }
       // 🚨 楽観ロックは .eq('status') だけでは足りない。update は0件でもエラーにならないので、
       //    件数を見ないと「実際は何も更新していないのに受理の通知だけ飛ぶ」ことが起きる。
       //    未受理のまま本人が実績報告できるようにした（2026-08-25）ことで、

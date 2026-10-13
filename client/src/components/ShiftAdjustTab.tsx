@@ -31,6 +31,13 @@ import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 //    このアプリの他の画面と同じ形にしてある。
 // ───────────────────────────────────────────────────────────────
 
+/** 場のきっかけの言葉（2026-10-13：残業申請の終日からも場ができる）。leave は呼ぶ場所で「休暇／休み」を使い分ける */
+const causeLabel = (cause: string, leaveWord: string): string =>
+  cause === 'absent' || cause === 'ot_absence' ? '欠勤'
+    : cause === 'chosei_off' ? '時間外調整休'
+    : cause === 'furikae_off' ? '振替休日'
+    : leaveWord;
+
 interface Perms {
   view: boolean;
   review: boolean;
@@ -319,7 +326,7 @@ const ShiftAdjustTab: React.FC<{
                   {nameOf(s.target_user_id) || '（名前を読み込めませんでした）'}
                 </span>
                 <span style={{ fontSize: 11, color: subText, whiteSpace: 'nowrap' }}>
-                  {s.cause === 'absent' ? '欠勤' : '休暇'}
+                  {causeLabel(s.cause, '休暇')}
                 </span>
                 {/* 案がある未調整・調整中の場（2026-09-25：件数と、意見の期限を過ぎた案があるか）。🚨 新しい色は足さない */}
                 {undone && planCounts.has(s.id) && (
@@ -1379,7 +1386,7 @@ const SlotDetail: React.FC<{
         </div>
         <div style={{ fontSize: 13.5, color: text, marginTop: 4 }}>
           {nameOf(slot.target_user_id) || '（名前を読み込めませんでした）'}さんの
-          {slot.cause === 'absent' ? '欠勤' : '休み'}
+          {causeLabel(slot.cause, '休み')}
         </div>
         {/* 休む方のこの日のシフト（2026-09-14 ユーザー指示）。🚨 週の基本シフトが読めなかったときは出さない（嘘をつかない） */}
         {candLoaded && !candErr && (

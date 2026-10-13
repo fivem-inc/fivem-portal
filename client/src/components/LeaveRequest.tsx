@@ -72,6 +72,7 @@ import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorag
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { normalizeTime } from '../lib/timeInput';
 import TimeInput from './TimeInput';
+import { useOvertimeUnifyCutoff, cutoffLabel } from '../lib/overtimeUnify';
 import { formatLeavePeriod } from '../lib/leaveDates';
 import { leavePurposeLabel } from '../lib/encouragementDay';
 
@@ -343,6 +344,9 @@ const DateLocationPicker: React.FC<{
 // ---- メインコンポーネント ----
 const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess }) => {
   const navigate = useNavigate();
+  // 時間調整・調整休を残業申請にまとめる区切りの日（2026-10-13・10/16 から）。null＝今までどおり
+  const unifyCutoff = useOvertimeUnifyCutoff();
+  const unifyMovedNow = !!unifyCutoff && todayJstStr() >= unifyCutoff;
   // 会社カレンダー（休館日・出勤日）。カレンダーの色分けと、選んだあとの注意書きに使う
   const calendarKinds = useCompanyCalendar();
   const [searchParams] = useSearchParams();
@@ -975,7 +979,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
           <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
-          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>有休・慶弔休・調整休などを申請できます</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>{unifyMovedNow ? '有休・慶弔休などを申請できます' : '有休・慶弔休・調整休などを申請できます'}</span>
         </div>
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
       </div>
@@ -1237,6 +1241,13 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             )}
             {leaveType === '調整休' && (
               <div style={{ marginTop: 12, padding: 14, background: isDark ? '#2a2f35' : '#f8f9ff', borderRadius: 8, border: `1px solid ${isDark ? '#495057' : '#c8d6f0'}` }}>
+                {unifyCutoff && (
+                  <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px', marginBottom: 10, fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
+                    {cutoffLabel(unifyCutoff)}以降の時間外調整休・振替休日は「残業申請」で申請してください。
+                    <button type="button" onClick={() => navigate('/overtime')}
+                      style={{ marginLeft: 6, background: 'none', border: '1px solid #e0b84d', borderRadius: 12, padding: '1px 10px', fontSize: 12, color: '#664d03', cursor: 'pointer' }}>残業申請を開く</button>
+                  </div>
+                )}
                 <div style={{ fontWeight: 'bold', fontSize: 14, color: text, marginBottom: 10 }}>調整休の種類 <span style={{ color: '#dc3545' }}>*</span></div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, cursor: 'pointer', color: text }}>
                   <input type="radio" name="choseiSubType" value="furikae" checked={choseiSubType === 'furikae'} onChange={() => { setChoseiSubType('furikae'); setPurpose(''); }} />
@@ -1441,6 +1452,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               if (isFurikae && choseiOriginDates.length > 0 && choseiOriginDates.length !== selectedDates.length) { errs.push(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); bad.add('originDates'); }
               if (!purpose.trim() && leaveType !== '調整休') { errs.push('事由を入力してください'); bad.add('purpose'); }
               if (leaveType === '調整休' && !purpose.trim()) { errs.push('理由を入力してください'); bad.add('purpose'); }
+              // 区切り以降の調整休は残業申請で（2026-10-13・DB の enforce_leave_adjust_moved でも止める）
+              if (leaveType === '調整休' && unifyCutoff && selectedDates.some(d => d >= unifyCutoff)) {
+                errs.push(`${cutoffLabel(unifyCutoff)}以降の調整休（時間外調整休・振替休日）は「残業申請」で申請してください`); bad.add('dates');
+              }
               if (leaveType === 'その他' && !leaveTypeOther) { errs.push('種別を入力してください'); bad.add('type'); }
               if (selectedDates.some(d => !dateLocations[d])) { errs.push('すべての日付で勤務校を選択してください'); bad.add('locations'); }
               if (isFurikae && choseiOriginDates.some(d => !originLocations[d])) { errs.push('振替元のすべての日付で勤務校を選択してください'); bad.add('originLocations'); }
@@ -1471,6 +1486,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           if (!adjLateStart && !adjEarlyEnd) { setAdjError('種別を選択してください'); return; }
           if (!adjDate) { setAdjError('日付を選択してください'); return; }
           if (adjDate < todayStr) { setAdjError('当日より前の日付は登録できません'); return; }
+          if (unifyCutoff && adjDate >= unifyCutoff) { setAdjError(`${cutoffLabel(unifyCutoff)}以降の時間調整は「残業申請」で申請してください`); return; }
           if (adjLateStart && adjEarlyEnd) {
             const [lh, lm] = adjLateTime.split(':').map(Number);
             const [eh, em] = adjEarlyTime.split(':').map(Number);
@@ -1534,8 +1550,32 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         for (let i = 0; i < firstDow; i++) calCells.push(null);
         for (let d = 1; d <= daysInMonth; d++) calCells.push(d);
 
+        // 区切りの日を過ぎたら、入力は出さず案内だけ（登録済みの時間調整は「履歴」の「時間調整」で見られる）
+        if (unifyMovedNow) {
+          return (
+            <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+              <div style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, borderRadius: 10, padding: '14px 16px' }}>
+                <div style={{ fontWeight: 'bold', fontSize: 14, color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>時間調整は「残業申請」に移りました</div>
+                <div style={{ fontSize: 12.5, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
+                  遅く出勤・早退する時間調整と、時間外調整休・振替休日は、{cutoffLabel(unifyCutoff!)}以降の勤務日から「残業申請」で申請してください。<br />
+                  登録済みの時間調整は「履歴」の「時間調整」で見られます。
+                </div>
+                <button type="button" onClick={() => navigate('/overtime')} style={{ ...primaryBtn(), width: '100%', marginTop: 12 }}>残業申請を開く</button>
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+            {/* 区切りの日の前：先の日は残業申請で、と知らせる（2026-10-13） */}
+            {unifyCutoff && (
+              <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px', marginBottom: 12, fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
+                {cutoffLabel(unifyCutoff)}以降の勤務日の時間調整は「残業申請」で申請してください（ここで登録できるのは{cutoffLabel(unifyCutoff)}より前の日だけです）。
+                <button type="button" onClick={() => navigate('/overtime')}
+                  style={{ marginLeft: 6, background: 'none', border: '1px solid #e0b84d', borderRadius: 12, padding: '1px 10px', fontSize: 12, color: '#664d03', cursor: 'pointer' }}>残業申請を開く</button>
+              </div>
+            )}
             {/* 登録完了バナー */}
             {adjBanner && (
               <BannerSuccess message="登録しました" onClose={() => setAdjBanner(false)} />

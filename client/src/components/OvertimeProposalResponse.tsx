@@ -170,6 +170,8 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       // 2) 受諾ぶんを作成。時間調整＝overtime_reports（既存計算）／調整休＝leave_requests(pending)。
       // 提案と、作成した申請の紐づけが保存できたか。1件でも落ちたら最後に黄色で断る
       let linkFailed = false;
+      // 🚨 作れなかった申請は黙って飛ばさない（2026-10-13）。回答は記録済みなので、最後に黄色で「どの日が作れなかったか」を出す
+      const createFailed: string[] = [];
       for (const o of chosen) {
         const pk = picks[o.id];
         if (o.kind === 'chosei_off') {
@@ -184,7 +186,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
             purpose: '残業調整（提案受諾）', reason: `時間外調整休${o.note ? `（${o.note}）` : ''}`,
             status: 'pending', current_approver: 'first', approver_id: proposal.proposer_id,
           }).select('id').single();
-          if (lrErr || !lr) continue;
+          if (lrErr || !lr) { createFailed.push(`${pk.date}（時間外調整休）：${lrErr?.message ?? "作れませんでした"}`); continue; }
           // 🚨 update は0件でもエラーにならない。ここが黙って失敗すると、申請はできているのに
           //    提案側からどの申請になったのかを辿れなくなる。
           //    ただし申請そのものは成立しているので**赤（失敗）にはしない**。あとで黄色で断る。
@@ -230,7 +232,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           reason: `残業調整の提案を受諾${o.note ? `（${o.note}）` : ''}`, location: o.location,
           application_types: b.application_types, reviewer_id: proposal.proposer_id,
         }).select('id').single();
-        if (repErr || !rep) continue; // 同日重複(23505)等は個別スキップ（部分成功を許容）
+        if (repErr || !rep) { createFailed.push(`${pk.date}：${repErr?.code === "23505" ? "この日はすでに申請があります" : (repErr?.message ?? "作れませんでした")}`); continue; } // 部分成功を許容（黙っては飛ばさない）
         const reportId = (rep as { id: string }).id;
         // セグメント（planned）
         // seg_no は 1 始まり。DBの制約が check (seg_no between 1 and 3) なので、
@@ -260,7 +262,8 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       // 3) 提案者への回答通知は RPC（respond_overtime_adjustment_proposal）の中で作られる。
       //    ここでクライアントから insert すると、回答者が一般・パート・フロア責任者のとき
       //    notifications の INSERT ポリシー（リーダー以上限定）で弾かれ、無言で届かない
-      if (linkFailed) setPartial(describePartial('回答の記録', '提案と、作成した申請の紐づけを保存できませんでした'));
+      if (createFailed.length > 0) setPartial(describePartial('回答', `申請を作れなかった日があります（${createFailed.join('／')}）。休暇申請・残業申請から出し直してください`));
+      else if (linkFailed) setPartial(describePartial('回答の記録', '提案と、作成した申請の紐づけを保存できませんでした'));
       setDone('accepted');
     } catch (e) {
       setError('送信に失敗しました：' + String(e));

@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import { jpDateLabel } from '../lib/breakCalc';
+import { useOvertimeUnifyCutoff, cutoffLabel } from '../lib/overtimeUnify';
 
 const OvertimeNotes: React.FC<{
   isDark: boolean; advanceMaxDate: string; cardBg: string;
@@ -11,6 +12,8 @@ const OvertimeNotes: React.FC<{
   leadItems?: React.ReactNode[];
 }> = ({ isDark, advanceMaxDate, cardBg, leadItems }) => {
   const [showRules, setShowRules] = useState(false);
+  // 時間調整・調整休を残業申請にまとめる区切りの日（2026-10-13・10/16 から）
+  const unifyCutoff = useOvertimeUnifyCutoff();
   return (
     <div style={{
       background: isDark ? '#2c3e50' : '#e8f4fd',
@@ -25,8 +28,10 @@ const OvertimeNotes: React.FC<{
         <li>事前申請した日は、その日の勤務が終わるころに「履歴・実績報告」タブのカードへ「実績を報告する」ボタンが出ます（受理を待たずに報告できます）。変更がなければそのまま送信（内容は入力済みです）、時間が変わった場合は直してから送信してください。</li>
         <li>休憩は自動計算されます。突発的な残業などで自動計算どおりに取れなかった場合は、休憩の「修正」から実際の時間に直してください（休憩後は1分以上業務をしてから退勤してください）。</li>
         <li>時間は1分単位で入力できます。外出・戻りのあるシフトは「＋勤務時間帯を追加」で入力してください。</li>
-        <li>正社員の方は、残業分を別日で調整（時間調整・調整休）していただくようお願いします。</li>
-        <li>調整休・欠勤（終日）は受理された時点で完了します（実績報告は不要です）。</li>
+        <li>正社員の方は、残業分を別日で調整していただくようお願いします。{unifyCutoff
+          ? <>時間調整（遅く出勤・早退）も、1日休む時間外調整休・振替休日も、{cutoffLabel(unifyCutoff)}以降の勤務日はこのページから申請してください（休暇申請からは申請できません）。</>
+          : '（時間調整・調整休）'}</li>
+        <li>時間外調整休・振替休日・欠勤（終日）は受理された時点で完了します（実績報告は不要です）。</li>
         <li>新規の申請は、支給月の17日までに提出してください。それ以降は前の給与期間の新規申請ができません（締め後に申請したい場合は経理にご相談ください）。</li>
         <li>事前申請ができるのは{jpDateLabel(advanceMaxDate)}までです（3か月先の給与期間まで）。それより先の予定は、その時期が近づいてから申請してください。</li>
       </ol>
