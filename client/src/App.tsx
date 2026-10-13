@@ -2248,8 +2248,9 @@ const Dashboard: React.FC = () => {
   }, []);
 
   const handleApplyTemplate = useCallback((submission: Submission) => {
-    const items = (submission.expenses_data || [])
-      .map(e => ({ ...e, start_date: '', end_date: '' }));
+    // 🚨 元の利用日は消さずに渡す（2026-10-13）。交通費の画面が「同じ日の乗り継ぎ」かを見分けて
+    //    まとめて追加を出すため。入力欄に入れるときは ExpenseForm の toDraft が日付を空にする
+    const items = (submission.expenses_data || []).map(e => ({ ...e }));
     if (items.length === 0) {
       setTemplateMsg('適用できるテンプレートデータがありません。');
       setTimeout(() => setTemplateMsg(null), 3000);

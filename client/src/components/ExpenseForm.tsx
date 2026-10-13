@@ -131,6 +131,49 @@ interface ExpenseFormProps {
 
 const TRANSPORT_PRESETS = ['JR', '阪急', '京阪', '京都地下鉄', '京都市バス'];
 
+/**
+ * 申請リストに足す前の入力チェック（画面に触らない）。問題なしは null。
+ * 🚨 1件ずつの［追加］と、履歴のテンプレートの［この日にまとめて追加］（2026-10-13）の両方がこれを使う。2か所に書かないこと
+ * existing：すでに申請リストにあるもの（定期と単発・出張を混ぜない決まりを見る）
+ */
+function checkExpense(e: Expense, existing: Expense[]): { msg: string; fields: string[] } | null {
+  if (existing.length > 0) {
+    const hasRegular = existing.some(x => x.type === 'regular');
+    const hasOther = existing.some(x => x.type !== 'regular');
+    if (e.type === 'regular' && hasOther) {
+      return { msg: '定期券と単発・出張の申請は混ぜられません。先に追加済みの申請を送信してから、定期券を別途申請してください。', fields: [] };
+    }
+    if (e.type !== 'regular' && hasRegular) {
+      return { msg: '定期券と単発・出張の申請は混ぜられません。先に追加済みの申請を送信してから、単発・出張を別途申請してください。', fields: [] };
+    }
+  }
+  const missing: string[] = [];
+  const selectedTransports = (e.transportation || '').split('・').filter(Boolean);
+  if (selectedTransports.length === 0) missing.push('交通機関');
+  if (selectedTransports.includes('その他') && !e.transportation_other?.trim()) missing.push('交通機関（その他）');
+  if (!e.from_station) missing.push('出発駅');
+  if (!e.to_station) missing.push('帰着駅');
+  if (e.amount === '' || e.amount === undefined) missing.push('金額');
+  const effectiveWorkplace = e.workplace === 'その他' ? e.workplace_other : e.workplace;
+  if (!effectiveWorkplace?.trim()) missing.push('行き先');
+  if (e.type !== 'regular' && !e.start_date) missing.push('利用日');
+  if (e.type === 'regular' && !e.start_date) missing.push('開始日');
+  if (e.type === 'regular' && !e.end_date) missing.push('終了日');
+  if (missing.length > 0) {
+    const fieldMap: Record<string, string> = {
+      '交通機関': 'transportation', '交通機関（その他）': 'transportation_other',
+      '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount',
+      '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '行き先': 'workplace'
+    };
+    return { msg: `未入力の必須項目があります：${missing.join('、')}`, fields: missing.map(m => fieldMap[m]).filter(Boolean) };
+  }
+  // 定期：終了日が開始日より前はNG
+  if (e.type === 'regular' && e.start_date && e.end_date && e.end_date < e.start_date) {
+    return { msg: '終了日は開始日より後の日付を入力してください。', fields: [] };
+  }
+  return null;
+}
+
 const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName, pendingTemplates, onTemplateApplied }) => {
   // 会社の休館日。カレンダーの色分けと、選んだあとの注意書きに使う。
   // 休館日なのに交通費を申請するケースが毎月出ていたため
@@ -199,6 +242,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [draftDatePicker, setDraftDatePicker] = useState<string | null>(null);
   const [showTransportPicker, setShowTransportPicker] = useState(false);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
+  // 履歴の「同じ日の乗り継ぎ」をまとめて追加する枠（2026-10-13）。null＝出さない
+  const [bulkTpl, setBulkTpl] = useState<Expense[] | null>(null);
+  const [bulkDate, setBulkDate] = useState('');
+  const [bulkDatePicker, setBulkDatePicker] = useState(false);
+  const [bulkDoneMsg, setBulkDoneMsg] = useState('');
   const errorRef = useRef<HTMLDivElement>(null);
   const isDarkMode = useDarkMode();
 
@@ -353,65 +401,31 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     };
   }, [workplaceOptions, locationsByCategory]);
 
-  // テンプレートキュー処理
+  // テンプレートキュー処理（履歴の［テンプレートとして適用］）。
+  // ・同じ日の乗り継ぎ（単発・出張だけで、元の利用日が全部同じ・2経路以上）は、まとめて追加の枠を出す（2026-10-13 ユーザー確定）
+  //   🚨 1か月分の通勤（日付がばらばら）や定期は対象外。1つの日付でまとめると同じ日に何件も入ってしまう
+  // ・それ以外は今までどおり1件ずつ（1件目を入力欄・残りを列に）
+  // 🚨 受け取ったらすぐ親の列を空にする。残しておくと、ページを移って戻ったときにもう一度最初から入って二重になる
   useEffect(() => {
     if (!pendingTemplates || pendingTemplates.length === 0) return;
-    setDraftExpense(toDraft(pendingTemplates[0]));
-    setTemplateQueue(pendingTemplates.slice(1));
+    const items = pendingTemplates.map(e => ({ ...e }));
+    if (onTemplateApplied) onTemplateApplied();
+    const d0 = items[0].start_date;
+    const sameDayChain = items.length >= 2 && !!d0 && items.every(e => e.type !== 'regular' && e.start_date === d0);
+    setFormError('');
+    if (sameDayChain) {
+      setBulkTpl(items); setBulkDate(''); setTemplateQueue([]);
+      return;
+    }
+    setBulkTpl(null);
+    setDraftExpense(toDraft(items[0]));
+    setTemplateQueue(items.slice(1));
     setHighlightFields(new Set(['start_date']));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingTemplates]);
 
-  const validateDraft = useCallback(() => {
-    // 定期と単発・出張の混在チェック
-    if (expenses.length > 0) {
-      const hasRegular = expenses.some(e => e.type === 'regular');
-      const hasOther = expenses.some(e => e.type !== 'regular');
-      if (draftExpense.type === 'regular' && hasOther) {
-        setFormError('定期券と単発・出張の申請は混ぜられません。先に追加済みの申請を送信してから、定期券を別途申請してください。');
-        return false;
-      }
-      if (draftExpense.type !== 'regular' && hasRegular) {
-        setFormError('定期券と単発・出張の申請は混ぜられません。先に追加済みの申請を送信してから、単発・出張を別途申請してください。');
-        return false;
-      }
-    }
-
-    const missing: string[] = [];
-    const selectedTransports = (draftExpense.transportation || '').split('・').filter(Boolean);
-    if (selectedTransports.length === 0) missing.push('交通機関');
-    if (selectedTransports.includes('その他') && !draftExpense.transportation_other?.trim()) missing.push('交通機関（その他）');
-    if (!draftExpense.from_station) missing.push('出発駅');
-    if (!draftExpense.to_station) missing.push('帰着駅');
-    if (draftExpense.amount === '' || draftExpense.amount === undefined) missing.push('金額');
-    const effectiveWorkplace = draftExpense.workplace === 'その他' ? draftExpense.workplace_other : draftExpense.workplace;
-    if (!effectiveWorkplace?.trim()) missing.push('行き先');
-    if (draftExpense.type !== 'regular' && !draftExpense.start_date) missing.push('利用日');
-    if (draftExpense.type === 'regular' && !draftExpense.start_date) missing.push('開始日');
-    if (draftExpense.type === 'regular' && !draftExpense.end_date) missing.push('終了日');
-    if (missing.length > 0) {
-      setFormError(`未入力の必須項目があります：${missing.join('、')}`);
-      const fieldMap: Record<string, string> = {
-        '交通機関': 'transportation', '交通機関（その他）': 'transportation_other',
-        '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount',
-        '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '行き先': 'workplace'
-      };
-      setHighlightFields(new Set(missing.map(m => fieldMap[m]).filter(Boolean)));
-      return false;
-    }
-    // 定期：終了日が開始日より前はNG
-    if (draftExpense.type === 'regular' && draftExpense.start_date && draftExpense.end_date) {
-      if (draftExpense.end_date < draftExpense.start_date) {
-        setFormError('終了日は開始日より後の日付を入力してください。');
-        return false;
-      }
-    }
-    return true;
-  }, [draftExpense, expenses]);
-
-  const handleAddDraft = useCallback(() => {
-    if (!validateDraft()) return;
-    setExpenses(prev => [...prev, { ...draftExpense }]);
+  /** 列の次の経路を入力欄に入れる（無ければ入力欄を空にしてテンプレートの適用を終える）。［追加］と［往復で追加］の両方から呼ぶ */
+  const advanceQueue = useCallback(() => {
     if (templateQueue.length > 0) {
       setDraftExpense(toDraft(templateQueue[0]));
       setTemplateQueue(prev => prev.slice(1));
@@ -420,20 +434,64 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       setDraftExpense(emptyDraft);
       setHighlightFields(new Set());
       setTemplateSource(null);
-      if (onTemplateApplied) onTemplateApplied();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateQueue, toDraft]);
+
+  /** ［この日にまとめて追加］：全経路をチェックしてから1回で足す。1件でも足りなければ1件も足さない */
+  const bulkBusyRef = useRef(false);
+  const handleBulkAdd = () => {
+    if (!bulkTpl || bulkBusyRef.current) return;
+    if (!bulkDate) { setFormError('利用日を選んでください'); return; }
+    bulkBusyRef.current = true;
+    const items = bulkTpl.map(t => ({ ...toDraft(t), start_date: bulkDate, end_date: '' }));
+    for (let i = 0; i < items.length; i++) {
+      const ng = checkExpense(items[i], [...expenses, ...items.slice(0, i)]);
+      if (ng) {
+        setFormError(`${i + 1}番目の経路：${ng.msg}（［1つずつ直してから追加する］で直せます）`);
+        bulkBusyRef.current = false;
+        return;
+      }
+    }
+    const dup = items.some(it => expenses.some(x => x.start_date === it.start_date && x.from_station === it.from_station && x.to_station === it.to_station));
+    setExpenses(prev => [...prev, ...items]);
+    setBulkTpl(null); setBulkDate(''); setFormError('');
+    setBulkDoneMsg(`${withDay(bulkDate)} の${items.length}経路を申請リストに追加しました${dup ? '（同じ日・同じ経路がすでにリストにあります。確かめてください）' : ''}`);
+    bulkBusyRef.current = false;
+  };
+  /** ［1つずつ直してから追加する］：今までの流れ（1件目を入力欄・残りを列に） */
+  const bulkOneByOne = () => {
+    if (!bulkTpl) return;
+    setDraftExpense(toDraft(bulkTpl[0]));
+    setTemplateQueue(bulkTpl.slice(1));
+    setHighlightFields(new Set(['start_date']));
+    setBulkTpl(null); setBulkDate(''); setFormError('');
+  };
+
+  // 中身は checkExpense（まとめて追加と共用）。ここは結果を画面に出すだけ
+  const validateDraft = useCallback(() => {
+    const ng = checkExpense(draftExpense, expenses);
+    if (!ng) return true;
+    setFormError(ng.msg);
+    if (ng.fields.length > 0) setHighlightFields(new Set(ng.fields));
+    return false;
+  }, [draftExpense, expenses]);
+
+  const handleAddDraft = useCallback(() => {
+    if (!validateDraft()) return;
+    setExpenses(prev => [...prev, { ...draftExpense }]);
+    advanceQueue();
     setFormError('');
-  }, [draftExpense, emptyDraft, setExpenses, templateQueue, onTemplateApplied, validateDraft]);
+  }, [draftExpense, setExpenses, advanceQueue, validateDraft]);
 
   const handleAddRoundTripDraft = useCallback(() => {
     if (!validateDraft()) return;
     const returnExpense: Expense = { ...draftExpense, from_station: draftExpense.to_station, to_station: draftExpense.from_station };
     setExpenses(prev => [...prev, { ...draftExpense }, returnExpense]);
-    setDraftExpense(emptyDraft);
-    setTemplateSource(null);
-    if (onTemplateApplied) onTemplateApplied();
+    // 🚨 往復でも次の経路へ進める（以前は列を進めず、2経路目が消えたり、あとで突然出てきたりした）
+    advanceQueue();
     setFormError('');
-  }, [draftExpense, emptyDraft, setExpenses, onTemplateApplied, validateDraft]);
+  }, [draftExpense, setExpenses, advanceQueue, validateDraft]);
 
 
   // バリデーションして確認モーダルを表示
@@ -546,6 +604,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       setSubmitSuccess(true);
       setFormError('');
       setTemplateSource(null);
+      setTemplateQueue([]); setBulkTpl(null); setBulkDate('');
       setExpenses([]);
       setDraftExpense(emptyDraft);
       clearDraft(DRAFT_KEYS.expense); // 送信成功で下書きを消す
@@ -656,9 +715,57 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       <form>
         {/* テンプレートキュー残り件数 */}
         {templateQueue.length > 0 && (
-          <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: 13, color: '#856404', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ background: isDarkMode ? '#3a2e10' : '#fff3cd', border: `1px solid ${isDarkMode ? '#8a6d1f' : '#ffc107'}`, borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: 13, color: isDarkMode ? '#f5e3b0' : '#856404', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
             <span>📋</span>
-            <span>テンプレート適用中：残り <strong>{templateQueue.length}件</strong>（利用日を入力して「追加」してください）</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              テンプレート適用中：残り <strong>{templateQueue.length}件</strong>（利用日を入力して「追加」してください）<br />
+              <span style={{ fontSize: 12 }}>次：{templateQueue[0].from_station} → {templateQueue[0].to_station} / {parseInt(parseAmount(templateQueue[0].amount || '0'), 10).toLocaleString()}円</span>
+            </span>
+            <button type="button" onClick={() => setTemplateQueue([])}
+              style={{ flexShrink: 0, background: 'none', border: `1px solid ${isDarkMode ? '#8a6d1f' : '#e0b84d'}`, borderRadius: 12, padding: '2px 10px', fontSize: 11.5, color: 'inherit', cursor: 'pointer' }}>残りを取りやめる</button>
+          </div>
+        )}
+        {/* 同じ日の乗り継ぎ：利用日を1回入れて、まとめて追加（2026-10-13） */}
+        {bulkTpl && (
+          <div style={{ background: isDarkMode ? '#1e2a38' : '#e8f4fd', border: `1px solid ${isDarkMode ? '#2d4a6a' : '#90caf9'}`, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#7fb3d3' : '#1565c0' }}>📋 過去の申請から {bulkTpl.length}経路 を使います</span>
+              <button type="button" onClick={() => { setBulkTpl(null); setBulkDate(''); setFormError(''); }} title="使わない"
+                style={{ background: 'none', border: 'none', color: isDarkMode ? '#adb5bd' : '#90a4ae', fontSize: 14, cursor: 'pointer' }}>✕</button>
+            </div>
+            {bulkTpl.map((t, i) => {
+              const d = toDraft(t);
+              const tr = (d.transportation || '').split('・').map(p => (p === 'その他' ? (d.transportation_other || '') : p)).filter(Boolean).join('・');
+              const wp = d.workplace === 'その他' ? d.workplace_other : d.workplace;
+              return (
+                <div key={i} style={{ background: isDarkMode ? '#2c3e50' : '#fff', border: `1px solid ${isDarkMode ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, padding: '5px 8px', marginBottom: 4, fontSize: 12.5, color: isDarkMode ? '#e9ecef' : '#333' }}>
+                  {i + 1}. {t.from_station} → {t.to_station} / {parseInt(parseAmount(t.amount || '0'), 10).toLocaleString()}円
+                  {(tr || wp) && <span style={{ color: isDarkMode ? '#adb5bd' : '#6c757d' }}>（{[tr, wp].filter(Boolean).join('・')}）</span>}
+                </div>
+              );
+            })}
+            <div style={{ position: 'relative', marginTop: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${!bulkDate ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: !bulkDate ? (isDarkMode ? '#4a2b30' : '#fdecea') : (isDarkMode ? '#2c3e50' : '#fff') }}>
+                <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>利用日</span>
+                <button type="button" onClick={() => setBulkDatePicker(v => !v)} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: bulkDate ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer' }}>
+                  {bulkDate ? withDay(bulkDate) : '日付を選択'}
+                </button>
+              </div>
+              {bulkDatePicker && <SingleDatePicker value={bulkDate} onChange={v => { setBulkDate(v); setBulkDatePicker(false); }} onClose={() => setBulkDatePicker(false)} calendarKinds={calendarKinds} />}
+            </div>
+            {bulkDate && calendarKinds[bulkDate] && (
+              <div style={{ marginTop: 6, background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px' }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 'bold', color: '#856404' }}>{CALENDAR_NOTICE[calendarKinds[bulkDate]]}</p>
+                <p style={{ margin: '3px 0 0', fontSize: 12, color: '#856404' }}>申請内容にお間違いはありませんか？</p>
+              </div>
+            )}
+            <button type="button" onClick={handleBulkAdd} style={{ ...primaryBtn(), width: '100%', marginTop: 8, padding: 10, fontSize: 14 }}>
+              この日に{bulkTpl.length}経路まとめて追加
+            </button>
+            <button type="button" onClick={bulkOneByOne} style={{ ...tintBtn(isDarkMode), width: '100%', marginTop: 6, padding: 9, fontSize: 13, fontWeight: 'normal' }}>
+              1つずつ直してから追加する
+            </button>
+            <p style={{ margin: '6px 0 0', fontSize: 11.5, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>金額や行き先が変わったときは「1つずつ直してから追加する」を使ってください</p>
           </div>
         )}
         {/* 複製・よく使う経路からの適用バナー */}
@@ -681,7 +788,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             <div style={{ background: isDarkMode ? '#2c3e50' : '#fff', border: '2px solid #0d6efd', borderRadius: 8, padding: 16, marginBottom: 8, boxShadow: isDarkMode ? 'none' : '0 2px 8px rgba(0,0,0,0.06)' }}>
               {/* 入力内容クリア（この入力枠の内容だけを空にする。追加済みリストは消えない） */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); }}
+                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); setTemplateQueue([]); }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDarkMode ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDarkMode ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
                   クリア
                 </button>
@@ -942,6 +1049,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
         {submitSuccess && (
           <BannerSuccess message="登録しました。承認をお待ちください。" onClose={() => setSubmitSuccess(false)} />
+        )}
+        {bulkDoneMsg && (
+          <BannerSuccess message={bulkDoneMsg} onClose={() => setBulkDoneMsg('')} />
         )}
       </form>
 
