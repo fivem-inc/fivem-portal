@@ -467,6 +467,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                   {d.answer_reason && `（${d.answer_reason}）`}
                   {d.answer_note && `（${d.answer_note}）`}
                   {d.answer === 'worked' && !d.result_report_id && <span style={{ color: '#b45309' }}>　※残業の報告待ち</span>}
+                  {d.answer === 'not_worked' && !d.result_report_id && <span style={{ color: '#b45309' }}>　※打刻ズレの記録が未作成</span>}
                 </div>
               ))}
             </div>

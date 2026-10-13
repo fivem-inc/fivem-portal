@@ -6,7 +6,6 @@ import { calcPayPeriodStartJst } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
-import { logFail } from '../lib/logFail';
 import { primaryBtn } from '../lib/buttonStyles';
 
 // 経理からの「打刻の確認」に答える画面。通知バナー → /overtime?inquiry=<id> から開く。
@@ -66,6 +65,8 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  // 打刻ズレの記録を作れなかった日（2026-10-13）。🚨 前は黙って飛ばしていた。回答は記録済みなので、完了画面で知らせる
+  const [failedDays, setFailedDays] = useState<{ date: string; msg: string }[]>([]);
 
   const [picks, setPicks] = useState<Record<string, { answer: Answer | ''; reason: string; note: string }>>({});
 
@@ -154,11 +155,13 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
 
       // 2) 「業務は終わっていました」の日だけ、打刻ズレの記録を作る。
       //    ここで失敗しても回答は残るので、あとから作り直せる（result_report_id が null で分かる）
+      //    🚨 失敗した日は failed に集めて完了画面に出す（2026-10-13・前は黙って飛ばしていた）
+      const failed: { date: string; msg: string }[] = [];
       for (const d of days) {
         const p = picks[d.id];
         if (p.answer !== 'not_worked') continue;
         const ns = resolveNormalShift(patterns, d.work_date, calendarKinds[d.work_date] ?? null);
-        if (!ns.start_time) continue;
+        if (!ns.start_time) { failed.push({ date: d.work_date, msg: 'この日のシフトが見つからないため、記録を作れませんでした' }); continue; }
         const segs: { start_min: number; end_min: number }[] = [];
         const toMin = (t: string | null) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
         const push = (s: string | null, e: string | null) => {
@@ -183,15 +186,30 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
           reviewer_id: inquiry.user_id,
           confirmed_by: inquiry.user_id, confirmed_at: new Date().toISOString(),
         }).select('id').single();
-        if (repErr || !rep) continue;  // 同日重複(23505)等は個別スキップ。回答自体は残る
+        if (repErr || !rep) {
+          // 同じ日に申請がすでにある（23505）など。回答自体は残る
+          failed.push({
+            date: d.work_date,
+            msg: repErr?.code === '23505'
+              ? 'この日はすでに残業申請が出ているため、打刻ズレの記録は作りませんでした（申請はそのままです）'
+              : `記録を作れませんでした：${repErr?.message ?? '理由が分かりません'}`,
+          });
+          continue;
+        }
         if (segs.length > 0) {
-          await supabase.from('overtime_report_segments').insert(
+          const { error: segErr } = await supabase.from('overtime_report_segments').insert(
             // seg_no は 1 始まり（DBの制約が 1〜3）。0 始まりにすると1件も入らない
             segs.map((s, i) => ({ report_id: rep.id, phase: 'actual', seg_no: i + 1, start_min: s.start_min, end_min: s.end_min })),
           );
+          if (segErr) failed.push({ date: d.work_date, msg: `記録の時間帯を保存できませんでした：${segErr.message}` });
         }
-        await supabase.rpc('link_clock_inquiry_result', { p_day_id: d.id, p_report_id: rep.id }).then(...logFail('打刻確認の結果の記録'));
+        const { data: linked, error: linkErr } = await supabase.rpc('link_clock_inquiry_result', { p_day_id: d.id, p_report_id: rep.id });
+        if (linkErr || linked === false) {
+          console.error('打刻確認の結果の記録に失敗:', linkErr?.message ?? 'link returned false');
+          failed.push({ date: d.work_date, msg: '記録は作りましたが、確認と結び付けられませんでした（経理に伝えてください）' });
+        }
       }
+      setFailedDays(failed);
 
       // 3) 経理へメール（ベル・プッシュは RPC 側で作成済み）
       const counts = { worked: 0, not_worked: 0, unknown: 0 };
@@ -241,6 +259,17 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             <div style={{ fontSize: 12, color: '#15803d', marginTop: 2 }}>{senderName}さんに届きます</div>
           </div>
         </div>
+
+        {failedDays.length > 0 && (
+          <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: '#842029' }}>回答は届きましたが、記録できなかった日があります</p>
+            {failedDays.map((f, i) => (
+              <p key={i} style={{ margin: '4px 0 0', fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>
+                {md(f.date)}（{dowOf(f.date)}）　{f.msg}
+              </p>
+            ))}
+          </div>
+        )}
 
         {workedDays.length > 0 && (
           <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
