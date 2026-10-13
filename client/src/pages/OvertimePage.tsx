@@ -22,9 +22,9 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
+import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
-import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, mayConfirmAsPlanned, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import OvertimeBox from '../components/OvertimeBox';
@@ -537,7 +537,8 @@ const OvertimeForm: React.FC<{
   canMemo: boolean;
   /** すでに申請がある日（本人×日付で申請は1件までなので、メモの［申請］を出さない） */
   appliedDates: Set<string>;
-  onSaved: (gcalWarning?: string) => void;
+  /** note：送信完了の知らせの2行目を変えるとき（予定どおりで確認済みになった・2026-10-13） */
+  onSaved: (gcalWarning?: string, note?: string) => void;
   onClose: () => void;
   /** カレンダーの印から、その申請を開く（実績を報告する・直して出し直す）。見つからなければ履歴へ */
   onOpenExisting: (reportId: string) => void;
@@ -1338,7 +1339,14 @@ const OvertimeForm: React.FC<{
       // 🚨 打刻ズレ（clockOnlyMode）も確認なしで確定するので送らない（2026-09-29）。
       //    申請先を選んでから打刻ズレに切り替えると、欄は隠れても値が残り、上長に空振りのベルとメールが飛んでいた（9/16 に1件）
       // 🚨 条件と呼び名は lib/overtimeFormParts の shouldNotifyReviewer・reviewerPhaseLabel（表入力と共用・2026-09-29）
-      if (shouldNotifyReviewer({ isSelfReview, isPureZero, clockOnly: clockOnlyMode, reviewerId })) {
+      // 予定どおりの実績報告は受理を省いて確認済みにする（2026-10-13 ユーザー確定）。
+      // 🚨 省けたかは DB が比べて決める。省けたら上長へは DB がベルだけ送る（プッシュなし）ので、ここからは送らない
+      const asPlanned = mayConfirmAsPlanned({
+        isReportPhase, editStatus: editTarget?.status, hasChanges, isPureZero, isSelfReview, clockOnly: clockOnlyMode,
+      }) && await confirmAsPlanned(reportId);
+      if (asPlanned) {
+        sendOvertimeSlack(reportId, 'overtime:confirmed').then(null, () => {});
+      } else if (shouldNotifyReviewer({ isSelfReview, isPureZero, clockOnly: clockOnlyMode, reviewerId })) {
         notifyOvertimeNewRequest({
           reportId,
           reviewerId,
@@ -1387,7 +1395,7 @@ const OvertimeForm: React.FC<{
 
       if (!editTarget) clearDraft(DRAFT_KEYS.overtime);
       setSaving(false);
-      onSaved(gcalWarn);
+      onSaved(gcalWarn, asPlanned ? '予定どおりなので、受理を待たずに確認済みになりました' : undefined);
     } catch {
       setSaving(false);
       setShowConfirm(false);
@@ -2724,6 +2732,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 打刻の確認の「時刻が違います」で入れた時刻（その申請を開いているときだけ使う）
   const [editPrefill, setEditPrefill] = useState<{ reportId: string; segs: { start: string; end: string }[] } | null>(null);
   const [savedBanner, setSavedBanner] = useState(false);
+  const [savedNote, setSavedNote] = useState('');
   // 送信完了バナーは数秒で自動消去（アプリ標準の成功フィードバックに合わせる）
   useEffect(() => {
     if (!savedBanner) return;
@@ -3780,7 +3789,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ margin: 0, fontSize: 15, fontWeight: 'bold', color: '#166534' }}>送信しました</p>
-              <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#15803d' }}>履歴・実績報告タブで状況を確認できます</p>
+              <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#15803d' }}>{savedNote || '履歴・実績報告タブで状況を確認できます'}</p>
             </div>
             <button onClick={() => setSavedBanner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#166534', flexShrink: 0 }}>✕</button>
           </div>
@@ -3845,8 +3854,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               canChooseCalendar={canChooseCalendar}
               canMemo={canMemoPerm}
               appliedDates={appliedDates}
-              onSaved={(gcalWarn) => {
-                setSavedBanner(true);
+              onSaved={(gcalWarn, note) => {
+                setSavedBanner(true); setSavedNote(note ?? '');
                 if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });
                 setEditTarget(null); setTab('history'); fetchOwn(); fetchOwnCard(); window.scrollTo({ top: 0 });
               }}

@@ -10,7 +10,7 @@
 import { computeGridRow, sameGridReport, FURIKAE_ORIGIN_TAKEN_MSG, shortMd } from './overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, GridRowCalc } from './overtimeGrid';
 import { buildOvertimeRecord } from './overtimeSubmit';
-import { editHistorySummary, reviewerPhaseLabel, shouldNotifyReviewer, effectiveClockReasonOf } from './overtimeFormParts';
+import { editHistorySummary, reviewerPhaseLabel, shouldNotifyReviewer, effectiveClockReasonOf, mayConfirmAsPlanned } from './overtimeFormParts';
 import { isPayPeriodClosed, formatSignedMin } from './breakCalc';
 import { overtimeAmountLabel } from './overtimeTypes';
 import { toDbTime } from './timeInput';
@@ -60,6 +60,8 @@ export interface BulkWriter {
   bell(a: { reportId: string; reviewerId: string; applicantName: string; phaseLabel: string; dateLabel: string; timeLabel: string }): Promise<void>;
   email(a: { reviewerId: string; applicantName: string; phaseLabel: string; dateLabel: string; timeLabel: string }): Promise<void>;
   slack(reportIds: string[], eventKey: 'overtime:new_request' | 'overtime:confirmed'): Promise<void>;
+  /** 予定どおりの実績報告なら受理を省いて確認済みにする（省けたら true・2026-10-13）。無ければ省かない */
+  confirmAsPlanned?(reportId: string): Promise<boolean>;
   /** Google カレンダーへ。失敗したら false */
   gcal(reportId: string): Promise<boolean>;
   /** 休暇からの時間外調整休（自動計上）が同じ日にあるか。🚨 DB に網が無いので時間外調整休を出す直前に確かめる（読めなければ止める・1件フォームと同じ） */
@@ -286,8 +288,15 @@ export async function runBulkSend(
         if (r.req) await writer.linkRequest(r.req.id, saved.reportId);
         // 🚨 呼び名と通知の条件は lib/overtimeFormParts（1件フォームと共用）
         const phaseLabel = reviewerPhaseLabel({ isResubmit: c.isResubmit, phase: c.phase, isModifiedReapply: false });
+        // 予定どおりの実績報告は受理を省く（上長へは DB がベルだけ送る・1件フォームと同じ）
+        const asPlanned = !!writer.confirmAsPlanned && mayConfirmAsPlanned({
+          isReportPhase: c.isReportPhase, editStatus: fresh?.status as string | undefined, hasChanges: c.hasChanges,
+          isPureZero: c.isPureZero, isSelfReview: c.isSelfReview, clockOnly: c.clockOnly,
+        }) && await writer.confirmAsPlanned(saved.reportId);
         // 🚨 打刻ズレは確認なしで確定するので、上長にもベル・メール・Slack を送らない（1件フォームと同じ）
-        if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: c.clockOnly, reviewerId: c.reviewerId })) {
+        if (asPlanned) {
+          slackConfirmed.push(saved.reportId);
+        } else if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: c.clockOnly, reviewerId: c.reviewerId })) {
           await writer.bell({
             reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: ctx.profileName,
             phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),

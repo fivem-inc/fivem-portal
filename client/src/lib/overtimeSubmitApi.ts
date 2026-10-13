@@ -116,6 +116,16 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
 }
 
 /**
+ * 予定どおりの実績報告なら、受理を省いて確認済みにする（2026-10-13）。省けたら true。
+ * 🚨 失敗・条件外は false（今までどおり「実績 確認待ち」のまま上長へ受理のお願いを出す）。送信そのものは止めない
+ */
+export async function confirmAsPlanned(reportId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('overtime_confirm_as_planned', { p_id: reportId });
+  if (error) { console.error('[残業] 予定どおりの確認済みにできませんでした', error.message); return false; }
+  return data === true;
+}
+
+/**
  * Google カレンダーへの同期。送信のたびに必ず呼ぶ（action:'sync' は現在状態から再計算する冪等処理）。
  * 🚨 supabase.functions.invoke は 4xx/5xx でも throw しない。error と success の両方を見る。
  * 失敗したら false（送信そのものは成立している）。
@@ -240,6 +250,7 @@ export const supabaseBulkWriter: BulkWriter = {
   },
   bell: notifyOvertimeNewRequestBell,
   email: notifyOvertimeNewRequestEmail,
+  confirmAsPlanned,
   slack: sendOvertimeSlackBatch,
   gcal: syncOvertimeGcal,
 };

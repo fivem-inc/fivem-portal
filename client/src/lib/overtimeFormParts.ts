@@ -112,6 +112,19 @@ export function isManagerReviewer(row: unknown): boolean {
  * ・打刻ズレは確認なしで確定する（2026-09-29：1件フォームで申請先の値が残っていて空振りのベルが飛んでいた）
  * 🚨 1件フォームと表入力（まとめて申請）の両方がここを呼ぶ。条件を画面に書き写さない
  */
+/**
+ * 予定どおりの実績報告として、受理を省けそうか（2026-10-13 ユーザー確定）。
+ * 事前申請が「受理済み」のまま実績を出し、予定から何も変えていない（時間帯・休憩・勤務地・種別）とき。
+ * 🚨 これは「聞いてみる」条件だけ。本当に省くかは DB の overtime_confirm_as_planned が比べて決める
+ *    （false が返れば今までどおり上長に受理をお願いする）
+ */
+export function mayConfirmAsPlanned(a: {
+  isReportPhase: boolean; editStatus: string | null | undefined; hasChanges: boolean;
+  isPureZero: boolean; isSelfReview: boolean; clockOnly: boolean;
+}): boolean {
+  return a.isReportPhase && a.editStatus === 'request_confirmed' && !a.hasChanges && !a.isPureZero && !a.isSelfReview && !a.clockOnly;
+}
+
 export function shouldNotifyReviewer(a: {
   isSelfReview: boolean; isPureZero: boolean; clockOnly: boolean; reviewerId: string | null | undefined;
 }): boolean {
