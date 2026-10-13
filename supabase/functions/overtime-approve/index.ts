@@ -60,7 +60,9 @@ serve(async (req) => {
     const isAdmin = (caller.app_metadata?.role ?? '') === 'admin'
 
     // shift_not_needed：終日（時間外調整休・振替休日・欠勤）を受理するときの「シフト調整：調整不要」（2026-10-13）
-    const { report_id, action, comment, shift_not_needed } = await req.json()
+    // on_behalf：経理（管理者）が申請先の上長に代わって受理する（2026-10-14 ユーザー確定）。
+    //   受理は今までどおり。足すのは ①履歴に「経理が代わりに受理」 ②元の申請先へベル（スマホなし・読めば済む）
+    const { report_id, action, comment, shift_not_needed, on_behalf } = await req.json()
     if (!report_id || !['approve', 'return', 'cancel'].includes(action)) {
       return json({ success: false, error: '不正なリクエストです' }, 400)
     }
@@ -96,6 +98,7 @@ serve(async (req) => {
 
     if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
+      if (on_behalf === true && !isAdmin) return json({ success: false, error: '代わりに受理できるのは経理（管理者）だけです' }, 403)
       // 欠勤の自己受理はマネージャー以上のみ（2026-08-21 に開放。リーダー以下は他の人の受理が必要）
       // 🚨 同じ判定が overtime_reports の RLS（overtime_insert_own）にもある。
       //    自己受理は受理ボタンを通らず直接 INSERT されるため、あちらが本来の砦。片方だけ直さないこと。
@@ -152,6 +155,46 @@ serve(async (req) => {
         read: false,
       }
       slackEventKey = (isAdvance && !isFullDay) ? 'overtime:request_confirmed' : 'overtime:confirmed'
+
+      // 経理が代わりに受理したとき（申請先が別の人のときだけ）
+      if (on_behalf === true && r.reviewer_id && r.reviewer_id !== caller.id) {
+        const { data: rv } = await db.from('profiles').select('name').eq('id', r.reviewer_id).maybeSingle()
+        const reviewerName = (rv as { name?: string } | null)?.name ?? ''
+        const { error: hErr } = await db.from('overtime_report_history').insert({
+          report_id: r.id, changed_by: caller.id, change_kind: 'approved',
+          change_summary: `経理が代わりに受理（申請先：${reviewerName || '不明'}）`,
+          snapshot: r,  // 🚨 snapshot は空にできない（not null）。受理する前の行（読んだ時点）を残す
+        })
+        if (hErr) console.error('[overtime-approve] 代わりに受理の履歴の記録に失敗:', hErr.message)
+        // 元の申請先へ（ユーザー確定 案1）。🚨 event_key を付けない＝スマホに乗らない（ベルだけ・2026-10-14 ユーザー確定 A）
+        if (r.reviewer_id !== r.applicant_id) {
+          const TYPE_LABEL: Record<string, string> = {
+            overtime: '残業', early_start: '早出', tardiness: '遅刻', early_leave: '早退', holiday_work: '休日出勤',
+            location_change: '勤務地変更', late_start_adj: '調整遅出', early_end_adj: '調整早退',
+            chosei_off: '時間外調整休', furikae_off: '振替休日', absence: '欠勤', clock_only: '打刻ズレ',
+          }
+          const kind = types.map(t => TYPE_LABEL[t]).filter(Boolean).join('・') || '残業・時間調整'
+          let when = ''
+          if (!isFullDay) {
+            const phase = r.status === 'reported' ? 'actual' : 'planned'
+            const { data: segs } = await db.from('overtime_report_segments').select('seg_no, start_min, end_min')
+              .eq('report_id', r.id).eq('phase', phase).order('seg_no')
+            const hm = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`
+            when = ((segs ?? []) as { start_min: number; end_min: number }[]).map(g => `${hm(g.start_min)}〜${hm(g.end_min)}`).join('、')
+          }
+          const [, mm, dd] = String(r.work_date).split('-').map(Number)
+          const { error: fErr } = await db.from('notifications').insert({
+            user_id: r.reviewer_id,
+            message: '経理が代わりに受理しました',
+            sub_message: `${applicantName}さん ${mm}/${dd}（${dowLabel(r.work_date)}）${kind}${when ? ' ' + when : ''}`,
+            // 🚨 読めば済むお知らせ。'overtime_request:cancelled_fyi' と同じく、押しても移動しない（App.tsx の classifyNotif）
+            source_type: 'overtime_request:proxy_fyi',
+            reference_id: r.id,
+            read: false,
+          })
+          if (fErr) console.error('[overtime-approve] 元の申請先へのお知らせに失敗:', fErr.message)
+        }
+      }
     } else if (action === 'return') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では差し戻せません' }, 409)

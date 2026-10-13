@@ -1303,6 +1303,8 @@ const classifyNotif = (n: NotifLike) => {
   const isOvertimeResult          = n.source_type === 'overtime_request';                  // 申請者：結果報告のみ
   // 確認者：本人が申請を取り消した知らせ。取消済みなので確認待ちにも自分の履歴にも無い＝移動しない
   const isOvertimeCancelledFyi    = n.source_type === 'overtime_request:cancelled_fyi';
+  // 元の申請先：経理が代わりに受理した知らせ（2026-10-14）。受理まちの一覧からはもう消えている＝移動しない
+  const isOvertimeProxyFyi        = n.source_type === 'overtime_request:proxy_fyi';
   const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
@@ -1318,7 +1320,7 @@ const classifyNotif = (n: NotifLike) => {
   const isCorrectionNew = isCorrection && (n.event_key ?? '').startsWith('correction:new'); // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isAppRequestDismissed || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOvertimeProxyFyi || isOtProposalReceived || isOtProposalResponded || isAppRequestDismissed || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -1460,6 +1462,7 @@ const classifyNotif = (n: NotifLike) => {
     // 本人が取り消した知らせ（確認者へ）。申請はもう確認待ちにも自分の履歴にも無いので移動しない。
     // 誰が・いつの分を取り消したかは通知の本文に入っている
     if (isOvertimeCancelledFyi) return { path: null, closeOnTap: true };
+    if (isOvertimeProxyFyi) return { path: null, closeOnTap: true };
     // 残業が目安を超えたお知らせ。本人は自分の履歴へ、上長は部門集計へ
     // 🚨 hl=threshold で着いた先を光らせる（本人＝合計時間数のカード／上長＝目安を超えた人の行・2026-09-30）。
     //    プッシュの飛び先（push-dispatch の EVENT_MAP）も同じ URL にそろえること
