@@ -1706,7 +1706,7 @@ const OvertimeForm: React.FC<{
         <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
           {teijiStep === 'ask' ? (
             <>
-              <p style={{ margin: '0 0 8px', fontSize: 13, color: text }}>{dayTitle}は、まだ何もしていません。</p>
+              <p style={{ margin: '0 0 8px', fontSize: 13, color: text }}>{dayTitle}は、まだ記録がありません。</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" onClick={() => setTeijiStep('confirm')} style={{ ...backBtn(isDark), flex: 1 }}>定時で記録する</button>
                 <button type="button" onClick={() => setFormFor(date)} style={{ ...primaryBtn(), flex: 1 }}>残業を申請する</button>
