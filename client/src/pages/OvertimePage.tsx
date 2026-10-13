@@ -813,11 +813,15 @@ const OvertimeForm: React.FC<{
   //    書きかけ（時間が入っている下書き）は今までどおり上書きしない。
   const draftHasTimes = (draft?.segments ?? []).some(s => s.start || s.end);
   const filledForDateRef = useRef<string | null>(editTarget?.work_date ?? (draftHasTimes ? draft?.date : null) ?? null);
+  // 自動で埋めた時間帯（文字にして覚える）。本人がまだ触っていないかを見るため（［定時で記録する］を出すかどうか・2026-10-13）
+  const [autoFilledSegs, setAutoFilledSegs] = useState('');
   useEffect(() => {
     if (editTarget || !date) return;
     if (filledForDateRef.current === date) return;
     filledForDateRef.current = date;
-    setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
+    const filled = normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }];
+    setSegments(filled);
+    setAutoFilledSegs(JSON.stringify(filled));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, normalSegs]);
 
@@ -1433,8 +1437,12 @@ const OvertimeForm: React.FC<{
     const n = new Date();
     return gate == null || n.getHours() * 60 + n.getMinutes() >= gate;
   })();
+  // 🚨 日付を選ぶと時間帯にその日のシフトが自動で入る（上の useEffect）。「何か入っている」で判定すると
+  //    いつも入っているので、［定時で記録する］が誰にも出なかった（2026-10-13 実機指摘）。
+  //    自動で入れたままなら「まだ触っていない」とみなし、本人が書き換えたときだけ隠す
+  const segsTouched = hasInput && JSON.stringify(segments) !== autoFilledSegs;
   const teijiAsk = dayMarkOn && !editTarget && mode === 'posthoc' && !!date && !selMark
-    && !!teijiShift?.start_time && !closeLocked && !hasInput && !memoLink && !clockOnly && !fullDay
+    && !!teijiShift?.start_time && !closeLocked && !segsTouched && !memoLink && !clockOnly && !fullDay
     && teijiTimeOk && formFor !== date && teijiDone !== date;
   const markBlocks = (!!selMark && formFor !== date && dayMarkBlocksForm(selMark)) || (!!date && teijiDone === date);
   // 印の案内を出している間は、下の入力欄を出さない
