@@ -56,7 +56,11 @@ const EVENT_GROUPS = [
       // 2026-09-25 追加（シフト調整の案）。🚨 設定の行は migration 20260925185551 で入れた（行が無いと止められない）。
       // 案が出た：意見の期限を付けた案のときだけ。宛先は「ここで選んだ役職」×同じチーム×「案を確認した」と「見る」の権限（作った本人・休む本人は除く）
       // 🚨 ベルを OFF にするとスマホも届かない（スマホはベルの行をきっかけに送る）
-      { key: 'shift_adjust:plan_created', label: 'シフト調整の案が出たとき（意見の期限付き・確認する人へ）' },
+      // 2026-10-14：期限なしの案も知らせるようにした（それまでは期限付きだけ）
+      { key: 'shift_adjust:plan_created', label: 'シフト調整の案が出たとき（確認する人へ）' },
+      // 2026-10-14 追加。宛先は「ここで選んだ役職」×同じチーム×「見る」の権限（書いた本人・休む本人は除く）。最初は毎朝のまとめと同じ宛先を写した
+      // 🚨 設定の行は migration 20261014015438 で入れた（行が無いと送らない）
+      { key: 'shift_adjust:comment',      label: 'シフト調整の相談にコメントがあったとき（上長へ）' },
       { key: 'shift_adjust:plan_due',     label: '案の意見の期限を過ぎたとき（案を作った人へ）' },
     ],
   },
@@ -307,7 +311,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_roster:saved', 'hire:registered', 'hire:remind', 'staff:hired', 'staff:invite_failed', 'staff:first_login'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_adjust:comment', 'shift_roster:saved', 'hire:registered', 'hire:remind', 'staff:hired', 'staff:invite_failed', 'staff:first_login'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
 const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 

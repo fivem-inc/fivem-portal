@@ -1366,7 +1366,8 @@ const classifyNotif = (n: NotifLike) => {
     if (n.source_type === 'shift_adjust:cancelled_ot') return { path: '/overtime?tab=history', closeOnTap: true };
     // シフト調整の案（確認する人へ／意見の期限を過ぎた・案を作った人へ・2026-09-25）。その場をいきなり開く（reference_id＝場の id）。
     // 🚨 案の id ではなく場の id（案は決定で消えるため）。読めば用が済む
-    if (n.source_type === 'shift_adjust:plan_created' || n.source_type === 'shift_adjust:plan_due') {
+    // 相談のコメント（2026-10-14）も同じ。その休みの相談の場を開く
+    if (n.source_type === 'shift_adjust:plan_created' || n.source_type === 'shift_adjust:plan_due' || n.source_type === 'shift_adjust:comment') {
       return { path: n.reference_id ? `/calendar?tab=adjust&slot=${n.reference_id}` : '/calendar?tab=adjust', closeOnTap: true };
     }
     if (isSafety) {

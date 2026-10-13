@@ -97,6 +97,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 🚨 休む人の名前・日付は書かない（ロック画面に出る）。中身はベルで読む＝ bell: true
   // 🚨 2つは設定が別（先頭2区切りが別）。文面もほかの通知と重ねない（重なると1通にまとめられる）
   "shift_adjust:plan_created": { app: "シフト調整", word: "案", text: "シフト調整案のご確認をお願いします", url: "/calendar?tab=adjust", bell: true },
+  // 相談のコメント（2026-10-14）。🚨 App.tsx の classifyNotif（shift_adjust:comment）と同じ行き先。文は固定（書いた人・中身はロック画面に出さない）
+  "shift_adjust:comment": { app: "シフト調整", word: "相談", text: "シフト調整の相談にコメントがありました", url: "/calendar?tab=adjust", bell: true },
   "shift_adjust:plan_due": { app: "シフト調整", word: "期限", text: "意見の期限を過ぎた案があります", url: "/calendar?tab=adjust", bell: true },
   // 入社の準備（2026-10-06・マネージャー以上と管理者）。🚨 ロック画面に出るので名前は書かない（名前はベルの本文にだけある）。
   //    送るかどうかは管理画面の通知設定（channel='push'）で決める。最初は 登録＝オフ／◯日前・当日＝オン

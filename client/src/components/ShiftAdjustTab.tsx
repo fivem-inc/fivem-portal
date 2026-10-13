@@ -744,12 +744,16 @@ const SlotDetail: React.FC<{
     if (!t || sending) return;
     setSending(true); setErr('');
     // 🚨 error を必ず見る。投げっぱなしにすると、書けていないのに消えたように見える
-    const { error } = await supabase.from('shift_adjust_comments')
-      .insert({ slot_id: slot.id, user_id: userId, body: t });
-    setSending(false);
-    if (error) { setErr('送信できませんでした：' + error.message); return; }
+    const { data: ins, error } = await supabase.from('shift_adjust_comments')
+      .insert({ slot_id: slot.id, user_id: userId, body: t }).select('id').single();
+    if (error || !ins) { setSending(false); setErr('送信できませんでした：' + (error?.message ?? '書けたか確かめられませんでした')); return; }
     setBody('');
     void loadComments();
+    // 同じチームの上長などへ知らせる（2026-10-14・宛先は通知設定「シフト調整の相談にコメントがあったとき」）。
+    // 🚨 rpc は失敗しても throw しない。コメントは書けているので、知らせられなかったことだけを伝える
+    const { error: nErr } = await supabase.rpc('shift_adjust_comment_notify', { p_comment_id: (ins as { id: string }).id });
+    setSending(false);
+    if (nErr) setErr('コメントは書けました。ただ、ほかの方へのお知らせを送れませんでした：' + nErr.message);
   };
 
   // 'not_needed'（調整不要・2026-09-28）は DB では「変更なし」＋印。歯止めは同じ関数の中で効く
