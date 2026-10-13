@@ -546,7 +546,11 @@ const OvertimeForm: React.FC<{
   onGoHistory: () => void;
   /** 打刻の確認で本人が入れた正しい勤務時間（実績報告を開くときに最初から入れる・2026-10-13） */
   prefillSegments?: { start: string; end: string }[] | null;
-}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory, prefillSegments }) => {
+  /** 申請済みの日を押したとき、その申請の中身をその場で出すために引く（履歴に読み込んである分・2026-10-13） */
+  ownReportOf?: (id: string) => OvertimeReport | undefined;
+  /** ［履歴でこの申請を開く］：履歴タブのその申請まで動いて光らせる */
+  onShowInHistory?: (id: string) => void;
+}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory, prefillSegments, ownReportOf, onShowInHistory }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
@@ -1460,6 +1464,27 @@ const OvertimeForm: React.FC<{
   }), [dayMarks, patterns, calendarKinds]);
 
   const selMark: DayMark | undefined = dayMarkOn && date && !editTarget ? dayMarks[date] : undefined;
+  // 申請済みの日を押したとき、その申請の中身（2026-10-13 案A・ユーザー確定）。
+  // 履歴に読み込んである分はそれを使い、無ければ1件だけ読む
+  const markReportId = selMark?.reportId ?? null;
+  const [markReport, setMarkReport] = useState<OvertimeReport | null>(null);
+  useEffect(() => {
+    if (!markReportId) { setMarkReport(null); return; }
+    const hit = ownReportOf?.(markReportId);
+    if (hit) { setMarkReport(hit); return; }
+    let alive = true;
+    setMarkReport(null);
+    supabase.from('overtime_reports')
+      .select('*, reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*)')
+      .eq('id', markReportId).maybeSingle()
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) console.error('[残業] 申請済みの日の中身を読めませんでした', error.message);
+        setMarkReport((data as OvertimeReport | null) ?? null);
+      });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markReportId]);
   // 「残業があったので申請する」「打刻が遅れた日はこちら」を押した日は、入力欄を出す
   const [formFor, setFormFor] = useState<string | null>(null);
   const [teijiStep, setTeijiStep] = useState<'ask' | 'confirm'>('ask');
@@ -1731,10 +1756,41 @@ const OvertimeForm: React.FC<{
                   <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>直して出し直す</button>
                 ) : !selMark.furikaeOrigin && selMark.kind === 'unreported' && selMark.reportId ? (
                   <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>実績を報告する</button>
-                ) : (
+                ) : !(markReport && onShowInHistory) ? (
                   <button type="button" onClick={onGoHistory} style={{ ...backBtn(isDark), width: '100%' }}>履歴を見る</button>
-                )}
+                ) : null}
               </div>
+              {/* 出している申請の中身（直す・取り消すは履歴の1か所だけ＝ボタンはここに置かない） */}
+              {!selMark.dayCheck && markReport && markReport.id === selMark.reportId && (() => {
+                const r = markReport;
+                const act = (r.segments ?? []).filter(x => x.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
+                const pln = (r.segments ?? []).filter(x => x.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
+                const segs = act.length > 0 ? act : pln;
+                const st = STATUS_INFO[r.status as OvertimeStatus];
+                const rowL: React.CSSProperties = { color: subText, width: '4.5em', flexShrink: 0 };
+                return (
+                  <div style={{ marginTop: 10, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 10px', background: cardBg, fontSize: 12.5, color: text, lineHeight: 1.75 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+                      <b>出している申請</b>
+                      {st && <span style={badgeStyle(st.color, st.darkBg, isDark)}>{st.label}</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><span style={rowL}>種類</span>
+                      <span>{r.is_post_hoc ? '事後報告' : '事前申請'}</span>
+                      <TypeChips types={r.application_types} isDark={isDark} situation={r} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}><span style={rowL}>時間</span>
+                      <span>{isFullDayReport(r.application_types) ? '終日' : (segs.length > 0 ? segmentsLabel(segs) : '—')}（{formatSignedMin(r.diff_minutes ?? 0)}）</span></div>
+                    {r.location && <div style={{ display: 'flex', gap: 6 }}><span style={rowL}>校</span><span>{r.location}</span></div>}
+                    {r.reason && <div style={{ display: 'flex', gap: 6 }}><span style={rowL}>理由</span><span style={{ whiteSpace: 'pre-wrap' }}>{r.reason}</span></div>}
+                    <div style={{ display: 'flex', gap: 6 }}><span style={rowL}>申請先</span>
+                      {/* 履歴のカード（申請先：氏名）・申請の画面（自己受理（自分で確認））と同じ書き方にそろえる */}
+                      <span>{r.reviewer_id && r.reviewer_id === user.id ? '自己受理（自分で確認）' : (r.reviewer?.name ?? '—')}</span></div>
+                    {onShowInHistory && (
+                      <button type="button" onClick={() => onShowInHistory(r.id)} style={{ ...backBtn(isDark), width: '100%', marginTop: 8 }}>履歴でこの申請を開く →</button>
+                    )}
+                  </div>
+                );
+              })()}
               {selMark.dayCheck && (
                 <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>申請を出すと、この日の定時の記録は自動で消えます</p>
               )}
@@ -2732,6 +2788,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 打刻の確認の「時刻が違います」で入れた時刻（その申請を開いているときだけ使う）
   const [editPrefill, setEditPrefill] = useState<{ reportId: string; segs: { start: string; end: string }[] } | null>(null);
   const [savedBanner, setSavedBanner] = useState(false);
+  // ［履歴でこの申請を開く］で来たとき、その申請のカードまで動いて6秒光らせる（2026-10-13・ほかの通知と同じ光り方）
+  const [histGlowId, setHistGlowId] = useState<string | null>(null);
+  const histGlowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!histGlowId) return;
+    const t1 = setTimeout(() => histGlowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setHistGlowId(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [histGlowId]);
   const [savedNote, setSavedNote] = useState('');
   // 送信完了バナーは数秒で自動消去（アプリ標準の成功フィードバックに合わせる）
   useEffect(() => {
@@ -2804,15 +2869,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // profiles への embed は auth.users 向きの既存FKでは解決できないため、
   // 20260727 マイグレーションで追加した profiles 向き named FK を使う。
   const fetchOwn = useCallback(async () => {
-    const { data, error } = await supabase.from('overtime_reports')
+    let q = supabase.from('overtime_reports')
       .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('applicant_id', user.id)
-      .order('work_date', { ascending: false })
-      .limit(100);
+      .order('work_date', { ascending: false });
+    // 🚨 本人は「前期から先」しか見ない（合計時間数カードの ‹ › と同じ範囲）。以前は新しい順に100件で切っており、
+    //    先の期の事前申請が多いと前期・今期の分が欠けるおそれがあった（2026-10-13）→ 範囲で読んで件数で切らない。
+    //    管理者は自分の履歴を全期間見られるので、今までどおり新しい順100件
+    q = isAdmin ? q.limit(100) : q.gte('pay_period_start', shiftPayPeriod(currentPeriod, -1)).limit(1000);
+    const { data, error } = await q;
     if (error) { setLoadError('履歴の読み込みに失敗しました：' + error.message); return; }
     setLoadError('');
     setReports((data as OvertimeReport[] | null) ?? []);
-  }, [user.id]);
+  }, [user.id, isAdmin, currentPeriod]);
 
   const fetchPendingForMe = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_reports')
@@ -3867,6 +3936,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 else { setEditTarget(null); setTab('history'); window.scrollTo({ top: 0 }); }
               }}
               onGoHistory={() => { setEditTarget(null); setTab('history'); window.scrollTo({ top: 0 }); }}
+              ownReportOf={(id) => reports.find(x => x.id === id)}
+              onShowInHistory={(id) => {
+                // 絞り込み・期間でカードが隠れていると光らせられないので、その申請が見える状態にしてから
+                const r = reports.find(x => x.id === id);
+                setEditTarget(null); setTab('history'); setHistoryMode('own');
+                setOwnHistoryFilter(f => ({ ...f, status: 'all', types: [] }));
+                if (r?.pay_period_start && r.pay_period_start !== currentPeriod
+                  && r.pay_period_start >= ownCardPrevLimit && r.pay_period_start <= ownCardNextLimit) setOwnCardPeriod(r.pay_period_start);
+                else setOwnCardPeriod(currentPeriod);
+                setHistGlowId(id);
+              }}
             />
           ) : (
             <>
@@ -4084,7 +4164,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
                     const segs = actual.length > 0 ? actual : planned;
                     return (
-                      <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, borderLeft: (canReport || r.status === 'returned') ? '4px solid #f59e0b' : `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
+                      <div key={r.id} ref={el => { if (el && r.id === histGlowId) histGlowRef.current = el; }}
+                        style={{ background: r.id === histGlowId ? (isDark ? '#4a4423' : '#fff9c4') : cardBg, boxShadow: r.id === histGlowId ? 'inset 0 0 0 2px #f0c000' : 'none', transition: 'background 0.6s, box-shadow 0.6s', borderRadius: 12, border: `1px solid ${borderColor}`, borderLeft: (canReport || r.status === 'returned') ? '4px solid #f59e0b' : `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 6, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>
                             {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）
