@@ -72,7 +72,7 @@ import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorag
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { normalizeTime } from '../lib/timeInput';
 import TimeInput from './TimeInput';
-import { useOvertimeUnifyCutoff, cutoffLabel } from '../lib/overtimeUnify';
+import { useOvertimeUnifyCutoff, useOvertimeUnifyCleanup, cutoffLabel } from '../lib/overtimeUnify';
 import { formatLeavePeriod } from '../lib/leaveDates';
 import { leavePurposeLabel } from '../lib/encouragementDay';
 
@@ -347,6 +347,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   // 時間調整・調整休を残業申請にまとめる区切りの日（2026-10-13・10/16 から）。null＝今までどおり
   const unifyCutoff = useOvertimeUnifyCutoff();
   const unifyMovedNow = !!unifyCutoff && todayJstStr() >= unifyCutoff;
+  // 片付けの日（11/16）から：時間調整タブと調整休を出さない（今までの履歴は「申請履歴」で見られる）
+  const unifyCleanup = useOvertimeUnifyCleanup();
+  const unifyCleanedNow = !!unifyCleanup && todayJstStr() >= unifyCleanup;
   // 会社カレンダー（休館日・出勤日）。カレンダーの色分けと、選んだあとの注意書きに使う
   const calendarKinds = useCompanyCalendar();
   const [searchParams] = useSearchParams();
@@ -993,7 +996,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           ? [{ key: 'form' as const, label: '🌿 休暇' }]
           : [
               { key: 'form' as const, label: '🌿 休暇' },
-              { key: 'adjustment' as const, label: '🕐 時間調整' },
+              ...(unifyCleanedNow ? [] : [{ key: 'adjustment' as const, label: '🕐 時間調整' }]),
               { key: 'history' as const, label: '📋 申請履歴' },
             ]}
         active={tab}
@@ -1227,7 +1230,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <option value="有給休暇">有給休暇</option>
               {!leaveRequestEnabled && <option value="バースデー休暇（有給）">バースデー休暇（有給）</option>}
               {!leaveRequestEnabled && <option value="慶弔休暇">慶弔休暇</option>}
-              {!leaveRequestEnabled && <option value="調整休">調整休</option>}
+              {/* 片付けの日（11/16）から調整休は出さない。🚨 すでに調整休の申請を直しているときだけは出す（選択が消えて見えないように） */}
+              {!leaveRequestEnabled && (!unifyCleanedNow || leaveType === '調整休') && <option value="調整休">調整休</option>}
               {!leaveRequestEnabled && <option value="その他">その他</option>}
             </select>
             {leaveType === 'その他' && (
@@ -1471,7 +1475,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       )}
 
       {/* 時間調整フォーム */}
-      {tab === 'adjustment' && (() => {
+      {tab === 'adjustment' && !unifyCleanedNow && (() => {
         const today = new Date();
         const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
         const daysInMonth = new Date(adjCalYear, adjCalMonth + 1, 0).getDate();
