@@ -572,15 +572,19 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     document.addEventListener('touchstart', h, { passive: true });
     return () => { document.removeEventListener('mousedown', h); document.removeEventListener('touchstart', h); };
   }, []);
-  // 🚨 ページが変わったら閉じる（2026-10-08）。外を押さずにページが変わったとき（プッシュ通知を押してアプリが別のページへ移った等）に、
-  //    一覧が開いたまま残っていた。プッシュから来て一覧を開くとき（?bell=1）は上の処理が開くので、ここでは閉じない
+  // 🚨 ページや表示が変わったら閉じる（2026-10-08 ページ／2026-10-14 同じページの中の表示・「戻る」も）。
+  //    外を押さずに表示が変わったとき（プッシュ通知で別のページへ移った・連絡板で「戻る」を押した等）に、一覧が開いたまま残っていた。
+  //    プッシュから来て一覧を開くとき（?bell=1）と、そのあと上の処理が印（bell・nids）を消すときは閉じない
   const location = useLocation();
-  const lastPath = useRef(location.pathname);
+  const lastLoc = useRef({ key: location.key, path: location.pathname, search: location.search });
   useEffect(() => {
-    if (lastPath.current === location.pathname) return;
-    lastPath.current = location.pathname;
-    if (new URLSearchParams(location.search).get('bell') !== '1') setOpen(false);
-  }, [location.pathname, location.search]);
+    const prev = lastLoc.current;
+    if (prev.key === location.key) return;
+    lastLoc.current = { key: location.key, path: location.pathname, search: location.search };
+    if (new URLSearchParams(location.search).get('bell') === '1') return;
+    if (prev.path === location.pathname && new URLSearchParams(prev.search).get('bell') === '1') return;
+    setOpen(false);
+  }, [location.key, location.pathname, location.search]);
 
   const unread = notifs.filter(n => !n.read).length;
 

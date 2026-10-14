@@ -1,7 +1,7 @@
 import ExpandableTextarea from '../components/ExpandableTextarea';
 import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
 import LinkifiedText from '../components/LinkifiedText';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { rolesByRank, attrsFor } from '../lib/roleAttrs';
 import { getCachedRoles } from '../hooks/useRoles';
@@ -690,6 +690,19 @@ const BoardPage: React.FC = () => {
   const [broadcastUrgent,  setBroadcastUrgent]  = useState(false); // 「⚡当日の連絡・緊急」（DM一斉送信用）
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
+  // 🚨 表示が変わったら（グループ・トレイ・リプライを移った・スマホの「戻る」を押した）開いている窓を全部閉じる（2026-10-14 ユーザー確定 A）。
+  //    窓を足したら、ここにも足すこと（足し忘れると「戻る」でページだけ戻り、窓が残る）。入力中の文は消さない
+  const boardLocation = useLocation();
+  const boardLocKey = useRef(boardLocation.key);
+  useEffect(() => {
+    if (boardLocKey.current === boardLocation.key) return;
+    boardLocKey.current = boardLocation.key;
+    setConfirmDialog(null); setDeleteConfirmId(null);
+    setShowSendConfirm(false); setShowReplySendConfirm(false); setShowComposeSendConfirm(false);
+    setTplOpen(false); setTplSave(null); setTplPendingUse(null); setTplDeleteId(null);
+    setShowGroupModal(false); setShowMemberModal(false); setShowMemberList(false); setShowDMSearch(false);
+    setReadDetailMsgId(null); setUnconfirmedMsgId(null); setReplyCloseFor(null);
+  }, [boardLocation.key]);
   const [readDetailUsers,  setReadDetailUsers]  = useState<{ user_id: string; read_at: string }[]>([]);
   const [_showReadDetail,  setShowReadDetail]   = useState(true); // 設定: 全員が既読詳細を見れるか
 

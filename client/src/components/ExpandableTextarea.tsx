@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 /**
  * 連絡板の本文の入力欄（2026-10-14 ユーザー確定）。お知らせ送信・グループ・DM の3か所が同じこれを使う。
@@ -32,6 +33,14 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const bigRef = useRef<HTMLTextAreaElement | null>(null);
   const [full, setFull] = useState(false);
+  // 表示が変わったら（「戻る」など）全画面を閉じる。書いた文は残る（2026-10-14）
+  const location = useLocation();
+  const locKey = useRef(location.key);
+  useEffect(() => {
+    if (locKey.current === location.key) return;
+    locKey.current = location.key;
+    setFull(false);
+  }, [location.key]);
 
   // 打つたびに、中身に合わせて伸ばす（上限まで）。空になったら最初の高さに戻す
   useLayoutEffect(() => {
