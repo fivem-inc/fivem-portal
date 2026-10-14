@@ -424,6 +424,8 @@ export interface RecordInput {
   nowIso: string;
   /** 自分で受理する終日の休みで「シフト調整：調整不要」を選んだか（2026-10-14・選べるのは leave_shift_adjust の人だけ。DB でも確かめる） */
   shiftNotNeeded?: boolean;
+  /** 出張報告から作った申請の日（2026-10-14・表示だけ）。undefined のときは触らない（送り直し・実績報告で消さない） */
+  fromTripDate?: string | null;
 }
 
 /**
@@ -480,6 +482,7 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     //    これが無いと受理者からは「ただの新しい申請」に見え、何が変わったのか分からない。
     //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
     modified_from_id: v.modifiedFromId,
+    ...(v.fromTripDate !== undefined ? { from_trip_date: v.fromTripDate } : {}),
     ...((isSelfReview || isPureZero) ? { confirmed_by: v.userId, confirmed_at: v.nowIso } : {}),
     // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・長岡さんの指摘）。
     //    上長が受理する経路（Edge Function overtime-approve）はこの日時を入れるのに、

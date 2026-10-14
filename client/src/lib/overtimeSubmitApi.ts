@@ -14,6 +14,7 @@ import type { WorkSegment } from './breakCalc';
 import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlackBatch } from './overtimeNotify';
 import type { BulkWriter, ExistingManual } from './overtimeBulkSend';
 import type { GridReport } from './overtimeGrid';
+import { loadMyTripPendingDays } from './tripPending';
 
 export type SaveStage = 'insert' | 'update' | 'conflict' | 'seg_delete' | 'seg_insert';
 
@@ -123,6 +124,18 @@ export async function confirmAsPlanned(reportId: string): Promise<boolean> {
   const { data, error } = await supabase.rpc('overtime_confirm_as_planned', { p_id: reportId });
   if (error) { console.error('[残業] 予定どおりの確認済みにできませんでした', error.message); return false; }
   return data === true;
+}
+
+/**
+ * 出張報告から作った残業申請が、決定済みのシフト表どおりなら受理を省いて確認済みにする（2026-10-14）。
+ * 🚨 合うかは DB の overtime_confirm_trip_rostered が決める（画面の値は信じない）。合わなければ理由が返り、上長の画面にも出る。
+ *    失敗しても送信そのものは止めない（今までどおり受理待ち）
+ */
+export async function confirmTripRostered(reportId: string): Promise<{ confirmed: boolean; reason: string | null }> {
+  const { data, error } = await supabase.rpc('overtime_confirm_trip_rostered', { p_id: reportId });
+  if (error) { console.error('[残業] 出張の確認済みにできませんでした', error.message); return { confirmed: false, reason: null }; }
+  const r = (data ?? {}) as { confirmed?: boolean; reason?: string | null };
+  return { confirmed: r.confirmed === true, reason: r.reason ?? null };
 }
 
 /**
@@ -251,6 +264,11 @@ export const supabaseBulkWriter: BulkWriter = {
   bell: notifyOvertimeNewRequestBell,
   email: notifyOvertimeNewRequestEmail,
   confirmAsPlanned,
+  async tripPendingDates() {
+    const r = await loadMyTripPendingDays();
+    return new Set(r.days.filter(d => d.form === 'overtime').map(d => d.work_date));
+  },
+  confirmTripRostered,
   slack: sendOvertimeSlackBatch,
   gcal: syncOvertimeGcal,
 };

@@ -8,7 +8,8 @@ import { supabase } from './supabaseClient';
 //    日付で判定するので、その日が来れば自動で切り替わる（夜中に設定を書き換える仕組みは使わない）。
 //    延ばす・戻すときは値を変えるだけ（deploy 不要）
 
-function useAppDateSetting(key: string): string | null {
+/** app_settings の日付の設定（"YYYY-MM-DD"）。読めない・空なら null。出張報告からの申請（trip_apply_start）も使う */
+export function useAppDateSetting(key: string): string | null {
   const [v, setV] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;

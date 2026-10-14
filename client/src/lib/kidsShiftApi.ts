@@ -10,7 +10,7 @@ import { normTime } from './shiftRoster';
 import type {
   ShiftBoard,
   KidsCellValue, KidsCellVersion, KidsItem, KidsPerson, KidsPlace, KidsPlan, KidsPlanCell,
-  KidsRoleKind, KidsRowKind, KidsSettings, KidsStaffLite,
+  KidsRoleKind, KidsRowKind, KidsSettings, KidsStaffLite, TripLocationOption,
 } from './kidsShift';
 
 export interface KidsNote {
@@ -33,6 +33,8 @@ export interface KidsData {
   staff: KidsStaffLite[];
   /** 「確認した」の記録。🚨 決定済みの表のマス（cell_id）か、案のマス（plan_cell_id）のどちらかに付く */
   acks: { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[];
+  /** 出張の行き先リスト（出張報告と同じ・終了した行も読む＝古いマスの名前を出すため・2026-10-14） */
+  tripLocations: TripLocationOption[];
 }
 
 interface RawPerson { user_id: string; role: string; start_time: string | null; end_time: string | null; sort_order: number }
@@ -41,21 +43,28 @@ interface RawItem {
   start_time: string | null; end_time: string | null; class_name: string | null;
   groups: number | null; required: number | null; min_lesson: number | null;
   role_key: string | null; is_none: boolean; note: string | null; sort_order: number;
-  split_time: string | null; video: string | null; use_pool: boolean | null;
+  split_time: string | null; video: string | null; use_pool: boolean | null; trip_location_id: string | null;
   kids_shift_item_people: RawPerson[] | null;
 }
 
 const ITEM_COLS =
   'id, cell_id, plan_cell_id, kind_key, start_time, end_time, class_name, groups, required, min_lesson, role_key, is_none, note, sort_order,'
-  + ' split_time, video, use_pool,'
+  + ' split_time, video, use_pool, trip_location_id,'
   + ' kids_shift_item_people(user_id, role, start_time, end_time, sort_order)';
+
+/**
+ * 行き先の「表の名前」（短い名前 → 無ければリストの名前）。loadKidsData が入れ、toItems が使う（2026-10-14）。
+ * 🚨 行き先があるマスは、表の名前をクラス名として見せる（印刷・Excel・人ごとの表もクラス名を読むため）。
+ *    短い名前を直すと、DB のクラス名は次にそのマスを保存したときに変わる（それまでも画面はこの名前で出る）
+ */
+let tripLabels = new Map<string, string>();
 
 function toItems(rows: RawItem[]): KidsCellValue {
   return [...rows].sort((a, b) => a.sort_order - b.sort_order).map<KidsItem>(r => ({
     kind: r.kind_key,
     start: normTime(r.start_time),
     end: normTime(r.end_time),
-    class_name: r.class_name ?? '',
+    class_name: (r.trip_location_id ? tripLabels.get(r.trip_location_id) : undefined) ?? r.class_name ?? '',
     groups: r.groups,
     required: r.required,
     min_lesson: r.min_lesson,
@@ -72,6 +81,7 @@ function toItems(rows: RawItem[]): KidsCellValue {
     split_time: normTime(r.split_time),
     video: r.video === 'first' || r.video === 'second' ? r.video : null,
     use_pool: r.use_pool === true,
+    trip_location_id: r.trip_location_id ?? null,
   }));
 }
 
@@ -87,7 +97,7 @@ const DEFAULT_SETTINGS: KidsSettings = {
  * 🚨 board でその表の分だけ読む（2026-10-06：大人シフト表も同じ表で持つため。絞らないと大人の列がこどもの表に出る）
  */
 export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'): Promise<{ data: KidsData | null; error: string | null }> {
-  const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes, ackRes] = await Promise.all([
+  const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes, ackRes, tripRes] = await Promise.all([
     supabase.from('kids_shift_places').select('id, board, kind, school, floor, label, sort_order, active').eq('board', board).order('sort_order'),
     supabase.from('kids_shift_row_kinds').select('key, label, has_class, has_groups, has_people, issue_mode, sort_order, active, boards, default_minutes')
       .contains('boards', [board]).order('sort_order'),
@@ -108,13 +118,14 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
     supabase.from('profiles').select(`id, name, employment_type, ${PREHIRE_COLS}`).order('name'),
     supabase.from('staff_main_work_areas').select('user_id, shift_work_areas(name)'),
     supabase.from('kids_shift_acks').select('cell_id, plan_cell_id, issue_key'),
+    supabase.from('master_options').select('id, category, value, short_label, sort_order, ended_at').like('category', 'trip_location_%').order('sort_order'),
   ]);
 
   const failed = [
     placeRes.error && '置き場所', kindRes.error && '行の種類', roleRes.error && '役割', cellRes.error && 'マス',
     planRes.error && '案', noteRes.error && '書き添え', setRes.error && '設定', flagRes.error && 'レッスンできる印',
     labelRes.error && '呼び名', staffRes.error && 'スタッフ', areaRes.error && 'メインの部門',
-    ackRes.error && '確認した記録',
+    ackRes.error && '確認した記録', tripRes.error && '出張の行き先',
   ].filter(Boolean);
   if (failed.length > 0) return { data: null, error: `${failed.join('・')}を読み込めませんでした` };
 
@@ -124,6 +135,9 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
     const a = Array.isArray(r.shift_work_areas) ? r.shift_work_areas[0] : r.shift_work_areas;
     if (a?.name) areaByUser.set(r.user_id, a.name);
   }
+
+  const tripLocations = (tripRes.data ?? []) as TripLocationOption[];
+  tripLabels = new Map(tripLocations.map(o => [o.id, o.short_label || o.value]));
 
   type CellRow = { id: string; place_id: string; day_kind: string; valid_from: string; valid_to: string | null; kids_shift_items: RawItem[] | null };
   const cells: KidsCellVersion[] = ((cellRes.data ?? []) as CellRow[]).map(c => ({
@@ -152,6 +166,7 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
       staff: ((staffRes.data ?? []) as ({ id: string; name: string; employment_type: string | null } & PrehireFields)[])
         .map<KidsStaffLite>(p => ({ id: p.id, name: p.name, employment_type: p.employment_type, is_active: isShiftRosterMember(p), main_area: areaByUser.get(p.id) ?? null })),
       acks: (ackRes.data ?? []) as { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[],
+      tripLocations,
     },
     error: null,
   };
@@ -200,6 +215,7 @@ export function toPayloadCells(cells: { placeId: string; day: string; items: Kid
       split_time: normTime(it.split_time) || null,
       video: it.video,
       use_pool: it.use_pool,
+      trip_location_id: it.trip_location_id || null,
       people: (it.people ?? []).map(p => ({
         user_id: p.user_id,
         role: p.role,
@@ -313,6 +329,15 @@ export async function saveMasterRow(
  *  🚨 決定済みの表のマスなら cellId、案のマスなら planCellId を渡す（DBの決まりでどちらか一方）。
  *  🚨 二度押し（23505）は成功として扱う。すでにそうなっているので失敗ではない。
  *  🚨 0件でもエラーにならないので件数を見る。 */
+/**
+ * 出張の行き先の「表の名前」（短い名前）を変える（2026-10-14）。その場で保存（シフト表の［保存］とは別）。
+ * 🚨 書けるのはシフト表を直せる人と管理者だけ（DB の master_option_set_short_label が確かめる）。空にするとリストの名前に戻る
+ */
+export async function setTripShortLabel(id: string, label: string): Promise<string | null> {
+  const { error } = await supabase.rpc('master_option_set_short_label', { p_id: id, p_label: label });
+  return error ? error.message : null;
+}
+
 export async function ackKidsIssue(
   owner: { cellId: string } | { planCellId: string }, issueKey: string,
 ): Promise<string | null> {

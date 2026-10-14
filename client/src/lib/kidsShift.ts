@@ -87,6 +87,26 @@ export interface KidsItem {
   video: 'first' | 'second' | null;
   /** こども：本校の「3F・5F 共通の人」で回すクラス */
   use_pool: boolean;
+  /** 大人の出張・こどもの園指導の行き先（行き先リストの行の id・2026-10-14）。出張報告と照らし合わせて受理なしを決める */
+  trip_location_id: string | null;
+}
+
+/** 出張の行き先リストの1行（master_options の trip_location_*・2026-10-14） */
+export interface TripLocationOption {
+  id: string;
+  category: string;
+  value: string;
+  short_label: string | null;
+  sort_order: number;
+  ended_at: string | null;
+}
+/** 行き先を持てる行（大人の表の出張・こどもの表の園指導）。🚨 DB の kids_shift_check_items と同じ組み合わせ */
+export function canHaveTripLocation(board: ShiftBoard, kind: string): boolean {
+  return (board === 'adult' && kind === 'trip') || (board === 'kids' && kind === 'garden');
+}
+/** シフト表に出す行き先の名前（短い名前 → 無ければリストの名前） */
+export function tripLocationLabel(o: TripLocationOption | null | undefined): string {
+  return o ? (o.short_label || o.value) : '';
 }
 
 export type KidsCellValue = KidsItem[];
@@ -136,7 +156,7 @@ export function emptyItem(kind: string): KidsItem {
   return {
     kind, start: '', end: '', class_name: '', groups: null, required: null, min_lesson: null,
     role_key: kind === 'role' ? '' : null, is_none: false, note: '', people: [],
-    split_time: '', video: null, use_pool: false,
+    split_time: '', video: null, use_pool: false, trip_location_id: null,
   };
 }
 
@@ -161,7 +181,9 @@ export function sigOfItems(items: KidsCellValue): string {
     // 🚨 2026-10-06：境・映像・共通の印は「値があるときだけ」末尾に足す（DB と同じ。今の署名を変えないため）
     + (normTime(it.split_time) || it.video || it.use_pool
       ? `/+${normTime(it.split_time)}:${it.video ?? ''}:${it.use_pool ? 'true' : 'false'}`
-      : '')).join('|');
+      : '')
+    // 🚨 2026-10-14：行き先も「値があるときだけ」足す（DB と同じ）
+    + (it.trip_location_id ? `/@${it.trip_location_id}` : '')).join('|');
 }
 
 export function cellEquals(a: KidsCellValue, b: KidsCellValue): boolean {

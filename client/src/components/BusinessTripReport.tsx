@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -12,6 +12,8 @@ import SearchableSelect from './common/SearchableSelect';
 import HelpLinkButton from './HelpLinkButton';
 import type { AuthUser, BusinessTripReport } from '../types';
 import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE, PAGE_TAB_GREEN } from '../lib/buttonStyles';
+import { toJstDateStr } from '../lib/breakCalc';
+import { loadMyTripPendingDays, tripDraftNote, useTripApplyStart } from '../lib/tripPending';
 
 // 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
 interface TripHistoryRow {
@@ -37,8 +39,13 @@ interface TripDraft {
   notes: string; nextDates: string[]; slackComment: string; selectedChannels: string[];
 }
 
-const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; onClose: () => void }> = ({ message, icon = 'check', onClose }) => {
-  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
+// note・action は出張の申請の下書きの案内（2026-10-14）。🚨 ボタンがあるときは自動で閉じない（押す前に消えるため）
+const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; note?: string; action?: { label: string; href: string }; onClose: () => void }> = ({ message, icon = 'check', note, action, onClose }) => {
+  useEffect(() => {
+    if (action) return;
+    const t = setTimeout(onClose, note ? 8000 : 3000);
+    return () => clearTimeout(t);
+  }, [onClose, note, action]);
   return (
     <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
       <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, textAlign: 'center', position: 'relative' }}>
@@ -47,6 +54,12 @@ const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; onClos
           <span style={{ fontSize: 26, color: '#28a745' }}>{icon === 'send' ? '📤' : '✓'}</span>
         </div>
         <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+        {note && (
+          <div style={{ fontSize: 13, color: '#155724', marginTop: 8, lineHeight: 1.6, maxWidth: 300, textAlign: 'left' }}>
+            {note}
+            {action && <>（<Link to={action.href} onClick={onClose} style={{ color: '#1565c0', textDecoration: 'underline', whiteSpace: 'nowrap' }}>{action.label}</Link>）</>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -172,24 +185,29 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   // 区分リスト・場所プリセット（DBから取得）
   const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', 'イベント（下見）', 'その他']);
   const [locationPresets, setLocationPresets] = useState<Record<string, string[]>>({});
+  // 区分 → 場所の名前 → 行（id）。送るときに「リストのどの行を選んだか」も残す（名前は後から直されるため・2026-10-14）
+  const [locationIds, setLocationIds] = useState<Record<string, Record<string, string>>>({});
 
   useEffect(() => {
     Promise.all([
       // 終了にした区分・場所は選択肢に出さない（管理画面の［終了］・2026-10-07。これまでの報告は名前を文字で持つのでそのまま）
       supabase.from('master_options').select('value, sort_order').eq('category', 'trip_category').is('ended_at', null).order('sort_order'),
-      supabase.from('master_options').select('category, value, sort_order').like('category', 'trip_location_%').is('ended_at', null).order('sort_order'),
+      supabase.from('master_options').select('id, category, value, sort_order').like('category', 'trip_location_%').is('ended_at', null).order('sort_order'),
     ]).then(([catRes, locRes]) => {
       if (catRes.data && catRes.data.length > 0) {
         setCategories(catRes.data.map(r => r.value));
       }
       if (locRes.data) {
         const map: Record<string, string[]> = {};
+        const ids: Record<string, Record<string, string>> = {};
         locRes.data.forEach(row => {
           const catName = row.category.replace('trip_location_', '');
           if (!map[catName]) map[catName] = [];
           map[catName].push(row.value);
+          (ids[catName] ??= {})[row.value] = row.id;
         });
         setLocationPresets(map);
+        setLocationIds(ids);
       }
     });
   }, []);
@@ -217,6 +235,11 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   const [showConfirm, setShowConfirm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // 出張報告から申請の下書きを作る機能が始まっているか（説明の3行目を出すか・2026-10-16 から）
+  const tripStart = useTripApplyStart();
+  const tripDraftOn = !!tripStart && toJstDateStr(new Date()) >= tripStart;
+  // 送ったあとに添える「申請の下書きを作成しました」（その日がまだの日の一覧に入ったときだけ・2026-10-14）
+  const [tripNote, setTripNote] = useState<{ type: '到着' | '終了'; note: string; action?: { label: string; href: string } } | null>(null);
 
   // ── 履歴タブ ──
   const [historyRows, setHistoryRows] = useState<TripHistoryRow[]>([]);
@@ -359,6 +382,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         accuracy: gps?.accuracy ?? null,
         address: address || undefined,
         next_dates: nextDates.length > 0 ? nextDates.sort().join(',') : undefined,
+        // 🚨 リストの場所を押したときだけ（自分で書いた場所・書き換えた場所は空）
+        location_option_id: (!useCustomLocation && locationIds[category]?.[location]) || null,
       };
 
       // 通知をタップして該当の報告へ飛べるようにするため、登録した報告のIDを受け取る
@@ -397,6 +422,13 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         } catch (e) { console.error('Slack通知エラー:', e); }
       }
 
+      // その日の申請の下書きができたか（まだの日の一覧に今日が入ったか）。読めなくても報告は成功なので黙って何も添えない
+      {
+        const today = toJstDateStr(new Date());
+        const pend = await loadMyTripPendingDays();
+        const day = pend.days.find(x => x.work_date === today);
+        setTripNote(day ? tripDraftNote(reportType, day) : null);
+      }
       setSubmitted(true);
       setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       setShowConfirm(false);
@@ -649,6 +681,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         {[
           '出張・園指導・イベント・試合などの勤怠を報告できます',
           '到着時と終了時に送信してください',
+          ...(tripDraftOn ? ['送ると、その日の残業申請（パートの方は勤務変更）の下書きができます'] : []),
         ].map((text, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 6px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
@@ -658,7 +691,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
       </div>
 
       {submitted && (
-        <BannerSuccess message="報告を送信しました！" onClose={() => setSubmitted(false)} />
+        <BannerSuccess message={tripNote ? `${tripNote.type}の報告を送信しました。` : '報告を送信しました！'}
+          note={tripNote?.note} action={tripNote?.action}
+          onClose={() => { setSubmitted(false); setTripNote(null); }} />
       )}
 
       {/* タブ：上段＝報告する（到着／終了）、下段＝見る（履歴）。

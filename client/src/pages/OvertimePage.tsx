@@ -24,8 +24,9 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
+import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
+import { loadMyTripPendingDays, tripDayLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, mayConfirmAsPlanned, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
@@ -111,6 +112,10 @@ interface OvertimeReport {
   /** 「開始が遅い／早く終わる理由」で押した事情（adj／event／telework）。札の表記に使う（2026-09-26） */
   late_situation?: string | null;
   early_situation?: string | null;
+  /** 出張報告から作った申請の日（表示だけ・2026-10-14） */
+  from_trip_date?: string | null;
+  /** 出張報告から作った申請で、受理が要った理由（DB の overtime_confirm_trip_rostered が書く） */
+  trip_review_reason?: string | null;
   status: OvertimeStatus;
   normal_shift: NormalShiftSnapshot | null;
   break_minutes: number | null;
@@ -520,6 +525,9 @@ interface FormDraft {
    *  入力画面の上に黄色い枠（シフト・打刻・経理のひとこと）を出し、終わりの時刻に退勤の打刻を入れる。
    *  🚨 自動保存にも必ず書くこと（書かないと1文字打った瞬間に枠が消える） */
   clockInquiryHint?: ClockInquiryHint;
+  /** 出張報告から開いたとき（2026-10-14）。入力欄の上に黄色い枠（出張報告の時刻・シフト）を出し、時刻は全部空欄にする。
+   *  🚨 自動保存にも必ず書くこと（書かないと1文字打った瞬間に枠が消え、受理なしの確かめもされない） */
+  tripHint?: TripPendingDay;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -563,6 +571,8 @@ const OvertimeForm: React.FC<{
   const requestFrom = (draft?.requestFrom ?? '').trim();
   // 打刻の確認から開いたときの手がかり（日付を変えたら出さない）
   const inquiryHint = draft?.clockInquiryHint ?? null;
+  // 出張報告から開いたときの手がかり（日付を変えたら出さない・申請にも印を付けない）
+  const tripHint = draft?.tripHint ?? null;
   // 「申請の依頼」から開いたときは、**入力欄の先頭**まで移動する（2026-09-10 実機指摘）。
   // 🚨 ページ側でフォームの箱までスクロールしていたが、箱の先頭には注意事項の一覧があり、
   //    入力欄が画面に出なかった。移動先はこのフォームが自分で持つ（呼び出し側に持たせると、
@@ -760,6 +770,7 @@ const OvertimeForm: React.FC<{
       memoLabel: memoLink?.label,
       memoDate: memoLink?.date,
       clockInquiryHint: draft?.clockInquiryHint,
+      tripHint: draft?.tripHint,
     } satisfies FormDraft);
   }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd, memoLink]);
 
@@ -849,6 +860,8 @@ const OvertimeForm: React.FC<{
     //    autoFilledSegs はシフトのままにする＝空欄にした時点で「触った」扱い（［定時で記録する］を出さない）
     const side = inquiryHint && inquiryHint.date === date ? (inquiryHint.askSide ?? 'after') : null;
     let segs = filled;
+    // 出張報告から来た日は、開始・終わりを全部空欄にする（到着・終了の報告は勤務の開始・終わりではないため・2026-10-14 ユーザー確定）
+    if (tripHint && tripHint.work_date === date) segs = segs.map(() => ({ ...EMPTY_SEG }));
     if (side === 'after' || side === 'both') segs = segs.map((x, i) => (i === segs.length - 1 ? { ...x, end: '' } : x));
     if (side === 'before' || side === 'both') segs = segs.map((x, i) => (i === 0 ? { ...x, start: '' } : x));
     setSegments(segs);
@@ -1336,6 +1349,8 @@ const OvertimeForm: React.FC<{
         reviewerId, modifiedFromId: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
         clockOnlyMode, effectiveClockReason, clockInAt, clockOutAt, nowIso: new Date().toISOString(),
         shiftNotNeeded: fullDayMode && isSelfReview && !!canChooseShiftAdjust && selfShiftNotNeeded,
+        // 出張報告から作った申請の印（表示だけ）。新規で、出張の日のままのときだけ付ける
+        fromTripDate: (!editTarget && tripHint && tripHint.work_date === date) ? date : undefined,
       }, toDbTime);
 
       // 🚨 書き込み（新規の登録／実績報告・再提出の書き換え／時間帯）は lib/overtimeSubmitApi の saveOvertimeReport（表の入力と共用）
@@ -1377,7 +1392,11 @@ const OvertimeForm: React.FC<{
       const asPlanned = mayConfirmAsPlanned({
         isReportPhase, editStatus: editTarget?.status, hasChanges, isPureZero, isSelfReview, clockOnly: clockOnlyMode,
       }) && await confirmAsPlanned(reportId);
-      if (asPlanned) {
+      // 出張報告から作った実績の報告：決定済みのシフト表どおりなら受理を省く（2026-10-14 ユーザー確定）。上長へは DB がベルだけ送る
+      const trip = (!editTarget && !asPlanned && !isSelfReview && !isPureZero && !clockOnlyMode && phase === 'actual' && !fullDayMode
+        && tripHint && tripHint.work_date === date) ? await confirmTripRostered(reportId) : null;
+      const tripConfirmed = trip?.confirmed === true;
+      if (asPlanned || tripConfirmed) {
         sendOvertimeSlack(reportId, 'overtime:confirmed').then(null, () => {});
       } else if (shouldNotifyReviewer({ isSelfReview, isPureZero, clockOnly: clockOnlyMode, reviewerId })) {
         notifyOvertimeNewRequest({
@@ -1428,7 +1447,11 @@ const OvertimeForm: React.FC<{
 
       if (!editTarget) clearDraft(DRAFT_KEYS.overtime);
       setSaving(false);
-      onSaved(gcalWarn, asPlanned ? '予定どおりなので、受理を待たずに確認済みになりました' : undefined);
+      const reviewerName = reviewers.find(r => r.id === reviewerId)?.name ?? '';
+      onSaved(gcalWarn, asPlanned ? '予定どおりなので、受理を待たずに確認済みになりました'
+        : tripConfirmed ? 'シフト表どおりの出張のため、受理なしで確定しました'
+        : trip ? `${reviewerName ? `${reviewerName}さんの` : ''}受理を待ちます${trip.reason ? `（受理が要る理由：${trip.reason}）` : ''}`
+        : undefined);
     } catch {
       setSaving(false);
       setShowConfirm(false);
@@ -2295,6 +2318,15 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {/* 出張報告から開いたときの手がかり（2026-10-14・打刻の確認の枠と同じ形）。時刻は空欄にしてある */}
+      {!fullDay && !clockOnlyMode && tripHint && tripHint.work_date === date && (
+        <div style={{ background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12.5, color: isDark ? '#f5e3b0' : '#5c4400', lineHeight: 1.7 }}>
+          <b>実際に勤務した時間を入れてください</b><br />
+          出張報告：{tripTimesText(tripHint)}（{tripHint.location}）<br />
+          シフト：{normalShiftTimeText(normalShift) || '休み'}{normalShift.location ? ` ${normalShift.location}` : ''}<br />
+          <span>※ 到着・終了は報告を送った時刻です。勤務の開始・終わりではありません。開始と終わりの時刻は空欄にしています（入れないと送れません）。</span>
+        </div>
+      )}
       {!fullDay && !clockOnlyMode && inquiryHint && inquiryHint.date === date && (
         <div style={{ background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12.5, color: isDark ? '#f5e3b0' : '#5c4400', lineHeight: 1.7 }}>
           <b>実際に勤務した時間を入れてください</b><br />
@@ -2782,6 +2814,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const isConfirmView = searchParams.get('view') === 'confirm';
 
   const tabParam = searchParams.get('tab');
+  // 出張報告の「今すぐ申請する →」から来たとき（?trip=日付・2026-10-14）
+  const tripParam = searchParams.get('trip');
   const focusParam = searchParams.get('focus');
   const [tab, setTab] = useState<'form' | 'bulk' | 'history'>(tabParam === 'history' ? 'history' : 'form');
   // ［まとめて申請］を使えなくなったら（役職プレビューの切り替えなど）、いつものタブに戻す
@@ -3363,15 +3397,66 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setAppRequests(r.rows);
   }, [user.id]);
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
+  // ─── 出張の申請がまだの日（2026-10-14 ユーザー確定・計画 docs/計画-出張報告から申請.md） ───
+  // 🚨 どの日がまだかは DB の my_trip_pending_days だけで決める（出張報告の画面・勤務変更と同じ答え）。読めなければ出さない
+  const [tripDays, setTripDays] = useState<TripPendingDay[]>([]);
+  const [tripLoaded, setTripLoaded] = useState(false);
+  const [tripReplaceFor, setTripReplaceFor] = useState<string | null>(null);
+  const [tripNotice, setTripNotice] = useState('');
+  // フォームを作り直すための番号（一覧から別の日の下書きを開いたとき・フォームは開いたときに下書きを読むため）
+  const [formKey, setFormKey] = useState(0);
+  const fetchTripDays = useCallback(async () => {
+    const r = await loadMyTripPendingDays();
+    setTripLoaded(true);
+    if (r.error) { console.error('[出張の申請がまだの日] 読み込めませんでした', r.error); return; }
+    setTripDays(r.days.filter(d => d.form === 'overtime'));
+  }, []);
+  useEffect(() => { void fetchTripDays(); }, [fetchTripDays]);
+  /** まだの日から、日付・勤務地を入れた下書きにしてフォームを開く。時刻と理由は空（本人が入れる） */
+  const startFromTrip = (day: TripPendingDay, force = false) => {
+    // 🚨 いまの下書きを黙って消さない（申請の依頼と同じ流儀）
+    const cur = loadDraft<FormDraft>(DRAFT_KEYS.overtime);
+    const same = cur?.tripHint?.work_date === day.work_date;
+    const hasDraft = !!cur && !same && (!!cur.date || (cur.segments ?? []).some(x => x.start || x.end) || !!cur.reason);
+    if (hasDraft && !force) { setTripReplaceFor(day.work_date); return; }
+    setTripReplaceFor(null);
+    if (!same) {
+      saveDraft(DRAFT_KEYS.overtime, {
+        mode: 'posthoc', date: day.work_date,
+        segments: [{ start: '', end: '' }],
+        breakManual: false, breakManualMin: '',
+        // 🚨 勤務地は出張の行き先（その他）。理由は空（本人の言葉で書く・2026-09-10 の決まり）
+        reason: '', location: 'その他', locationCustom: day.location, reviewerId: '',
+        normOverride: false, normStart: '', normEnd: '',
+        tripHint: day,
+      } satisfies FormDraft);
+    }
+    sessionStorage.setItem(SCROLL_ONCE_KEY, '1');
+    setEditTarget(null);
+    setTab('form');
+    setFormKey(k => k + 1);
+  };
+  // ?trip=日付 で来たら、その日の下書きを開く（一覧を読み終えてから・1回だけ）
+  const tripParamDone = useRef(false);
+  useEffect(() => {
+    if (!tripParam || tripParamDone.current || !tripLoaded) return;
+    tripParamDone.current = true;
+    const day = tripDays.find(d => d.work_date === tripParam);
+    if (day) startFromTrip(day);
+    else setTripNotice(`${tripDayLabel(tripParam)} の申請はすでにあります。［履歴・実績報告］で確かめられます。`);
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('trip'); return n; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripParam, tripDays, tripLoaded]);
+
   // 依頼が届いているときは、開いた直後に履歴タブへ移す（依頼カードはこのタブの中にしか無い）。
   // 🚨 最初の1回だけ。あとから切り替えると、入力中のフォームを人の操作なしに閉じてしまう
   // 🚨 URL で tab を指定して来たとき（ベルからの ?tab=history など）はそちらに任せる
   const autoTabDone = useRef(false);
   useEffect(() => {
-    if (autoTabDone.current || tabParam || appRequests.length === 0) return;
+    if (autoTabDone.current || tabParam || tripParam || appRequests.length === 0) return;
     autoTabDone.current = true;
     setTab('history');
-  }, [appRequests.length, tabParam]);
+  }, [appRequests.length, tabParam, tripParam]);
   // ?focus=<依頼ID> で来たとき、その依頼カードまで移動して光らせる（2026-09-10 実機指摘）。
   // 🚨 **共通フック useFocusHighlight を使う**（休暇の承認画面と同じもの）。
   //    最初は自分で書いていたが、同じ処理が2か所になるうえ、こちらは6秒後に URL から
@@ -3633,9 +3718,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   <div style={{ display: 'flex', gap: 4 }}>
                     {r.is_post_hoc && <span style={badgeStyle(POSTHOC_BADGE.color, POSTHOC_BADGE.darkBg, isDark)}>事後報告</span>}
                     {r.modified_from_id && <span style={badgeStyle(MODIFIED_BADGE.color, MODIFIED_BADGE.darkBg, isDark)}>🔁 修正</span>}
+                    {r.from_trip_date && <span style={badgeStyle(MODIFIED_BADGE.color, MODIFIED_BADGE.darkBg, isDark)}>📍 出張報告から</span>}
                     <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>
                   </div>
                 </div>
+
+                {/* 出張報告から作った申請（2026-10-14）。シフト表どおりなら受理なしで確定するので、ここに来たのは受理が要った理由がある申請 */}
+                {r.from_trip_date && (
+                  <p style={{ margin: '0 0 6px', padding: '6px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7,
+                    background: isDark ? '#3a2e10' : '#fff8e1', color: isDark ? '#f5e3b0' : '#5c4400' }}>
+                    📍 出張報告から作った申請です（勤務地：{r.location || '—'}）
+                    {r.trip_review_reason && <><br />受理が必要な理由：{r.trip_review_reason}</>}
+                  </p>
+                )}
 
                 {/* 🚨 何が変わったのかが分からないまま受理させない。修正前の内容を並べて出す。
                     元の申請が消えている（物理削除された）ときは、その旨だけ出す */}
@@ -3969,8 +4064,46 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               reviewers={reviewers} workplaces={workplaces} canChooseCalendar={canChooseCalendar} canChooseShiftAdjust={canChooseShiftAdjust}
               onSent={() => { fetchOwn(); fetchOwnCard(); fetchAppRequests(); }}
             />
-          ) : tab === 'form' || tab === 'bulk' ? (
+          ) : tab === 'form' || tab === 'bulk' ? (<>
+            {tripNotice && !editTarget && (
+              <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, color: text, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ flex: 1 }}>{tripNotice}</span>
+                <button onClick={() => setTripNotice('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText }}>✕</button>
+              </div>
+            )}
+            {/* 📋 出張の申請がまだの日（2026-10-14）。出すまで毎日残る。🚨 件数は履歴タブの数字に足さない（何の件数か分からなくなるため） */}
+            {!editTarget && tripDays.length > 0 && (
+              <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}` }}>
+                <div style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#f5e3b0' : '#5c4400', marginBottom: 4 }}>📋 出張の申請がまだの日（{tripDays.length}件）</div>
+                <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>出張報告から、日付と勤務地を入れた下書きを作っています。時刻を入れて申請してください。</div>
+                {tripDays.map(day => (
+                  <div key={day.work_date} style={{ borderTop: `1px solid ${isDark ? '#5a4a20' : '#ffe0b2'}`, padding: '7px 0' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: 12.5, color: text, lineHeight: 1.6 }}>
+                        {tripDayLabel(day.work_date)} 出張 {day.location}
+                        {day.span_start !== day.span_end && <span style={{ color: subText }}>（{tripDayLabel(day.span_start, false)}〜{tripDayLabel(day.span_end, false)}）</span>}
+                        <br /><span style={{ fontSize: 11.5, color: subText }}>{tripTimesText(day)}</span>
+                      </div>
+                      <button onClick={() => startFromTrip(day)}
+                        style={{ flexShrink: 0, padding: '5px 10px', borderRadius: 8, border: `1px solid ${TOGGLE_BLUE}`, background: 'transparent', color: TOGGLE_BLUE, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>内容を確認 ›</button>
+                    </div>
+                    {tripReplaceFor === day.work_date && (
+                      <div style={{ marginTop: 6, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                        <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。この出張の下書きに置き換えますか？</p>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => startFromTrip(day, true)}
+                            style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                          <button onClick={() => setTripReplaceFor(null)}
+                            style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <OvertimeForm
+              key={formKey}
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
               editTarget={editTarget}
@@ -3982,7 +4115,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               onSaved={(gcalWarn, note) => {
                 setSavedBanner(true); setSavedNote(note ?? '');
                 if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });
-                setEditTarget(null); setTab('history'); fetchOwn(); fetchOwnCard(); window.scrollTo({ top: 0 });
+                setEditTarget(null); setTab('history'); fetchOwn(); fetchOwnCard(); void fetchTripDays(); window.scrollTo({ top: 0 });
               }}
               onClose={() => setEditTarget(null)}
               onOpenExisting={(id) => {
@@ -4004,7 +4137,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 setHistGlowId(id);
               }}
             />
-          ) : (
+          </>) : (
             <>
               {/* 履歴タブの説明＋変更・取消ルール（申請タブの注意事項と同じ見た目） */}
               <div style={{

@@ -27,6 +27,17 @@ import { logFail } from '../lib/logFail';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import type { TodoItem } from '../lib/shiftReportTodo';
+import { loadMyTripPendingDays, tripDayLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
+import { resolveNormalShift, normalShiftBands, type PatternRow } from '../lib/overtimeShift';
+
+/** 申請の画面に最初から入れておく中身。カレンダーの予定（2026-10-05）か、出張報告（2026-10-14）から */
+type ShiftPrefill = TodoItem & {
+  applicantId?: string;
+  /** 出張報告から開いたとき。上に出張報告の時刻を出し、実際の時刻は空欄のまま（本人が入れる） */
+  trip?: TripPendingDay;
+  /** 予定（シフト）の時間帯。出張報告から開いたときに、その日のいつものシフトを入れておく */
+  origSegments?: Seg[];
+};
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { useAuth } from '../hooks/useAuth';
 
@@ -352,7 +363,7 @@ const ShiftReportForm: React.FC<{
   leaderAssignments: LeaderAssignment[];
   inline?: boolean;
   /** カレンダーの予定から開いたとき、入れておく中身（2026-10-05） */
-  prefill?: (TodoItem & { applicantId?: string }) | null;
+  prefill?: ShiftPrefill | null;
   /** 上の「だれの予定を見るか」で選んでいる人（一覧が出ているときだけ）。下の「対象スタッフ」をこれに合わせる（2026-10-05） */
   initialApplicantId?: string;
   /** 下の「対象スタッフ」を変えたとき（上の「だれの予定を見るか」も合わせるため） */
@@ -454,6 +465,7 @@ const ShiftReportForm: React.FC<{
     editTarget
       ? parseSegments(editTarget.original_segments, editTarget.original_start, editTarget.original_end, editTarget.original_outing_start, editTarget.original_outing_end, editTarget.original_location)
       : prefill?.reportTypes.includes('absence') ? [{ start: '', end: '', location: prefill.location ?? '' }]
+      : prefill?.origSegments && prefill.origSegments.length > 0 ? prefill.origSegments.map(x => ({ ...x }))
       : (sd?.origSegs ?? [{ start: '', end: '' }])
   );
   const [actSegs, setActSegs] = useState<Seg[]>(
@@ -641,6 +653,8 @@ const ShiftReportForm: React.FC<{
         status:       isSelfReview ? 'confirmed' : (editTarget ? 'resubmitted' : 'pending'),
         confirmed_by: isSelfReview ? user.id : null,
         confirmed_at: isSelfReview ? now : null,
+        // 出張報告から作った申請の印（表示だけ・新規で出張の日のままのとき・2026-10-14）
+        ...(!editTarget && prefill?.trip && prefill.trip.work_date === date ? { from_trip_date: date } : {}),
       };
       // 確認者へのベルの2行目（新規・再提出で共通）
       const reviewerBellSub = `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`;
@@ -764,7 +778,7 @@ const ShiftReportForm: React.FC<{
                     <option key={s.id} value={s.id}>{s.name}（パート）</option>
                   ))}
                 </select>
-                {prefill && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>カレンダーの予定から入れているため変えられません。別の人にするときは、上の「だれの予定を見るか」で選び直してください。</div>}
+                {prefill && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{prefill.trip ? '出張報告から入れているため変えられません。' : 'カレンダーの予定から入れているため変えられません。別の人にするときは、上の「だれの予定を見るか」で選び直してください。'}</div>}
               </div>
             )}
             {/* 日付 */}
@@ -1194,7 +1208,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   }, [tabParam, focusParam]);
   const [formKey, setFormKey]           = useState(0);
   // カレンダーの予定から開いた中身（2026-10-05）。一覧の件数は送ったあとの「残り◯件」に使う
-  const [prefill, setPrefill]           = useState<(TodoItem & { applicantId: string }) | null>(null);
+  const [prefill, setPrefill]           = useState<ShiftPrefill | null>(null);
   const [todoCount, setTodoCount]       = useState(0);
   // 上の「だれの予定を見るか」と下の「対象スタッフ」は同じ値（2026-10-05・食い違わないようにページで1つだけ持つ）
   const [todoTarget, setTodoTarget]     = useState<string>(() => loadDraft<{ applicantId?: string }>(DRAFT_KEYS.shiftReport)?.applicantId ?? user.id);
@@ -1363,6 +1377,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setShowForm(false); setEditTarget(null);
     setFormKey(k => k + 1);
     fetchMyReports(); fetchPending(); fetchReviewedReports(); fetchProxyReports(); fetchAllReports();
+    if (prefill?.trip) {
+      // 出張報告から出したときも、報告タブに残って次の分も出せるようにする（2026-10-14）
+      const md = `${Number(prefill.date.slice(5, 7))}/${Number(prefill.date.slice(8, 10))}`;
+      setSuccessMsg(`${md} の出張の勤務変更を出しました。確認者の確認を待ちます ✓`);
+      setPrefill(null);
+      void fetchTripDays();
+      return;
+    }
     if (prefill) {
       // カレンダーの予定から出したときは、報告タブに残って次の分も出せるようにする
       const md = `${Number(prefill.date.slice(5, 7))}/${Number(prefill.date.slice(8, 10))}`;
@@ -1375,6 +1397,59 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setTab('history');
   };
   const reportedDates = useMemo(() => new Set(myReports.map(r => r.work_date)), [myReports]);
+
+  // ─── 出張の申請がまだの日（2026-10-14 ユーザー確定・パートの方は勤務変更） ───
+  // 🚨 どの日がまだかは DB の my_trip_pending_days だけで決める（出張報告の画面・残業申請と同じ答え）。
+  // 🚨 権限（カレンダーの予定の一覧）にかけない。パートの方にも必ず出す
+  const [tripDays, setTripDays] = useState<TripPendingDay[]>([]);
+  const [tripLoaded, setTripLoaded] = useState(false);
+  const [tripReplaceFor, setTripReplaceFor] = useState<string | null>(null);
+  const [tripErr, setTripErr] = useState('');
+  const fetchTripDays = useCallback(async () => {
+    const r = await loadMyTripPendingDays();
+    setTripLoaded(true);
+    if (r.error) { console.error('[出張の申請がまだの日] 読み込めませんでした', r.error); return; }
+    setTripDays(r.days.filter(d => d.form === 'shift_report'));
+  }, []);
+  useEffect(() => { void fetchTripDays(); }, [fetchTripDays]);
+  /** まだの日から、日付・勤務地・予定（いつものシフト）を入れて申請の画面を開く。実際の時刻と理由は空 */
+  const pickTrip = async (day: TripPendingDay, force = false) => {
+    // 🚨 書きかけの下書きを黙って消さない（この画面は開いた中身で下書きを上書きするため）
+    const cur = loadDraft<{ date?: string; reason?: string; actSegs?: Seg[] }>(DRAFT_KEYS.shiftReport);
+    const hasDraft = !!cur && (!!cur.reason || (cur.actSegs ?? []).some(x => x.start || x.end));
+    if (hasDraft && !force) { setTripReplaceFor(day.work_date); return; }
+    setTripReplaceFor(null); setTripErr('');
+    // その日のいつものシフト（無ければ休日出勤・2026-10-14 ユーザー確定）
+    const [patRes, calRes] = await Promise.all([
+      supabase.from('weekly_shift_patterns').select('id, user_id, day_kind, start_time, end_time, start_time2, end_time2, location, break_minutes, labor_minutes, valid_from, valid_to').eq('user_id', user.id),
+      supabase.from('company_calendar').select('kind').eq('date', day.work_date).maybeSingle(),
+    ]);
+    if (patRes.error || calRes.error) { setTripErr('いつものシフトを読み込めませんでした。もう一度押してください'); return; }
+    const ns = resolveNormalShift((patRes.data ?? []) as PatternRow[], day.work_date, (calRes.data?.kind ?? null) as CalendarKind | null);
+    const bands = normalShiftBands(ns);
+    const hasShift = bands.length > 0;
+    setPrefill({
+      date: day.work_date, calendarType: 'trip',
+      reportTypes: hasShift ? ['location_change'] : ['holiday_work'],
+      location: day.location, segments: [], plannedBreak: null, notes: null,
+      applicantId: user.id, trip: day,
+      origSegments: bands.map(b => ({ start: b.start, end: b.end, location: ns.location ?? '' })),
+    });
+    setFormKey(k => k + 1);
+    setTimeout(() => formAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  };
+  // ?trip=日付（出張報告の「今すぐ申請する →」）で来たら、その日を開く（読み終えてから・1回だけ）
+  const tripParam = searchParams.get('trip');
+  const tripParamDone = useRef(false);
+  useEffect(() => {
+    if (!tripParam || tripParamDone.current || !tripLoaded) return;
+    tripParamDone.current = true;
+    const day = tripDays.find(d => d.work_date === tripParam);
+    if (day) { setTab('apply'); void pickTrip(day); }
+    else setTripErr(`${tripDayLabel(tripParam)} の勤務変更はすでにあります。［履歴］で確かめられます。`);
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('trip'); return n; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripParam, tripDays, tripLoaded]);
   const pickTodo = (it: TodoItem, applicantId: string) => {
     setPrefill({ ...it, applicantId });
     setFormKey(k => k + 1);
@@ -1765,6 +1840,43 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         {/* ─ 申請タブ ─ */}
         {tab === 'apply' && (
           <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: cardShadow, boxSizing: 'border-box' }}>
+            {tripErr && (
+              <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, color: text, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ flex: 1 }}>{tripErr}</span>
+                <button onClick={() => setTripErr('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText }}>✕</button>
+              </div>
+            )}
+            {/* 📋 出張の申請がまだの日（2026-10-14）。出すまで毎日残る */}
+            {tripDays.length > 0 && (
+              <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}`, textAlign: 'left' }}>
+                <div style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#f5e3b0' : '#5c4400', marginBottom: 4 }}>📋 出張の申請がまだの日（{tripDays.length}件）</div>
+                <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>出張報告から、日付と勤務地を入れた下書きを作っています。時刻を入れて申請してください。</div>
+                {tripDays.map(day => (
+                  <div key={day.work_date} style={{ borderTop: `1px solid ${isDark ? '#5a4a20' : '#ffe0b2'}`, padding: '7px 0' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: 12.5, color: text, lineHeight: 1.6 }}>
+                        {tripDayLabel(day.work_date)} 出張 {day.location}
+                        {day.span_start !== day.span_end && <span style={{ color: subText }}>（{tripDayLabel(day.span_start, false)}〜{tripDayLabel(day.span_end, false)}）</span>}
+                        <br /><span style={{ fontSize: 11.5, color: subText }}>{tripTimesText(day)}</span>
+                      </div>
+                      <button onClick={() => { void pickTrip(day); }}
+                        style={{ flexShrink: 0, padding: '5px 10px', borderRadius: 8, border: `1px solid ${TOGGLE_BLUE}`, background: 'transparent', color: TOGGLE_BLUE, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>内容を確認 ›</button>
+                    </div>
+                    {tripReplaceFor === day.work_date && (
+                      <div style={{ marginTop: 6, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                        <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの報告があります。この出張の下書きに置き換えますか？</p>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => { void pickTrip(day, true); }}
+                            style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                          <button onClick={() => setTripReplaceFor(null)}
+                            style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1px solid #ced4da', cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
             {canShiftReportTodo && (
               <ShiftReportTodo userId={user.id} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount}
@@ -1847,7 +1959,17 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
             {/* インライン申請フォーム（key で申請後リセット） */}
             <div ref={formAnchorRef} />
-            {prefill && (
+            {prefill?.trip && (
+              <div style={{ background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12.5, color: isDark ? '#f5e3b0' : '#5c4400', lineHeight: 1.7, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ flex: 1 }}>
+                  <b>実際に勤務した時間を入れてください</b><br />
+                  出張報告：{tripTimesText(prefill.trip)}（{prefill.trip.location}）<br />
+                  ※ 到着・終了は報告を送った時刻です。勤務の開始・終わりではありません。実際の時刻は空欄にしています（入れないと送れません）。
+                </span>
+                <button type="button" onClick={() => { setPrefill(null); setFormKey(k => k + 1); }} style={{ ...backBtn(isDark), padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>やめる</button>
+              </div>
+            )}
+            {prefill && !prefill.trip && (
               <div style={{ background: isDark ? '#1f2d3d' : '#eef6ff', border: '1px solid #90caf9', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13, color: text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span>📋 カレンダーの予定（{Number(prefill.date.slice(5, 7))}/{Number(prefill.date.slice(8, 10))} {ABSENCE_LABEL[prefill.calendarType] ?? ''}）から入れています。理由などを確かめて送ってください</span>
                 {prefill.notes && <span style={{ width: '100%', fontSize: 12, color: subText }}>予定の備考：{prefill.notes}</span>}

@@ -159,6 +159,8 @@ export interface BusinessTripReport {
   accuracy?: number | null;
   address?: string;
   next_dates?: string;
+  /** 行き先をリストから選んだときの行（master_options.id・自分で入れた行き先は空・2026-10-14） */
+  location_option_id?: string | null;
   created_at?: string;
   profiles?: Profile | null;
 }

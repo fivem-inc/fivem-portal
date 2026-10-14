@@ -62,6 +62,10 @@ export interface BulkWriter {
   slack(reportIds: string[], eventKey: 'overtime:new_request' | 'overtime:confirmed'): Promise<void>;
   /** 予定どおりの実績報告なら受理を省いて確認済みにする（省けたら true・2026-10-13）。無ければ省かない */
   confirmAsPlanned?(reportId: string): Promise<boolean>;
+  /** 出張の申請がまだの日（2026-10-14）。この日を送ったら「出張から」の印を付け、シフト表どおりなら受理を省く。無ければ何もしない */
+  tripPendingDates?(): Promise<Set<string>>;
+  /** 出張報告から作った実績の報告が、シフト表どおりなら受理を省いて確認済みにする（DB が決める） */
+  confirmTripRostered?(reportId: string): Promise<{ confirmed: boolean; reason: string | null }>;
   /** Google カレンダーへ。失敗したら false */
   gcal(reportId: string): Promise<boolean>;
   /** 休暇からの時間外調整休（自動計上）が同じ日にあるか。🚨 DB に網が無いので時間外調整休を出す直前に確かめる（読めなければ止める・1件フォームと同じ） */
@@ -170,6 +174,8 @@ export async function runBulkSend(
   const seen = new Set<string>();
   // この送信で振替元に使った日（同じ振替元の振替休日を2つ送らない）
   const usedOrigins = new Set<string>();
+  // 出張の申請がまだの日（1件フォームと同じ扱いにする・2026-10-14 ユーザー確定 A）。読めなければ空＝印を付けないだけ
+  const tripDates = writer.tripPendingDates ? await writer.tripPendingDates() : new Set<string>();
 
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
@@ -257,6 +263,8 @@ export async function runBulkSend(
         clockOnlyMode: c.clockOnly,
         effectiveClockReason: c.clockOnly ? effectiveClockReasonOf(r.draft.clockReason ?? '', r.draft.clockReasonOther ?? '') : '',
         clockInAt: c.clockOnly ? (r.draft.clockInAt ?? '') : '', clockOutAt: c.clockOnly ? (r.draft.clockOutAt ?? '') : '', nowIso,
+        // 出張の申請がまだの日を新しく出すときだけ「出張から」の印（表示だけ・送り直しでは触らない）
+        fromTripDate: (!fresh && tripDates.has(r.date)) ? r.date : undefined,
       }, toDbTime);
       // 🚨 再提出も元の値を引き継ぐ。buildOvertimeRecord は再提出では null にするので、ここで元の値に戻す。
       //    null にすると「載せない」を選んでいた人の申請が、直して出し直しただけでカレンダーに出てしまう
@@ -296,8 +304,12 @@ export async function runBulkSend(
           isReportPhase: c.isReportPhase, editStatus: fresh?.status as string | undefined, hasChanges: c.hasChanges,
           isPureZero: c.isPureZero, isSelfReview: c.isSelfReview, clockOnly: c.clockOnly,
         }) && await writer.confirmAsPlanned(saved.reportId);
+        // 出張報告から作った実績の報告は、決定済みのシフト表どおりなら受理を省く（上長へは DB がベルだけ・1件フォームと同じ）
+        const tripOk = !asPlanned && !fresh && tripDates.has(r.date) && !!writer.confirmTripRostered
+          && c.phase === 'actual' && !c.isSelfReview && !c.isPureZero && !c.clockOnly && !c.fullDayType
+          && (await writer.confirmTripRostered(saved.reportId)).confirmed;
         // 🚨 打刻ズレは確認なしで確定するので、上長にもベル・メール・Slack を送らない（1件フォームと同じ）
-        if (asPlanned) {
+        if (asPlanned || tripOk) {
           slackConfirmed.push(saved.reportId);
         } else if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: c.clockOnly, reviewerId: c.reviewerId })) {
           await writer.bell({

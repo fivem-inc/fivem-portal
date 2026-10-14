@@ -14,13 +14,14 @@ import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
   KIDS_WEEK, PERSON_ROLE_LABEL, sigOfItems, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
   kidsCellIssues, kidsGridSheet, kidsListSheet, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
+  canHaveTripLocation, tripLocationLabel,
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell, type ShiftBoard,
 } from '../../lib/kidsShift';
 import { ADULT_CLASS_KIND, ADULT_JOB_TAG, ADULT_ROLES, ADULT_TRIP_KIND, adultLines, hasSecondHalf, isTentativeItem, personSpanOf, splitMinOf, withPersonSpans, type AdultLine } from '../../lib/adultShift';
 import { crossEntriesOf, crossOverlaps, kidsRowText, placeShortName as placeShort, type CrossEntry } from '../../lib/shiftCross';
 import { adultGridSheet, buildAdultPrintHtml, type AdultPrintOptions } from '../../lib/adultShiftPrint';
 import {
-  ackKidsIssue, decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
+  ackKidsIssue, decidePlan, loadKidsData, setTripShortLabel, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
 } from '../../lib/kidsShiftApi';
 import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
@@ -112,6 +113,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const [stale, setStale] = useState(false);
   const [panel, setPanel] = useState<'none' | 'places' | 'kinds' | 'settings' | 'people' | 'pdf'>('none');
   const [panelErr, setPanelErr] = useState('');
+  // 出張の行き先の「表の名前」を変える枠（2026-10-14・確かめてからその場で保存）
+  const [labelEdit, setLabelEdit] = useState<{ id: string; value: string } | null>(null);
+  const [labelErr, setLabelErr] = useState('');
+  const [labelBusy, setLabelBusy] = useState(false);
   const [newPlan, setNewPlan] = useState<{ name: string; from: string; copy: string } | null>(null);
   const [decideState, setDecideState] = useState<{ conflicts: { place_id: string; day_kind: string; label: string }[]; keptCount: number; changeCount: number; choices: Record<string, 'plan' | 'decided'> } | null>(null);
   const decideBoxRef = useScrollIntoViewWhen<HTMLDivElement>(decideState);
@@ -744,6 +749,79 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const openPlans = data.plans.filter(p => p.status === 'open');
   const archivedPlans = data.plans.filter(p => p.status === 'archived');
 
+  // ─── 出張・園指導の行き先（2026-10-14） ───
+  // 🚨 リストに無い行き先（自分の校舎への出張など）は「リストに無い」のまま、クラス名に自分で書く。受理なしの対象にはならない
+  const tripLocationPicker = (it: KidsItem, setItem: (patch: Partial<KidsItem>) => void) => {
+    const opts = data.tripLocations;
+    const cur = it.trip_location_id ? opts.find(o => o.id === it.trip_location_id) ?? null : null;
+    const shown = opts.filter(o => !o.ended_at || o.id === it.trip_location_id);
+    const cats = [...new Set(shown.map(o => o.category))];
+    // いま見えている表のマスで数える（保存前の変更も入れる・相手の表は比べている版）
+    const usage = (id: string) => {
+      const n = (cellOf: (placeId: string, d: string) => KidsCellValue, ps: { id: string }[]) =>
+        ps.reduce((s, p) => s + KIDS_WEEK.reduce((t, d) => t + cellOf(p.id, d).filter(x => x.trip_location_id === id).length, 0), 0);
+      const mine = n(shownCell, places);
+      const theirs = n((placeId, d) => otherCellOf(placeId, d), other?.places ?? []);
+      return isAdult ? { adult: mine, kids: theirs } : { adult: theirs, kids: mine };
+    };
+    const editing = labelEdit && cur && labelEdit.id === cur.id ? labelEdit : null;
+    const saveLabel = async () => {
+      if (!editing || !cur) return;
+      setLabelBusy(true); setLabelErr('');
+      const err = await setTripShortLabel(cur.id, editing.value);
+      setLabelBusy(false);
+      if (err) { setLabelErr(`変えられませんでした：${err}`); return; }
+      setItem({ class_name: editing.value.trim() || cur.value });
+      setLabelEdit(null);
+      void load(true);
+    };
+    return (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select value={it.trip_location_id ?? ''} style={{ ...inputStyle, maxWidth: 230 }} aria-label="行き先"
+            onChange={e => {
+              const o = opts.find(x => x.id === e.target.value) ?? null;
+              setItem(o ? { trip_location_id: o.id, class_name: tripLocationLabel(o) } : { trip_location_id: null });
+              setLabelEdit(null); setLabelErr('');
+            }}>
+            <option value="">行き先リストに無い（自分で書く）</option>
+            {cats.map(c => (
+              <optgroup key={c} label={c.replace(/^trip_location_/, '')}>
+                {shown.filter(o => o.category === c).map(o => <option key={o.id} value={o.id}>{o.value}{o.ended_at ? '（終了）' : ''}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          {cur && !editing && (
+            <span style={{ fontSize: 12, color: subText }}>
+              表の名前：<b style={{ color: text }}>{tripLocationLabel(cur)}</b>
+              <button type="button" style={{ ...toggle(false), fontSize: 11.5, marginLeft: 6, padding: '2px 8px' }}
+                onClick={() => { setLabelEdit({ id: cur.id, value: tripLocationLabel(cur) }); setLabelErr(''); }}>変える</button>
+            </span>
+          )}
+        </span>
+        {!cur && <span style={{ fontSize: 11.5, color: subText }}>リストに無い行き先は［区分・行き先リスト管理］で追加できます。リストに無いままだと、出張の受理なしの対象になりません</span>}
+        {editing && cur && (() => {
+          const u = usage(cur.id);
+          return (
+            <span style={{ display: 'block', padding: '8px 10px', borderRadius: 8, border: '1px solid #ffcc80', background: isDarkMode ? '#3a2c12' : '#fff8e1', fontSize: 12.5, color: text, lineHeight: 1.6 }}>
+              <input type="text" value={editing.value} maxLength={20} style={{ ...inputStyle, width: 150 }} aria-label="表の名前"
+                onChange={e => setLabelEdit({ id: cur.id, value: e.target.value })} />
+              <span style={{ display: 'block', marginTop: 4 }}>
+                「{tripLocationLabel(cur)}」→「{editing.value.trim() || cur.value}」に変えます。この行き先のマス（大人{u.adult}か所・こども{u.kids}か所、決定済みの週も）がすべて変わります。
+                空にすると、リストの名前「{cur.value}」に戻ります。
+              </span>
+              {labelErr && <span style={{ display: 'block', color: '#c62828', marginTop: 4 }}>{labelErr}</span>}
+              <span style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                <button type="button" disabled={labelBusy} style={{ ...toggle(true), cursor: labelBusy ? 'wait' : 'pointer' }} onClick={() => { void saveLabel(); }}>この名前にする</button>
+                <button type="button" style={toggle(false)} onClick={() => { setLabelEdit(null); setLabelErr(''); }}>やめる</button>
+              </span>
+            </span>
+          );
+        })()}
+      </span>
+    );
+  };
+
   // ─── マスの入力 ───
   const itemEditor = (placeId: string, d: RosterDayKind, it: KidsItem, i: number, all: KidsCellValue) => {
     const place = places.find(p => p.id === placeId);
@@ -772,7 +850,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
               <input type="time" step={300} value={it.end} style={inputStyle} onChange={e => setItem({ end: e.target.value })} />
             </>
           )}
-          {kind?.has_class && (
+          {/* 出張（大人）・園指導（こども）の行き先は、出張報告と同じリストから選ぶ（2026-10-14 ユーザー確定） */}
+          {canHaveTripLocation(board, it.kind) && tripLocationPicker(it, setItem)}
+          {kind?.has_class && !(canHaveTripLocation(board, it.kind) && it.trip_location_id) && (
             <input type="text" value={it.class_name} maxLength={30}
               placeholder={it.kind === ADULT_TRIP_KIND ? '出張先（例：上牧）' : isAdult ? 'クラス名（例：中級）' : 'クラス名（例：リトル）'}
               style={{ ...inputStyle, width: 140 }}
