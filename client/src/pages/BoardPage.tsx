@@ -1,3 +1,4 @@
+import ExpandableTextarea from '../components/ExpandableTextarea';
 import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
 import LinkifiedText from '../components/LinkifiedText';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -188,11 +189,6 @@ const SCHEDULE_RULE = { requireTime: true, future: true } as const;
 
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 
-// スマホ用：打った量に合わせて textarea を高くする（取っ手が無いため）。上限は画面の4割
-const autoGrowTextarea = (el: HTMLTextAreaElement) => {
-  el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
-};
 
 // 宛先の一括ボタン「マネージャー・リーダー」に入れる役職＝リーダー以上（属性）から経理を除いたもの。
 // 🚨 フロア責任者は含めない（2026-09-08 ユーザー確定）。管理者アカウントも入れない（従来どおり）
@@ -678,6 +674,8 @@ const BoardPage: React.FC = () => {
   const [groupName,        setGroupName]        = useState('');
   const [groupMemberIds,   setGroupMemberIds]   = useState<string[]>([]);
   const [showMemberModal,  setShowMemberModal]  = useState(false);
+  // 見るだけのメンバー一覧（2026-10-14 ユーザー確定 A）。見出しの「◯人 ›」と［👥 メンバー］で開く。編集は一覧の［メンバーを編集］から
+  const [showMemberList,   setShowMemberList]   = useState(false);
   const [pendingMemberIds, setPendingMemberIds] = useState<string[]>([]);
   const [memberSaving,     setMemberSaving]     = useState(false);
   const [memberBanner,     setMemberBanner]     = useState(false);
@@ -2388,13 +2386,16 @@ const BoardPage: React.FC = () => {
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-            <textarea
+            {/* 返信（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］。部品は components/ExpandableTextarea） */}
+            <ExpandableTextarea
               value={draftFor(g.partnerId) || ''}
-              onChange={e => setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: e.target.value })}
+              onChange={v => setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: v })}
               placeholder="返信を入力..."
-              rows={2}
-              autoFocus
-              style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
+              rows={2} autoFocus isMobile={isMobile} isDark={isDark}
+              maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.4)}
+              title={`${nameOf(g.partnerId)}さんへの返信`}
+              wrapStyle={{ flex: 1, minWidth: 0 }}
+              style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <button type="button" disabled={replySending || !(draftFor(g.partnerId) || '').trim()}
@@ -2710,14 +2711,16 @@ const BoardPage: React.FC = () => {
                 {/* 入力欄（全種別・回答のみ必須） */}
                 {answerInputId === msg.id && !alreadyConfirmed && (
                   <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-                    <textarea
+                    {/* 回答・コメント（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］） */}
+                    <ExpandableTextarea
                       value={answerText}
-                      onChange={e => setAnswerText(e.target.value)}
+                      onChange={setAnswerText}
                       placeholder={isAnswerRequired ? '回答内容を入力（必須）...' : 'コメントを入力（任意）...'}
-                      rows={2}
-                      autoFocus
-                      ref={el => { if (el) { el.focus(); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } }}
-                      style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${isAnswerRequired && !answerText.trim() ? '#ef4444' : border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
+                      rows={2} autoFocus isMobile={isMobile} isDark={isDark}
+                      maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.4)}
+                      title={isAnswerRequired ? '回答' : 'コメント'}
+                      wrapStyle={{ flex: 1, minWidth: 0 }}
+                      style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${isAnswerRequired && !answerText.trim() ? '#ef4444' : border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
                     />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <button type="button" disabled={isAnswerRequired && !answerText.trim()} onClick={async () => {
@@ -2887,13 +2890,17 @@ const BoardPage: React.FC = () => {
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>
-              <textarea
+              {/* リプライ（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］） */}
+              <ExpandableTextarea
                 value={replyBody}
-                onChange={e => setReplyBody(e.target.value)}
-                placeholder="リプライを入力... (Ctrl+Enterで送信)"
-                rows={2}
+                onChange={setReplyBody}
+                placeholder={isMobile ? 'リプライを入力...' : 'リプライを入力... (Ctrl+Enterで送信)'}
+                rows={2} isMobile={isMobile} isDark={isDark}
+                maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.4)}
+                title="リプライ"
                 onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (replyBody.trim()) setShowReplySendConfirm(true); } }}
-                style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit' }}
+                wrapStyle={{ flex: 1, minWidth: 0 }}
+                style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit' }}
               />
               <button type="button" onClick={() => { if (replyBody.trim()) setShowReplySendConfirm(true); }} disabled={sending || !replyBody.trim()}
                 style={{ padding: '8px 14px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, opacity: sending || !replyBody.trim() ? 0.5 : 1, alignSelf: 'flex-end' }}>
@@ -3004,6 +3011,45 @@ const BoardPage: React.FC = () => {
       </div>
     </div>
   ) : null;
+
+  // 見るだけのメンバー一覧。役職ごと（上の役職から・管理者の共用アカウントは最後）
+  const memberListModal = showMemberList && selectedChannel ? (() => {
+    const isGroup = selectedChannel.type === 'group';
+    const order = rolesByRank(getCachedRoles());
+    const rank = (t: string | null | undefined) => {
+      const r = order.find(x => x.name === t);
+      if (!r) return 900;
+      return r.is_fixed ? 950 : order.indexOf(r);
+    };
+    const people = currentMembers.map(m => allProfiles.find(ap => ap.id === m.user_id))
+      .map((p, i) => ({ id: currentMembers[i].user_id, name: p?.name || '不明', role: p?.role_title || 'その他' }));
+    const roleNames = [...new Set(people.map(p => p.role))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, 'ja'));
+    return (
+      <div style={overlayStyle} onClick={() => setShowMemberList(false)}>
+        <div style={{ ...modalStyle, maxWidth: 460, textAlign: 'left' }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize: 16, fontWeight: 'bold', color: textColor, marginBottom: 6 }}>
+            {isGroup ? `👥 ${channelDisplayName(selectedChannel)}` : 'メンバー'}（{people.length}人）
+          </div>
+          {roleNames.map(rn => {
+            const ps = people.filter(p => p.role === rn).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+            return (
+              <div key={rn} style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, borderBottom: `1px solid ${border}`, paddingBottom: 2, marginBottom: 3 }}>{rn}（{ps.length}）</div>
+                <div style={{ fontSize: 13.5, color: textColor, lineHeight: 1.8, display: 'flex', flexWrap: 'wrap', columnGap: 2 }}>{ps.map((p, i) => <span key={p.id} style={{ whiteSpace: 'nowrap' }}>{p.name}{i < ps.length - 1 ? '・' : ''}</span>)}</div>
+              </div>
+            );
+          })}
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            {canCreateGroup && isGroup && (
+              <button type="button" onClick={() => { setShowMemberList(false); openMemberModal(); }}
+                style={{ flex: 1, padding: 10, borderRadius: 8, border: '1px solid #6f42c1', background: 'transparent', color: isDark ? '#c4b5fd' : '#6f42c1', cursor: 'pointer', fontSize: 14 }}>メンバーを編集</button>
+            )}
+            <button type="button" onClick={() => setShowMemberList(false)} style={{ ...backBtn(isDark), flex: 1 }}>閉じる</button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
 
   const memberModal = showMemberModal && selectedChannel ? (() => {
     const isGroup = selectedChannel.type === 'group';
@@ -4094,10 +4140,13 @@ const BoardPage: React.FC = () => {
           </div>
         )}
         {tplSuccess && !tplOpen && tplSuccessCard}
-        <textarea value={composeBody} onChange={e => { setComposeBody(e.target.value); if (isMobile) autoGrowTextarea(e.target); }} placeholder="本文を入力... *必須"
-          rows={4}
+        {/* 本文（2026-10-14 ユーザー確定）：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］で全画面。部品は components/ExpandableTextarea（グループ・DM と共用） */}
+        <ExpandableTextarea value={composeBody} onChange={setComposeBody} placeholder="本文を入力... *必須"
+          rows={isMobile ? 4 : 6} isMobile={isMobile} isDark={isDark}
+          maxHeight={Math.round(window.innerHeight * (isMobile ? 0.4 : 0.6))}
+          title={composeSubject.trim() || 'お知らせの本文'}
           onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}}
-          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: isMobile ? 'none' : 'vertical', minHeight: 100, maxHeight: '50vh', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
+          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           {/* テンプレート（2026-09-26 ユーザー確定：送信ボタンの隣）。以前ここにあった「Ctrl+Enter でも送信できます」の文字は
               この位置を譲って外した（Ctrl+Enter 自体は今までどおり効く）。送信の青ベタと区別するため枠線だけの見た目・間隔を空ける */}
@@ -4668,13 +4717,16 @@ const BoardPage: React.FC = () => {
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-          <textarea
-            value={newBody}
-            onChange={e => setNewBody(e.target.value)}
-            placeholder="メッセージを入力... (Ctrl+Enterで送信)"
-            rows={2}
+          {/* グループ・DM の入力欄（2026-10-14 ユーザー確定）：打つと広がる（スマホは6行くらいまで・パソコンは画面の半分まで）・
+              パソコンは右下を引っ張る・スマホは［⤢］で全画面。部品は components/ExpandableTextarea（お知らせ送信と共用） */}
+          <ExpandableTextarea value={newBody} onChange={setNewBody}
+            placeholder={isMobile ? 'メッセージを入力...' : 'メッセージを入力... (Ctrl+Enterで送信)'}
+            rows={2} isMobile={isMobile} isDark={isDark}
+            maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.5)}
+            title={selectedChannel ? channelDisplayName(selectedChannel) : 'メッセージ'}
             onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}}
-            style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
+            wrapStyle={{ flex: 1, minWidth: 0 }}
+            style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, fontFamily: 'inherit', lineHeight: 1.4 }}
           />
           <button
             type="button"
@@ -5160,9 +5212,10 @@ const BoardPage: React.FC = () => {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor, lineHeight: 1.2 }}>{channelDisplayName(selectedChannel)}</div>
-                <div style={{ fontSize: 11, color: subColor, lineHeight: 1.2 }}>{currentMembers.length}人</div>
+                <button type="button" onClick={() => setShowMemberList(true)} title="メンバーを見る"
+                  style={{ fontSize: 11, color: isDark ? '#90caf9' : '#1976d2', lineHeight: 1.2, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>{currentMembers.length}人 ›</button>
               </div>
-              <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
+              <button type="button" onClick={() => setShowMemberList(true)} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
             </>
           ) : (
             /* 🚨 PC は題名をここに置かない（「💬 連絡板」の隣＝サイドバーの見出しに移した）。
@@ -5198,6 +5251,7 @@ const BoardPage: React.FC = () => {
       </div>
       {threadPanel}
       {groupModal}
+      {memberListModal}
       {memberModal}
       {dmModal}
       {readDetailMsgId && (() => {
