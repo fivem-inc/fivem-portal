@@ -87,6 +87,8 @@ export interface BulkCtx {
   reviewerIsManager: (id: string) => boolean;
   /** カレンダーに載せるかを自分で選べる人か（computeGridRow の説明） */
   canChooseCalendar: boolean;
+  /** 自分で受理する終日の休みを「シフト調整：調整不要」で送るか（確認の画面で1つ選ぶ・2026-10-14） */
+  selfFullDayShiftNotNeeded?: boolean;
 }
 
 export interface BulkResult {
@@ -246,6 +248,7 @@ export async function runBulkSend(
         offerCalendarChoice: c.offerCalendar, showOnCalendar: !!r.draft.showOnCalendar,
         editTargetShowOnCalendar: (fresh?.show_on_calendar as boolean | null | undefined) ?? undefined,
         // 振替休日の振替元（6回目）。振替休日以外は空（buildOvertimeRecord が振替休日のときだけ保存する）
+        shiftNotNeeded: !!c.fullDayType && c.isSelfReview && ctx.selfFullDayShiftNotNeeded === true,
         furikaeOriginDate: c.furikae?.date ?? '', effectiveFurikaeOriginLocation: c.furikae?.location ?? '',
         furikaeOriginStart: c.furikae?.start ?? '', furikaeOriginEnd: c.furikae?.end ?? '',
         furikaeOriginBreak: c.furikae?.breakMin ?? 0, furikaeOriginLabor: c.furikae?.laborMin ?? 0, furikaeHasTime: c.furikae?.hasTime ?? false,

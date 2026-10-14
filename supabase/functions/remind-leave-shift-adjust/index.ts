@@ -102,7 +102,8 @@ Deno.serve(async () => {
   //    列は増やさず、「いちばん早い時期＝3m の印」「それ以外＝1m の印」で使う。
   //    こうすると、時期を {6,3,1} に変えても二重送信にならない（近い時期は1回だけ送る）。
   const first = monthsBefore[0]
-  const targets: { id: string; user_id: string; leaveDate: string; mark3m: boolean; mark1m: boolean }[] = []
+  // src：'leave'＝休暇申請（印は leave_requests）／'slot'＝残業申請の終日の休みの相談の場（印は shift_adjust_slots・2026-10-14）
+  const targets: { id: string; user_id: string; leaveDate: string; mark3m: boolean; mark1m: boolean; src: 'leave' | 'slot' }[] = []
   type Row = {
     id: string; user_id: string; leave_dates: string | null; start_date: string
     shift_alert_3m_sent_at: string | null; shift_alert_1m_sent_at: string | null
@@ -116,7 +117,31 @@ Deno.serve(async () => {
     const nearer = monthsBefore.slice(1)
     const dueNear = nearer.some(m => d <= addMonths(today, m)) && !r.shift_alert_1m_sent_at
     if (!dueFirst && !dueNear) continue
-    targets.push({ id: r.id, user_id: r.user_id, leaveDate: d, mark3m: dueFirst, mark1m: dueNear })
+    targets.push({ id: r.id, user_id: r.user_id, leaveDate: d, mark3m: dueFirst, mark1m: dueNear, src: 'leave' })
+  }
+
+  // 残業申請の終日の休み（時間外調整休・振替休日・欠勤）。2026-10-14 ユーザー確定：「1か月前」だけ出す
+  // 🚨 残業申請は3か月先の給与期間までしか出せないので、3か月前のお知らせは受理の翌朝に重なる（受理のときに「受理されました」も届く）。
+  //    1か月前より前に受理されていた休みだけ（受理したばかりの休みに続けて届かないように）
+  const nearMonths = monthsBefore.slice(1)
+  if (nearMonths.length > 0) {
+    const m = nearMonths[0]
+    const { data: slots, error: slotErr } = await supabase
+      .from('shift_adjust_slots')
+      .select('id, target_user_id, target_date, created_at')
+      .in('cause', ['chosei_off', 'furikae_off', 'ot_absence'])
+      .in('status', ['pending', 'working'])
+      .is('purged_at', null)
+      .is('shift_alert_1m_sent_at', null)
+      .gte('target_date', today)
+      .lte('target_date', addMonths(today, m))
+    if (slotErr) console.error('[remind-leave-shift-adjust] 残業申請の休みを読めませんでした', slotErr.message)
+    type Slot = { id: string; target_user_id: string; target_date: string; created_at: string }
+    for (const sl of (slots ?? []) as Slot[]) {
+      const createdJst = new Date(new Date(sl.created_at).getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10)
+      if (addMonths(createdJst, m) > sl.target_date) continue   // 1か月前より後に受理された休みは送らない
+      targets.push({ id: sl.id, user_id: sl.target_user_id, leaveDate: sl.target_date, mark3m: false, mark1m: true, src: 'slot' })
+    }
   }
 
   if (targets.length === 0) {
@@ -175,7 +200,8 @@ Deno.serve(async () => {
     const detail = sorted.slice(0, 5).map(x => `${mdLabel(x.date)} ${x.name}`).join('／')
     notifications.push({
       user_id: uid,
-      message: `🔁 シフト調整がまだの休暇が${sorted.length}件あります`,
+      // 2026-10-14：残業申請の休みも入るので「休暇」→「休み」
+      message: `🔁 シフト調整がまだの休みが${sorted.length}件あります`,
       sub_message: `${detail}${sorted.length > 5 ? ` 他${sorted.length - 5}件` : ''}`,
       source_type: 'leave:shift_adjust_due',
       event_key: 'leave:shift_adjust_due',
@@ -195,7 +221,9 @@ Deno.serve(async () => {
     if (t.mark1m) patch.shift_alert_1m_sent_at = new Date().toISOString()
     if (Object.keys(patch).length === 0) continue
     // 🚨 update は0件でもエラーにならない。件数を見る
-    const { data: upd } = await supabase.from('leave_requests').update(patch).eq('id', t.id).select('id')
+    const table = t.src === 'slot' ? 'shift_adjust_slots' : 'leave_requests'
+    if (t.src === 'slot') delete patch.shift_alert_3m_sent_at   // 相談の場には1か月前の印しか無い
+    const { data: upd } = await supabase.from(table).update(patch).eq('id', t.id).select('id')
     if (!upd || upd.length === 0) console.error('[remind-leave-shift-adjust] 印を立てられませんでした', t.id)
   }
 

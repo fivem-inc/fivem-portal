@@ -1279,7 +1279,8 @@ const classifyNotif = (n: NotifLike) => {
   const isLeavePendingApproval = n.source_type === 'leave_request:pending_approval'; // 承認者：要対応
   const isLeavePendingResubmit = n.source_type === 'leave_request:pending_resubmit'; // 申請者：再提出/取消待ち
   const isLeaveResult          = n.source_type === 'leave_request';                  // 申請者：結果報告のみ
-  const isLeaveFyi             = n.source_type === 'leave_request:fyi';              // 上長：FYI（誰がいつ休むか共有・カレンダー着地）
+  // 上長：FYI（誰がいつ休むか共有・カレンダー着地）。残業申請の終日の休み（時間外調整休・振替休日・欠勤）も同じ扱い（2026-10-14・DB の notify_overtime_fullday_fyi）
+  const isLeaveFyi             = n.source_type === 'leave_request:fyi' || n.source_type === 'overtime:fullday_fyi';
   const isShiftAdjustDue       = n.source_type === 'leave:shift_adjust_due';         // 上長：シフト調整がまだの休暇（カレンダー着地・未調整で絞る）
   const isAppRequest           = n.source_type === 'application_request:received';   // 本人：上長からの申請の依頼（残業・勤務変更）
   const isAppRequestLeave      = n.source_type === 'application_request:received:leave'; // 本人：休暇の申請依頼（2026-09-26・休暇ページに着く）

@@ -42,7 +42,8 @@ const EVENT_GROUPS = [
       { key: 'leave:new_request',      label: '申請時' },
       { key: 'leave:leader_approved',  label: 'リーダー受理時' },
       { key: 'leave:manager_approved', label: 'マネージャー受理時' },
-      { key: 'leave:approved_fyi',     label: '受理お知らせ（FYI・上長へ共有）' },
+      // 2026-10-14：残業申請の終日の休み（時間外調整休・振替休日・欠勤）の受理も、この設定（宛先・ON/OFF）で送る（DB の notify_overtime_fullday_fyi）
+      { key: 'leave:approved_fyi',     label: '受理お知らせ（FYI・上長へ共有・残業申請の休みも）' },
       { key: 'leave:rejected',         label: '差し戻し時' },
       { key: 'leave:cancelled',        label: '取り消し時' },
       // 2026-09-09 追加。受理済みなのにシフト調整がまだの休暇を、上長へ毎朝知らせる。

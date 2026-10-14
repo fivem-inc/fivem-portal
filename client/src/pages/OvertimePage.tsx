@@ -61,6 +61,7 @@ import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
+import ShiftAdjustChoice from '../components/ShiftAdjustChoice';
 import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
 import type { OvertimeType, SituationLike } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
@@ -552,7 +553,9 @@ const OvertimeForm: React.FC<{
   ownReportOf?: (id: string) => OvertimeReport | undefined;
   /** ［履歴でこの申請を開く］：履歴タブのその申請まで動いて光らせる */
   onShowInHistory?: (id: string) => void;
-}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory, prefillSegments, ownReportOf, onShowInHistory }) => {
+  /** 「シフト調整：必要／調整不要」を選べる人か（管理者か「シフト調整の記録」の権限・2026-10-14） */
+  canChooseShiftAdjust?: boolean;
+}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose, onOpenExisting, onGoHistory, prefillSegments, ownReportOf, onShowInHistory, canChooseShiftAdjust }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
@@ -724,6 +727,8 @@ const OvertimeForm: React.FC<{
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で選ぶ・初めは「必要」）
+  const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
   // 🚨 確認の枠は送信ボタンの場所で下に伸びるので、開いたらそこまで動かす（2026-09-25：
   //    ボタンは画面の下端で押すことが多く、［送信する］が画面の外に出ていた。表入力・申請の依頼と同じ直し）
   const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(showConfirm);
@@ -1297,6 +1302,7 @@ const OvertimeForm: React.FC<{
     }
     setErrFields(new Set());
     setEndWarn(beforeEndNote());   // 勤務終了前なら確認画面で一言そえる（止めはしない）
+    setSelfShiftNotNeeded(false);   // 確認を開くたびに「必要」から
     setShowConfirm(true);
   };
 
@@ -1329,6 +1335,7 @@ const OvertimeForm: React.FC<{
         furikaeOriginDate, effectiveFurikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd, furikaeOriginBreak, furikaeOriginLabor, furikaeHasTime,
         reviewerId, modifiedFromId: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
         clockOnlyMode, effectiveClockReason, clockInAt, clockOutAt, nowIso: new Date().toISOString(),
+        shiftNotNeeded: fullDayMode && isSelfReview && !!canChooseShiftAdjust && selfShiftNotNeeded,
       }, toDbTime);
 
       // 🚨 書き込み（新規の登録／実績報告・再提出の書き換え／時間帯）は lib/overtimeSubmitApi の saveOvertimeReport（表の入力と共用）
@@ -2712,6 +2719,10 @@ const OvertimeForm: React.FC<{
             {isSelfReview ? '自己受理のため、送信と同時に受理されます' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん`}
           </p>
           )}
+          {/* 自分で受理する終日の休み：シフト調整が要るか（2026-10-14・受理の画面の代わり。初めは「必要」） */}
+          {fullDayMode && isSelfReview && canChooseShiftAdjust && (
+            <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} />
+          )}
           {/* カレンダーに載るかどうかを送信前に必ず見せる（入れ忘れ・外し忘れを潰せる最後の場所） */}
           {offerCalendarChoice && (
             <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.6, color: showOnCalendar ? (isDark ? '#8ec5f0' : '#1565c0') : subText }}>
@@ -3840,7 +3851,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     return (
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '16px 16px 40px' }}>
         <OvertimeGrid userId={user.id} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} isDark={isDark}
-          reviewers={reviewers} workplaces={workplaces} canChooseCalendar={canChooseCalendar}
+          reviewers={reviewers} workplaces={workplaces} canChooseCalendar={canChooseCalendar} canChooseShiftAdjust={canChooseShiftAdjust}
           onClose={() => { setGridOpen(false); window.scrollTo({ top: 0 }); }}
           onOpenForm={() => { setGridOpen(false); setTab('form'); window.scrollTo({ top: 0 }); }} />
       </div>
@@ -3955,7 +3966,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           ) : tab === 'bulk' && canGridPerm ? (
             <OvertimeBox
               userId={user.id} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} isDark={isDark}
-              reviewers={reviewers} workplaces={workplaces} canChooseCalendar={canChooseCalendar}
+              reviewers={reviewers} workplaces={workplaces} canChooseCalendar={canChooseCalendar} canChooseShiftAdjust={canChooseShiftAdjust}
               onSent={() => { fetchOwn(); fetchOwnCard(); fetchAppRequests(); }}
             />
           ) : tab === 'form' || tab === 'bulk' ? (
@@ -3965,6 +3976,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               editTarget={editTarget}
               prefillSegments={editPrefill && editTarget && editPrefill.reportId === editTarget.id ? editPrefill.segs : null}
               canChooseCalendar={canChooseCalendar}
+              canChooseShiftAdjust={canChooseShiftAdjust}
               canMemo={canMemoPerm}
               appliedDates={appliedDates}
               onSaved={(gcalWarn, note) => {

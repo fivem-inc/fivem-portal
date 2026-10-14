@@ -216,6 +216,9 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。
   "overtime:new_request":        { app: "残業", word: "未承認", text: "残業の事前申請が届いています", url: "/overtime?view=confirm" },
   "overtime:request_confirmed":  { app: "残業", word: "受理", text: "残業の事前申請が受理されました",   url: "/overtime?tab=history", bell: true },
+  // 残業申請の終日の休みが受理された（上長への共有・2026-10-14・DB の notify_overtime_fullday_fyi）。休暇の受理お知らせと同じ着地（カレンダー）
+  // 🚨 App.tsx の classifyNotif（overtime:fullday_fyi は休暇の FYI と同じ扱い）。ON/OFF は通知設定 leave:approved_fyi の push（DB が見る）
+  "overtime:fullday_fyi":        { app: "残業", word: "受理", text: "残業申請の休みが受理されました", url: "/calendar?view=fyi", bell: true },
   "overtime:confirmed":          { app: "残業", word: "受理", text: "残業の実績が確認されました",   url: "/overtime?tab=history", bell: true },
   "overtime:returned":           { app: "残業", word: "差戻", text: "残業申請が差し戻されました",   url: "/overtime?tab=history", bell: true },
   // 本人が取り消した知らせ（確認者へ）。取消済みなので確認待ち一覧には無い。

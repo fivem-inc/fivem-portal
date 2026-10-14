@@ -422,6 +422,8 @@ export interface RecordInput {
   clockOutAt: string;
   /** いまの時刻（ISO）。🚨 受理の日時に使う。送る直前の値を渡す */
   nowIso: string;
+  /** 自分で受理する終日の休みで「シフト調整：調整不要」を選んだか（2026-10-14・選べるのは leave_shift_adjust の人だけ。DB でも確かめる） */
+  shiftNotNeeded?: boolean;
 }
 
 /**
@@ -471,6 +473,9 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     furikae_origin_break_minutes: (furikae && v.furikaeHasTime) ? v.furikaeOriginBreak : null,
     furikae_origin_labor_minutes: (furikae && v.furikaeHasTime) ? v.furikaeOriginLabor : null,
     reviewer_id: isSelfReview ? v.userId : v.reviewerId,
+    // 自分で受理する終日の休み：送った時点で確定するので、ここで「シフト調整：必要／調整不要」を持つ（受理の画面の代わり・2026-10-14）。
+    // 🚨 だれが・いつ決めたか（shift_adjusted_by/at）は DB のトリガーが入れる。権限が無ければ DB が断る
+    ...((fullDayMode && isSelfReview) ? { shift_adjust_not_needed: v.shiftNotNeeded === true } : {}),
     // 🚨 「内容を修正する（取り消して再申請）」で来たときだけ、元の（取消済み）申請を指す。
     //    これが無いと受理者からは「ただの新しい申請」に見え、何が変わったのか分からない。
     //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。

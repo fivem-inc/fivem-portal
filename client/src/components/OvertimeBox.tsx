@@ -36,6 +36,7 @@ import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import OvertimeGrantPanel from './OvertimeGrantPanel';
 import OvertimeNotes from './OvertimeNotes';
 import { runBulkSend } from '../lib/overtimeBulkSend';
+import ShiftAdjustChoice from './ShiftAdjustChoice';
 import type { BulkRowStatus } from '../lib/overtimeBulkSend';
 import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import type { SegmentLike } from '../lib/segmentsText';
@@ -57,6 +58,8 @@ interface Props {
   canChooseCalendar: boolean;
   /** 送れたあと（ページの履歴を読み直す） */
   onSent: () => void;
+  /** 「シフト調整：必要／調整不要」を選べる人か（ページが読んだもの・2026-10-14） */
+  canChooseShiftAdjust?: boolean;
 }
 
 interface BoxRequest { id: string; requester_id: string; requester_name: string | null; target_dates: string[] | null; memo: string | null; segments: SegmentLike[] | null }
@@ -91,7 +94,7 @@ function kindNgMessage(kind: GridDayKind, advanceMaxDate: string): string {
   return 'この日は申請済みです（直すときは「履歴・実績報告」から）';
 }
 
-const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, canChooseCalendar, onSent }) => {
+const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, canChooseCalendar, onSent, canChooseShiftAdjust }) => {
   const today = todayJstStr();
   const advanceMaxDate = advanceRequestMaxDate(today);
   const period = calcPayPeriodStartJst(today);
@@ -426,6 +429,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
 
   // ---- 送信 ----
   const [confirm, setConfirm] = useState<{ date: string; label: string }[] | null>(null);
+  // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で1つ選ぶ・初めは「必要」・2026-10-14）
+  const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [rowResults, setRowResults] = useState<Record<string, { status: BulkRowStatus; message: string }>>({});
@@ -458,7 +463,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
     const result = await runBulkSend(
       targets,
       date => byDate.get(date),
-      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar },
+      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar,
+        selfFullDayShiftNotNeeded: !!canChooseShiftAdjust && selfShiftNotNeeded },
       supabaseBulkWriter,
       (date, status, message) => setRowResults(prev => ({ ...prev, [date]: { status, message } })),
       () => {},
@@ -883,7 +889,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
 
       {!confirm && (
         <button type="button" disabled={sending || sendableRows.length === 0 || errors.length > 0}
-          onClick={() => setConfirm(sendableRows.map(r => ({ date: r.date, label: r.calc.sendLabel })))}
+          onClick={() => { setSelfShiftNotNeeded(false); setConfirm(sendableRows.map(r => ({ date: r.date, label: r.calc.sendLabel }))); }}
           style={{ ...primaryBtn({ disabled: sending || sendableRows.length === 0 }), width: '100%', marginTop: 6 }}>
           {sending ? '送信中…' : `申請する${sendableRows.length > 0 ? `（${sendableRows.length}件）` : ''}`}
         </button>
@@ -921,6 +927,10 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
                 ))}
               </div>
             ))}
+            {canChooseShiftAdjust && (() => {
+              const n = list.filter(r => r.calc.isSelfReview && !!r.calc.fullDayType).length;
+              return n > 0 ? <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} countLabel={`自己受理の終日 ${n}件`} /> : null;
+            })()}
             <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>1日ずつ、いつもの申請として登録されます。</p>
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button type="button" onClick={() => setConfirm(null)} style={{ ...backBtn(isDark), flex: 1 }}>戻って直す</button>

@@ -38,6 +38,7 @@ import { syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGra
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import OvertimeGrantPanel from './OvertimeGrantPanel';
 import { runBulkSend } from '../lib/overtimeBulkSend';
+import ShiftAdjustChoice from './ShiftAdjustChoice';
 import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill } from '../lib/overtimeFormParts';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
@@ -63,6 +64,8 @@ interface Props {
   onOpenForm: () => void;
   /** カレンダーに載せるかを自分で選べる人か（ページが読んだもの＝1件フォームと同じ） */
   canChooseCalendar: boolean;
+  /** 「シフト調整：必要／調整不要」を選べる人か（ページが読んだもの・2026-10-14） */
+  canChooseShiftAdjust?: boolean;
 }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
@@ -88,7 +91,7 @@ interface GridRequest {
   segments: SegmentLike[] | null;
 }
 
-const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm, canChooseCalendar }) => {
+const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm, canChooseCalendar, canChooseShiftAdjust }) => {
   const today = todayJstStr();
   const [period, setPeriod] = useState(() => calcPayPeriodStartJst(today));
   const dates = useMemo(() => periodDates(period), [period]);
@@ -338,6 +341,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   // ────────────────────────────────────────────
   type RowResult = { status: 'sending' | 'waiting' | 'sent' | 'failed' | 'check'; message: string };
   const [confirm, setConfirm] = useState<{ date: string; label: string }[] | null>(null);
+  // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で1つ選ぶ・初めは「必要」・2026-10-14）
+  const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   // 振替元の日を選んだときに自動で入れた時刻（行の日ごと）。休みの日に選び直したとき、自動で入れた時刻だけ消すため
@@ -391,7 +396,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const result = await runBulkSend(
       targets,
       date => rows.find(x => x.date === date),
-      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar },
+      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar,
+        selfFullDayShiftNotNeeded: !!canChooseShiftAdjust && selfShiftNotNeeded },
       supabaseBulkWriter,
       (date, status, message) => setRes(date, { status, message }),
       (done, total) => setProgress({ done, total }),
@@ -1116,6 +1122,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
               <button type="button" disabled={sendable.length === 0 || errors.length > 0}
                 onClick={() => {
                   setResultCard(null);
+                  setSelfShiftNotNeeded(false);
                   setConfirm(sendable.map(r => ({ date: r.date, label: r.calc.sendLabel })));
                 }}
                 style={{ ...btn, ...btnOn, fontWeight: 'bold', ...(sendable.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}>
@@ -1185,6 +1192,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                     {rs.map(line)}
                   </div>
                 ))}
+                {canChooseShiftAdjust && (() => {
+                  const n = items.filter(r => r.calc.isSelfReview && !!r.calc.fullDayType).length;
+                  return n > 0 ? <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} countLabel={`自己受理の終日 ${n}件`} /> : null;
+                })()}
                 <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>
                   {/* 2026-09-25 ユーザー確定：説明は短く1文だけ（ベル・申請先・残業なしの扱いは書かない） */}
                   1日ずつ、いつもの申請として登録されます。
