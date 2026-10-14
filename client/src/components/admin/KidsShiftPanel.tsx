@@ -4,6 +4,7 @@ import { todayJstStr } from '../../lib/breakCalc';
 import { ROSTER_DAY_LABEL, compareRosterStaff, minText, normTime, prevDate, shiftDayOn, toMin, type RosterDayKind } from '../../lib/shiftRoster';
 import { useRoles } from '../../hooks/useRoles';
 import { rankOf } from '../../lib/roleAttrs';
+import { normalizeForSearch } from '../../lib/boardTemplates';
 import { studyEndMin, studyLabel, studyStartMin, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
 import { loadStudyData } from '../../lib/studySessionsApi';
 import { bandIndexOf, bandsOfDay, itemsByBand, poolRowOfBand, type KidsBand } from '../../lib/kidsShiftBands';
@@ -67,6 +68,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const [planCells, setPlanCells] = useState<KidsPlanCell[]>([]);
   // ［曜日で見る］［人ごとに見る］（2026-10-07）。人ごとは見るだけ
   const [viewMode, setViewMode] = useState<'day' | 'person'>('day');
+  // 人ごとの絞り込み（2026-10-14 ユーザー確定 A）：部門・並び・名前で探す・この表に入っている人だけ。初めは今と同じ全員
+  const [personArea, setPersonArea] = useState<string>('all');   // 'all' か 部門のID か 'none'（部門なし）
+  const [personSort, setPersonSort] = useState<'roster' | 'role'>('roster');
+  const [personQuery, setPersonQuery] = useState('');
+  const [personOwnOnly, setPersonOwnOnly] = useState(false);
   const roles = useRoles();
   // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
   const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
@@ -1099,12 +1105,69 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         }
       }
     }
-    const areaOrder = (userId: string) => roster.areas.find(a => a.id === roster.mainAreas[userId])?.sort_order ?? 999;
-    const people = [...byUser.keys()]
+    // 自分の表の部門の人を先に（大人の表なら大人、こどもの表ならこども・2026-10-14）。そのあとは部門の並び順
+    const ownAreaId = roster.areas.find(a => a.name === (isAdult ? '大人' : 'こども'))?.id ?? null;
+    const areaOrder = (userId: string) => {
+      const aid = roster.mainAreas[userId];
+      if (aid && aid === ownAreaId) return -1;
+      return roster.areas.find(a => a.id === aid)?.sort_order ?? 999;
+    };
+    const rank = (t: string | null) => rankOf(roles, t) ?? 99;
+    const all = [...byUser.keys()]
       .map(id => roster.staff.find(s => s.id === id) ?? { id, name: data.staff.find(s => s.id === id)?.name ?? '', role_title: null })
-      .sort((a, b) => compareRosterStaff(a, b, areaOrder, t => rankOf(roles, t) ?? 99));
-    if (people.length === 0) return <p style={{ color: subText, fontSize: 13 }}>この表には、まだだれも入っていません</p>;
-    return (
+      .sort((a, b) => personSort === 'role'
+        ? rank(a.role_title) - rank(b.role_title) || compareRosterStaff(a, b, areaOrder, rank)
+        : compareRosterStaff(a, b, areaOrder, rank));
+    if (all.length === 0) return <p style={{ color: subText, fontSize: 13 }}>この表には、まだだれも入っていません</p>;
+    // この表に入っている＝相手の表の分（薄い字）以外の予定か、校の役割がある人
+    const inThisBoard = (id: string) => KIDS_WEEK.some(d => {
+      const c = byUser.get(id)?.[d];
+      return !!c && (c.entries.some(e => !e.other) || c.roles.length > 0);
+    });
+    // 部門のボタンは、この一覧に出てくる部門だけ（並びは部門の並び順。自分の表の部門を先に）
+    const areaIds = new Set(all.map(p => roster.mainAreas[p.id] ?? ''));
+    const areaChips = roster.areas.filter(a => areaIds.has(a.id))
+      .sort((a, b) => (a.id === ownAreaId ? -1 : a.sort_order) - (b.id === ownAreaId ? -1 : b.sort_order));
+    const hasNoArea = areaIds.has('');
+    const q = normalizeForSearch(personQuery);
+    const people = all.filter(p => {
+      const aid = roster.mainAreas[p.id] ?? '';
+      if (personArea === 'none' ? aid !== '' : personArea !== 'all' && aid !== personArea) return false;
+      if (personOwnOnly && !inThisBoard(p.id)) return false;
+      if (q && !normalizeForSearch(`${nameOf(p.id)} ${p.name}`).replace(/\s/g, '').includes(q.replace(/\s/g, ''))) return false;
+      return true;
+    });
+    const filtered = personArea !== 'all' || personOwnOnly || q !== '';
+    const bar = (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12.5, color: subText, marginRight: 2 }}>絞り込み：</span>
+          <button type="button" style={toggle(personArea === 'all')} onClick={() => setPersonArea('all')}>すべて</button>
+          {areaChips.map(a => (
+            <button key={a.id} type="button" style={toggle(personArea === a.id)} onClick={() => setPersonArea(a.id)}>{a.name}</button>
+          ))}
+          {hasNoArea && <button type="button" style={toggle(personArea === 'none')} onClick={() => setPersonArea('none')}>部門なし</button>}
+          <span style={{ fontSize: 12.5, color: subText, margin: '0 2px 0 10px' }}>並び：</span>
+          <button type="button" style={toggle(personSort === 'roster')} onClick={() => setPersonSort('roster')}>勤務表の並び</button>
+          <button type="button" style={toggle(personSort === 'role')} onClick={() => setPersonSort('role')}>役職順</button>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="search" value={personQuery} placeholder="名前で探す" aria-label="名前で探す"
+            onChange={e => setPersonQuery(e.target.value)} style={{ ...inputStyle, width: 180 }} />
+          <label style={{ fontSize: 12.5, color: text, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+            <input type="checkbox" checked={personOwnOnly} onChange={e => setPersonOwnOnly(e.target.checked)} />
+            この表に入っている人だけ
+          </label>
+          <span style={{ fontSize: 12, color: subText }}>{all.length}人中 {people.length}人</span>
+          {filtered && (
+            <button type="button" style={{ ...toggle(false), fontSize: 12 }}
+              onClick={() => { setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); }}>絞り込みを外す</button>
+          )}
+        </div>
+      </div>
+    );
+    if (people.length === 0) return (<>{bar}<p style={{ color: subText, fontSize: 13 }}>当てはまる人がいません。絞り込みを変えてください</p></>);
+    return (<>{bar}
       <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900, tableLayout: 'fixed' }}>
           <thead>
@@ -1145,7 +1208,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           </tbody>
         </table>
       </div>
-    );
+    </>);
   };
 
   // ─── 「3F・5F で動ける人」の入力（2026-10-06 ユーザー確定：人・何時から・何時まで だけ） ───
