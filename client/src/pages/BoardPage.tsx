@@ -7,7 +7,7 @@ import { rolesByRank, attrsFor } from '../lib/roleAttrs';
 import { getCachedRoles } from '../hooks/useRoles';
 import { insertNotification, markBellReadForMessages } from '../lib/notifications';
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, loadChatDraft, saveChatDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
 import { dateTimeProblem } from '../lib/dateTimeValue';
 import DateTimeInput from '../components/DateTimeInput';
@@ -690,6 +690,24 @@ const BoardPage: React.FC = () => {
   const [broadcastUrgent,  setBroadcastUrgent]  = useState(false); // 「⚡当日の連絡・緊急」（DM一斉送信用）
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
+  // ── グループ・DM・リプライの書きかけ（2026-10-14 ユーザー確定）。それぞれ別々に端末へ残し、開き直したら戻す ──
+  // 🚨 本文がどのグループの分かを ref で持つ。切り替えた瞬間に前のグループの文を新しいグループに保存しないため
+  const chatDraftKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    chatDraftKeyRef.current = selectedChannelId ? `ch:${selectedChannelId}` : null;
+    setNewBody(selectedChannelId ? loadChatDraft(`ch:${selectedChannelId}`) : '');
+  }, [selectedChannelId]);
+  useEffect(() => {
+    if (chatDraftKeyRef.current) saveChatDraft(chatDraftKeyRef.current, newBody);
+  }, [newBody]);
+  const replyDraftKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    replyDraftKeyRef.current = threadMsgId ? `th:${threadMsgId}` : null;
+    setReplyBody(threadMsgId ? loadChatDraft(`th:${threadMsgId}`) : '');
+  }, [threadMsgId]);
+  useEffect(() => {
+    if (replyDraftKeyRef.current) saveChatDraft(replyDraftKeyRef.current, replyBody);
+  }, [replyBody]);
   // 🚨 表示が変わったら（グループ・トレイ・リプライを移った・スマホの「戻る」を押した）開いている窓を全部閉じる（2026-10-14 ユーザー確定 A）。
   //    窓を足したら、ここにも足すこと（足し忘れると「戻る」でページだけ戻り、窓が残る）。入力中の文は消さない
   const boardLocation = useLocation();
@@ -1689,7 +1707,7 @@ const BoardPage: React.FC = () => {
     setPrevChannelLastSeen(lastSeen[channelId] || null);
     setSelectedChannelId(channelId);
 
-    setNewBody('');
+    // 🚨 本文は空にしない。グループ・DM ごとの書きかけを下の effect が読み直す（2026-10-14）
     setShowOptionsExpanded(false);
     setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink('');
     setNewUrgent(false); // 🚨 チャンネル切替で緊急チェックを必ず外す（誤爆防止）
@@ -2853,7 +2871,7 @@ const BoardPage: React.FC = () => {
       <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
         {/* Thread header */}
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, position: 'sticky', top: 0, zIndex: 10 }}>
-          <button type="button" onClick={() => { navigate(-1); setReplyBody(''); }}
+          <button type="button" onClick={() => { navigate(-1); /* 書きかけは残す（リプライごとに保存・2026-10-14） */ }}
             style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', fontWeight: 'bold' }}>←</button>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>スレッド</span>
         </div>
