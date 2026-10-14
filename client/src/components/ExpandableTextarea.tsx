@@ -4,7 +4,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
  * 連絡板の本文の入力欄（2026-10-14 ユーザー確定）。お知らせ送信・グループ・DM の3か所が同じこれを使う。
  * ・打つと自動で広がる（短い一言は小さいまま）。🚨 伸びるだけで、ほかの文字を消しても縮めない（引っ張って広げた高さを打つたびに戻さないため）。
  *   空になったら（送信したあと）最初の高さに戻る
- * ・パソコン：右下を引っ張って広げられる（ボタンは付けない＝ユーザー確定）
+ * ・右下を引っ張って広げられる（パソコン・スマホとも。パソコンはボタンを付けない＝ユーザー確定）。
+ *   🚨 スマホは機種によって引っ張る印が出ない（iPhone など）ので、［⤢］を残す
  * ・スマホ：文字なしの［⤢］で全画面で書ける。［閉じる］で元の欄に戻る（書いた文はそのまま・送信は元の欄から）
  */
 interface Props {
@@ -62,7 +63,7 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
       <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', ...wrapStyle }}>
         <textarea ref={ref} value={value} rows={rows} placeholder={placeholder}
           onChange={e => onChange(e.target.value)} onKeyDown={onKeyDown}
-          style={{ ...style, flex: 1, minWidth: 0, resize: isMobile ? 'none' : 'vertical', maxHeight: isMobile ? maxHeight : undefined, overflowY: 'auto' }} />
+          style={{ ...style, flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto' }} />
         {isMobile && (
           <button type="button" onClick={() => setFull(true)} aria-label="大きく書く" title="大きく書く"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: isDark ? '#90caf9' : '#1976d2', fontSize: 16, lineHeight: 1, cursor: 'pointer', padding: 0 }}>⤢</button>

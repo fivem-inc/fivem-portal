@@ -674,7 +674,7 @@ const BoardPage: React.FC = () => {
   const [groupName,        setGroupName]        = useState('');
   const [groupMemberIds,   setGroupMemberIds]   = useState<string[]>([]);
   const [showMemberModal,  setShowMemberModal]  = useState(false);
-  // 見るだけのメンバー一覧（2026-10-14 ユーザー確定 A）。見出しの「◯人 ›」と［👥 メンバー］で開く。編集は一覧の［メンバーを編集］から
+  // 見るだけのメンバー一覧（2026-10-14 ユーザー確定）。右上の［👥 メンバー］で開く（見出しの人数は出さない＝ユーザー指示）。編集は一覧の［メンバーを編集］から
   const [showMemberList,   setShowMemberList]   = useState(false);
   const [pendingMemberIds, setPendingMemberIds] = useState<string[]>([]);
   const [memberSaving,     setMemberSaving]     = useState(false);
@@ -1389,9 +1389,23 @@ const BoardPage: React.FC = () => {
     })();
   }, [inboxDetailId, user, isAdmin, inboxMessages, archivedMessages]);
 
+  // グループ・DM を開いたとき（2026-10-14 ユーザー指摘）：一番下まで動かすと、長いメッセージの先頭が隠れる。
+  // 開いたときは「ここから未読」の線、無ければ最新のメッセージの先頭まで。開いている間に届いたときは今までどおり一番下
+  const unreadLineRef = useRef<HTMLDivElement | null>(null);
+  const lastMsgRef = useRef<HTMLDivElement | null>(null);
+  const scrolledChannelRef = useRef<string | null>(null);
   useEffect(() => {
-    if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
-  }, [messages.length, selectedChannelId]);
+    if (!selectedChannelId) { scrolledChannelRef.current = null; return; }
+    if (threadMsgId) return;   // リプライの画面は自分で一番上から出す
+    if (scrolledChannelRef.current !== selectedChannelId) {
+      const t = unreadLineRef.current ?? lastMsgRef.current;
+      if (!t) return;          // まだ読み込み中（読み終えてから動かす）
+      scrolledChannelRef.current = selectedChannelId;
+      t.scrollIntoView({ block: 'start', behavior: 'instant' });
+      return;
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+  }, [messages.length, selectedChannelId, threadMsgId]);
 
   // お知らせ作成フォームの下書きを自動保存（別アプリへ調べに行って戻っても消えない）。
   // 全項目が空なら下書きを残さない（送信・クリア後に空の下書きが復活するのを防ぐ）。
@@ -2830,8 +2844,8 @@ const BoardPage: React.FC = () => {
             style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', fontWeight: 'bold' }}>←</button>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>スレッド</span>
         </div>
-        {/* Scrollable area */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px' }}>
+        {/* Scrollable area。🚨 key で開くたびに一番上から（元のメッセージの先頭が見えるように・2026-10-14） */}
+        <div key={threadMsgId} style={{ flex: 1, overflowY: 'auto', padding: '12px 14px' }}>
           {/* Parent message */}
           <div style={{ background: isDark ? '#2a2a3e' : '#f0f4ff', border: `1px solid ${isDark ? '#3a3a6c' : '#c7d4f5'}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -3557,7 +3571,7 @@ const BoardPage: React.FC = () => {
         /* 詳細ビュー */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ paddingTop: 58 + searchPad }} />
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+          <div key={inboxDetail.id} style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {/* 宛先タグ（ふだんは閉じている。送信トレイと同じ部品） */}
             <RecipientTags key={`recipients-${inboxDetail.id}`} ids={inboxRecipients[inboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
             {/* 修正モード（受信トレイ側・送信者 or 管理者） */}
@@ -4143,7 +4157,7 @@ const BoardPage: React.FC = () => {
         {/* 本文（2026-10-14 ユーザー確定）：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］で全画面。部品は components/ExpandableTextarea（グループ・DM と共用） */}
         <ExpandableTextarea value={composeBody} onChange={setComposeBody} placeholder="本文を入力... *必須"
           rows={isMobile ? 4 : 6} isMobile={isMobile} isDark={isDark}
-          maxHeight={Math.round(window.innerHeight * (isMobile ? 0.4 : 0.6))}
+          maxHeight={Math.round(window.innerHeight * (isMobile ? 0.3 : 0.6))}
           title={composeSubject.trim() || 'お知らせの本文'}
           onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}}
           style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
@@ -4246,7 +4260,7 @@ const BoardPage: React.FC = () => {
       {outboxDetail ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ paddingTop: 58 + searchPad }} />
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+          <div key={outboxDetail.id} style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {/* 宛先タグ（ふだんは閉じている。受信トレイと同じ部品） */}
             <RecipientTags key={`recipients-${outboxDetail.id}`} ids={inboxRecipients[outboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
             {/* 修正モード */}
@@ -4580,13 +4594,15 @@ const BoardPage: React.FC = () => {
           return channelMessages.map((msg, idx) => (
             <React.Fragment key={msg.id}>
               {unreadStartIdx !== -1 && idx === unreadStartIdx && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0' }}>
+                <div ref={unreadLineRef} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0', scrollMarginTop: 110 + searchPad }}>
                   <div style={{ flex: 1, height: 1, background: '#3b82f6', opacity: 0.5 }} />
                   <span style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', whiteSpace: 'nowrap', padding: '2px 8px', border: '1px solid #3b82f6', borderRadius: 20 }}>ここから未読</span>
                   <div style={{ flex: 1, height: 1, background: '#3b82f6', opacity: 0.5 }} />
                 </div>
               )}
-              {renderMsg(msg)}
+              {idx === channelMessages.length - 1
+                ? <div ref={lastMsgRef} style={{ scrollMarginTop: 110 + searchPad }}>{renderMsg(msg)}</div>
+                : renderMsg(msg)}
             </React.Fragment>
           ));
         })()}
@@ -5211,9 +5227,7 @@ const BoardPage: React.FC = () => {
                 {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor, lineHeight: 1.2 }}>{channelDisplayName(selectedChannel)}</div>
-                <button type="button" onClick={() => setShowMemberList(true)} title="メンバーを見る"
-                  style={{ fontSize: 11, color: isDark ? '#90caf9' : '#1976d2', lineHeight: 1.2, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>{currentMembers.length}人 ›</button>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={channelDisplayName(selectedChannel)}>{channelDisplayName(selectedChannel)}</div>
               </div>
               <button type="button" onClick={() => setShowMemberList(true)} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
             </>
