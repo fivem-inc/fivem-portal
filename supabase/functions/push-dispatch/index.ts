@@ -263,6 +263,49 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
 // 🚨 引けなかったときは黙って落とさず、ふつうの文章で送る（通知が消えるほうが困る）。
 const TITLE_MAX = 60; // ロック画面で読めない長さは切る（末尾に…）
 
+// 連絡板のグループの投稿だけ、題名にグループ名を出す（2026-10-15 ユーザー確定 B）。
+//   例：題名「ファイブM 連絡板：四条本校リーダー」／本文「新しい投稿があります」
+// 🚨 出すのはグループ名だけ。本文（投稿の中身）と送った人の名前は出さない。
+// 🚨 DM には出さない（DM の名前は相手の名前になりうる）。スレッドのリプライも
+//    board:group_message で来るので、チャンネルの種類（board_channels.type='group'）で確かめる。
+// 🚨 まとめた通知が全部「同じ1つのグループ」のときだけ。別のグループ・DM が混ざれば null（今までの文）。
+// 🚨 引けなかったときも null（黙って落とさず、今までの文で送る）。
+async function boardGroupName(
+  // 🚨 ReturnType<typeof createClient> にすると、ライブラリの型のずれ（TS2345）が1件増える。
+  //    使うのは from() だけなので、その形だけを書く
+  // deno-lint-ignore no-explicit-any
+  supabase: { from: (table: string) => any },
+  g: { nids: string[] },
+): Promise<string | null> {
+  if (!USE_SENTENCE) return null;
+  const nids = [...new Set(g.nids)];
+  if (nids.length === 0) return null;
+  try {
+    const { data: notifs } = await supabase
+      .from("notifications").select("reference_id, event_key").in("id", nids);
+    const rows = (notifs ?? []) as { reference_id: string | null; event_key: string | null }[];
+    // 1件でも読めない・グループの投稿でないものがあれば出さない
+    if (rows.length !== nids.length) return null;
+    if (rows.some(r => r.event_key !== "board:group_message" || !r.reference_id)) return null;
+    const refIds = [...new Set(rows.map(r => r.reference_id as string))];
+    const { data: msgs } = await supabase
+      .from("board_messages").select("id, channel_id").in("id", refIds);
+    const m = (msgs ?? []) as { id: string; channel_id: string | null }[];
+    if (m.length !== refIds.length) return null;
+    const chIds = [...new Set(m.map(x => x.channel_id))];
+    if (chIds.length !== 1 || !chIds[0]) return null;
+    const { data: ch } = await supabase
+      .from("board_channels").select("type, name").eq("id", chIds[0]).maybeSingle();
+    const row = ch as { type?: string; name?: string | null } | null;
+    if (row?.type !== "group") return null;
+    const name = (row.name ?? "").trim();
+    if (!name) return null;
+    return name.length > TITLE_MAX ? name.slice(0, TITLE_MAX - 1) + "…" : name;
+  } catch {
+    return null;
+  }
+}
+
 async function bodyForGroup(
   supabase: ReturnType<typeof createClient>,
   g: { app: string; word: string; text: string; ids: string[]; nids: string[]; tagKey: string },
@@ -413,6 +456,7 @@ serve(async (req) => {
     let sent = 0;
     let failed = 0;
     for (const g of groups.values()) {
+      const groupName = g.app === "連絡板" ? await boardGroupName(supabase, g) : null;
       const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
         method: "POST",
         headers: {
@@ -421,8 +465,8 @@ serve(async (req) => {
         },
         body: JSON.stringify({
           user_ids: [g.userId],
-          title: `ファイブM ${g.app}`,
-          body: await bodyForGroup(supabase, g),
+          title: groupName ? `ファイブM ${g.app}：${groupName}` : `ファイブM ${g.app}`,
+          body: groupName ? buildBody("新しい投稿があります", g.word, g.ids.length) : await bodyForGroup(supabase, g),
           // bell が付いているイベントは、押したときに着地画面で🔔ベル一覧を開いて
           // 該当行を光らせる（プッシュの文面には中身が書けないため、内容はベルで読んでもらう）。
           // nids はその「該当行」を特定するためのベル通知ID。新しい順に20件まで
