@@ -6,7 +6,7 @@ import { PAGE_TAB_GREEN } from '../lib/buttonStyles';
  * 休暇申請のページと残業・時間のページで同じこれを使う（形と色を2か所に書かない）。
  *
  * 決まり（ユーザー確定・モック 配布資料/上長のボタン_2行の形_6案.png の ②）：
- * ・前のオレンジのボタン（［✅ 受理ページへ］＋説明の1行）と同じ2行の形を、2つ横に並べる
+ * ・前のオレンジのボタン（［✅ 受理ページへ］＋説明の1行）と同じ2行の形を、2つ横につなげて並べる（間に細い線）
  * ・色はうすいオレンジ。🚨 ダークモードでもライトと同じ色にする（透けるオレンジにしない・2026-10-16 ユーザー指示）
  * ・選んでいる＝緑（ページのタブの緑）。数字の丸はオレンジ（選んでいるときは白地に緑）
  * ・「上長」の文字は出さない（2026-10-16 ユーザー指示：要らない・違和感がある）
@@ -40,14 +40,17 @@ const ORANGE_TEXT = '#b35400';
 export function ManagerTabs<K extends string>({ items, active, onChange, style }: Props<K>) {
   if (items.length === 0) return null;
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', gap: 8, marginTop: 8, marginBottom: 8, ...style }}>
-      {items.map(it => {
+    // 2つをつなげて1本にする（上のタブと同じ「1本を区切った形」・2026-10-16 ユーザー確定）
+    <div style={{ display: 'flex', alignItems: 'stretch', marginTop: 8, marginBottom: 8, border: `1px solid ${LIGHT_ORANGE_BORDER}`, borderRadius: 10, overflow: 'hidden', ...style }}>
+      {items.map((it, i) => {
         const on = it.key === active;
+        // 区切りの線：となりが選ばれているときは緑
+        const prevOn = i > 0 && items[i - 1].key === active;
         return (
           <button key={it.key} type="button" onClick={() => onChange(it.key)} aria-pressed={on}
             style={{
-              flex: 1, minWidth: 0, minHeight: 40, padding: '7px 6px', borderRadius: 10, cursor: 'pointer',
-              border: `1px solid ${on ? PAGE_TAB_GREEN : LIGHT_ORANGE_BORDER}`,
+              flex: 1, minWidth: 0, minHeight: 40, padding: '7px 6px', borderRadius: 0, cursor: 'pointer', border: 'none',
+              borderLeft: i > 0 ? `1px solid ${on || prevOn ? PAGE_TAB_GREEN : LIGHT_ORANGE_BORDER}` : 'none',
               background: on ? PAGE_TAB_GREEN : LIGHT_ORANGE_BG,
               color: on ? '#fff' : ORANGE_TEXT,
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', lineHeight: 1.3,

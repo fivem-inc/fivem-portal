@@ -45,11 +45,16 @@ interface PageTabsProps<K extends string> {
   inactiveColor: string;
   /** shadow のみ：タブ間の区切り線色。省略時は休暇申請と同じ値 */
   dividerColor?: string;
+  /**
+   * bordered のみ：文字を少し小さく・左右の余白を詰める（スマホで長い名前を1行に収めるため）。
+   * 2026-10-16 ユーザー確定 A：残業・時間のページの「事前申請・事後報告」がスマホで2行になっていた。言葉は変えない
+   */
+  compact?: boolean;
 }
 
 const ACTIVE_BG = PAGE_TAB_GREEN;
 
-export function PageTabs<K extends string>({ tabs, active, onChange, variant, isDark, inactiveColor, dividerColor }: PageTabsProps<K>) {
+export function PageTabs<K extends string>({ tabs, active, onChange, variant, isDark, inactiveColor, dividerColor, compact }: PageTabsProps<K>) {
   const inactiveBg = isDark ? '#495057' : '#f8f9fa';
   const divider = dividerColor ?? (isDark ? '#6c757d' : '#dee2e6');
 
@@ -73,7 +78,7 @@ export function PageTabs<K extends string>({ tabs, active, onChange, variant, is
     if (variant === 'bordered') {
       // バッジの有無に関わらず常に flex（ある時だけ flex にするとタブの高さが変わる）
       return {
-        flex: 1, padding: '12px 4px', border: 'none', cursor: 'pointer', fontSize: 13.5,
+        flex: 1, padding: compact ? '12px 2px' : '12px 4px', border: 'none', cursor: 'pointer', fontSize: compact ? 12 : 13.5,
         fontWeight: isActive ? 'bold' : 'normal',
         background: isActive ? ACTIVE_BG : inactiveBg,
         color: isActive ? '#fff' : inactiveColor,

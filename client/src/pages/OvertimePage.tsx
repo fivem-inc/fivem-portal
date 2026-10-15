@@ -2837,6 +2837,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const isConfirmView = searchParams.get('view') === 'confirm';
   // 2段目のタブ「📩 申請の依頼」（2026-10-15）
   const isAskView = searchParams.get('view') === 'ask';
+  // スマホの幅では1段目のタブの文字を少し小さくする（「事前申請・事後報告」を1行に収める・2026-10-16 ユーザー確定 A）。
+  // 🚨 文字を大きくしている人は画面の幅が狭くなるので、そのときも同じ判定で効く
+  const [narrowTabs, setNarrowTabs] = useState(() => typeof window !== 'undefined' && window.innerWidth < 420);
+  useEffect(() => {
+    const f = () => setNarrowTabs(window.innerWidth < 420);
+    window.addEventListener('resize', f);
+    return () => window.removeEventListener('resize', f);
+  }, []);
   // 「📩 申請の依頼」のタブの数字（自分が出した依頼のうち、まだ申請されていない数）。依頼の枠（AppRequestBox）が数えて知らせる
   const [myOpenAskCount, setMyOpenAskCount] = useState(0);
   useEffect(() => {
@@ -4067,6 +4075,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           variant="bordered"
           isDark={isDark}
           inactiveColor={text}
+          compact={narrowTabs}
           tabs={[
             { key: 'form' as const, label: '事前申請・事後報告' },
             // ［まとめて申請］（スマホの箱・2026-09-29 ユーザー確定）。出すのは表入力と同じ権限（リーダー以上）。
