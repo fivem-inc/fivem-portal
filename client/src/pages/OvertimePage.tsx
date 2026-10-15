@@ -3,7 +3,7 @@ import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import AppRequestCard from '../components/AppRequestCard';
-import { loadReceivedAppRequests, isFullDayOtContent } from '../lib/appRequests';
+import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
@@ -46,8 +46,9 @@ import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
-import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount, confirmPageSub } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import AppRequestBox from '../components/AppRequestBox';
+import ManagerTabs from '../components/ManagerTabs';
 import { DAY_MARK_STYLE, DAY_MARK_LEGEND, loadDayMarks, monthRange, dayMarkBlocksForm, recordDayCheck, cancelDayCheck, fetchDayCheckEnabled } from '../lib/overtimeDayMark';
 import type { DayMark } from '../lib/overtimeDayMark';
 
@@ -2834,6 +2835,18 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const isDark = useDarkMode();
   const [searchParams, setSearchParams] = useSearchParams();
   const isConfirmView = searchParams.get('view') === 'confirm';
+  // 2段目のタブ「📩 申請の依頼」（2026-10-15）
+  const isAskView = searchParams.get('view') === 'ask';
+  // 「📩 申請の依頼」のタブの数字（自分が出した依頼のうち、まだ申請されていない数）。依頼の枠（AppRequestBox）が数えて知らせる
+  const [myOpenAskCount, setMyOpenAskCount] = useState(0);
+  useEffect(() => {
+    if (!canApplicationRequest) { setMyOpenAskCount(0); return; }
+    const f = async () => { setMyOpenAskCount(await countMyOpenAskItems(user.id, false)); };
+    void f();
+    // 依頼を作った・取り下げたら数え直す（components/AppRequestBox が知らせる）
+    window.addEventListener(APP_REQUEST_CHANGED_EVENT, f);
+    return () => window.removeEventListener(APP_REQUEST_CHANGED_EVENT, f);
+  }, [canApplicationRequest, user.id]);
 
   const tabParam = searchParams.get('tab');
   // 出張報告の「今すぐ申請する →」から来たとき（?trip=日付・2026-10-14）
@@ -2849,7 +2862,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [gridOpen, setGridOpen] = useState(false);
   const canGrid = canGridPerm && isPointerDevice();
   // 履歴カードの「▼ 詳細」を開いている申請。
-  // 🚨 このページは isConfirmView で早期returnするので、Hookは必ずその手前で宣言すること
+  // 🚨 Hook は必ず早期 return（表入力 gridOpen・回答の画面 ?inquiry= など）より前で宣言すること
+  //    （2026-10-15：確認ページ ?view=confirm は早期 return をやめ、2段目のタブの中身 confirmBody にした）
   //    （後ろに置くと確認ページに切り替えた瞬間に画面が真っ白になる。過去に踏んだ事故）
   const [detailOpenIds, setDetailOpenIds] = useState<Set<string>>(new Set());
   const toggleDetail = (id: string) => setDetailOpenIds(prev => {
@@ -3320,7 +3334,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     fetchOwnCard();
   };
 
-  // 履歴・修正依頼系の派生値とフックは、?view=confirm の早期returnより前に置くこと。
+  // 履歴・修正依頼系の派生値とフックは、早期 return より前に置くこと。
   // 早期returnの後ろに Hook があると、通常ビュー⇄確認ビューの切替で Hook 数が変わり React がクラッシュ
   // （確認ページが真っ白になる）。Rules of Hooks 順守のため必ずここで宣言する。
   const otTodayStr = todayJstStr();
@@ -3699,49 +3713,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // ────────────────────────────────────────────
   // 確認者ビュー（?view=confirm）
   // ────────────────────────────────────────────
-  if (isConfirmView) {
-    return (
-      <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <button onClick={() => { setSearchParams({}); window.scrollTo({ top: 0 }); }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: text }}>←</button>
-            <h2 style={{ margin: 0, fontSize: 17, color: text }}>✅ 残業・時間調整の確認</h2>
-            {pendingForMe.length > 0 && (
-              <span style={badgeStyle('#c62828', '#4a1515', isDark)}>{pendingForMe.length}件</span>
-            )}
-          </div>
-
-          {/* 📩 正社員へ 申請を依頼（2026-10-15 ユーザー確定・案A）。休暇の受理ページと同じ部品 components/AppRequestBox */}
-          {canApplicationRequest && (
-            <AppRequestBox userId={user.id} profileName={profileName} isDark={isDark} style={{ marginBottom: 14 }} />
-          )}
-
-          {loadError && (
-            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-              <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{loadError}</p>
-              <button onClick={() => { fetchOwn(); fetchOwnCard(); fetchPendingForMe(); }}
-                style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
-            </div>
-          )}
-          {actionError && (
-            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
-              <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{actionError}</p>
-            </div>
-          )}
-          {gcalWarning && (
-            <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-              <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404' }}>⚠️ {gcalWarning.message}</p>
-              {gcalWarning.reportId && (
-                <button onClick={retryGcalSync} disabled={retrying}
-                  style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#f59e0b', color: '#fff', opacity: retrying ? 0.6 : 1 }}>
-                  {retrying ? '再同期中…' : 'カレンダー再同期'}
-                </button>
-              )}
-              <button onClick={() => setGcalWarning(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>✕</button>
-            </div>
-          )}
-
+  // 確認待ちのタブを出すか：前の［確認ページへ］と同じ条件＋開いている間は消さない（最後の1件を受理しても「ありません」を見せる）
+  const showConfirmTab = canSummary || pendingForMe.length > 0 || isConfirmView;
+  // 2段目を開いているか（使えないタブの URL から来たときは開かない＝いつもの入力画面）
+  const askOpen = isAskView && canApplicationRequest;
+  const managerOpen = isConfirmView || askOpen;
+  const hasManagerRow = showConfirmTab || canApplicationRequest;
+  // 🚨 2026-10-15 ユーザー確定（案B）：確認ページは別の画面にせず、ページのタブ（2段目「✅ 確認待ち」）の中に出す。
+  //    ?view=confirm のままで開く（ベル・メール・ホームのお知らせのリンクを変えなくてよいように）。
+  //    見出し（← と題名）とエラーの枠は、タブの上のいつもの場所に出るので、ここには置かない
+  const confirmBody = isConfirmView ? (
+    <>
           {pendingForMe.length === 0 && (
             <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '24px 16px', textAlign: 'center' }}>
               <p style={{ margin: 0, fontSize: 14, color: subText }}>確認待ちの申請はありません</p>
@@ -3981,10 +3963,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               </div>
             );
           })}
-        </div>
-      </div>
-    );
-  }
+    </>
+  ) : null;
 
   // ────────────────────────────────────────────
   // 表でまとめて入力（PCだけ・試験中）。🚨 表は幅が要るので、このときだけページの最大幅を広げる
@@ -4097,37 +4077,40 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             //    「何の件数か」が分からず、依頼カードは このタブの中にしか無いため
             { key: 'history' as const, label: '履歴・実績報告', badge: unreportedRequests.length + appRequests.length },
           ]}
-          active={tab}
-          onChange={t => { setTab(t); setEditTarget(null); }}
+          // 2段目（確認待ち・申請の依頼）を開いているときは、1段目はどれも選んでいない形にする
+          active={(managerOpen ? '' : tab) as typeof tab}
+          onChange={t => { setTab(t); setEditTarget(null); if (isConfirmView || isAskView) setSearchParams({}); }}
         />
 
-        {/* 確認ページへ（確認者・集計閲覧者のみ・タブ直下） */}
-        {/* 🚨 申請の依頼を出せる人にも出す（2026-10-15：確認ページに［依頼を作る］を置いたため。確認待ちが0件でも入れるように） */}
-        {(canSummary || pendingForMe.length > 0 || canApplicationRequest) && (
-          <button onClick={() => { setSearchParams({ view: 'confirm' }); window.scrollTo({ top: 0 }); }}
-            style={confirmPageBtn}>
-            {/* 🚨 形は lib/buttonStyles の confirmPageBtn（休暇の「受理ページへ」・勤務変更と同じ・2026-10-15） */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              <span>✅ 確認ページへ</span>
-              {pendingForMe.length > 0 && <span style={confirmPageCount}>{pendingForMe.length}件</span>}
-            </div>
-            {canApplicationRequest && <div style={confirmPageSub}>正社員へ残業・休暇の依頼</div>}
-          </button>
-        )}
+        {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定・案B。前は［✅ 確認ページへ］のオレンジのボタンで別の画面だった）。
+            ✅ 確認待ち＝確認者・集計閲覧者だけ（前のボタンと同じ条件）／📩 申請の依頼＝依頼を出せる人だけ。
+            🚨 URL は ?view=confirm／?view=ask（ベル・メールのリンクはそのまま使える） */}
+        {/* 形と色は components/ManagerTabs（休暇申請のページと共用・灰色＋薄い枠・選んだら緑・確認待ちの数字だけ赤） */}
+        <ManagerTabs isDark={isDark}
+          items={[
+            ...(showConfirmTab ? [{ key: 'confirm' as const, label: '✅ 確認待ち', count: pendingForMe.length, urgent: true }] : []),
+            ...(canApplicationRequest ? [{ key: 'ask' as const, label: '📩 申請の依頼', count: myOpenAskCount }] : []),
+          ]}
+          active={isConfirmView ? 'confirm' : askOpen ? 'ask' : null}
+          onChange={k => { setEditTarget(null); setSearchParams({ view: k }); window.scrollTo({ top: 0 }); }}
+        />
 
-        {/* 表でまとめて入力（PCだけ・試験中）。🚨 入力の枠の外・「確認ページへ」と同じ形に置く（2026-09-24 ユーザー確定・案A）。
+        {/* 表でまとめて入力（PCだけ・試験中）。🚨 入力の枠の外に置く（2026-09-24 ユーザー確定・案A。前は「確認ページへ」と同じ形だった）。
             枠の中に置くとフォームの一部に見え、枠が二重になる。
             🚨 「履歴・実績報告」タブにも出す（2026-09-25 ユーザー指摘：実績報告も表から送れるのに、
                実績報告を出しに来たタブにボタンが無かった） */}
-        {canGrid && !editTarget && (
+        {canGrid && !editTarget && !managerOpen && (
           <button type="button" onClick={() => { setGridOpen(true); window.scrollTo({ top: 0 }); }}
             style={{ width: '100%', padding: '10px', background: '#1976d2', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, boxSizing: 'border-box' }}>
             📋 残業申請「表入力」（パソコン専用）
           </button>
         )}
 
-        <div style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
-          {loading ? (
+        <div style={managerOpen ? undefined : { background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', padding: '16px 14px' }}>
+          {isConfirmView ? confirmBody
+          : askOpen ? (
+            <AppRequestBox userId={user.id} profileName={profileName} isDark={isDark} partNote="leavePage" style={{ marginBottom: 0 }} />
+          ) : loading ? (
             <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
           ) : tab === 'bulk' && canGridPerm ? (
             <OvertimeBox

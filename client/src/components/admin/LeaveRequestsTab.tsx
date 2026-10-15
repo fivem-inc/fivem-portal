@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import PartLeaveFormBox from '../PartLeaveFormBox';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification, formatLeaveDateSummary, notifyLeaveFinalApprovers } from '../../lib/notifications';
@@ -82,11 +83,11 @@ const LeaveRequestsTab: React.FC = () => {
   const ctx = useAdminPanel();
   const {
     isDarkMode, leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
-    users, fetchLeaveRequests, fetchUsers,
+    users, fetchLeaveRequests,
     setAdminManagerList, setAdminSelectedManagerId, setAdminSelectingManagerFor,
     sendLeaveSlack, supabase, setSuccessMsg, setErrorMsg, setPartialMsg, focusTarget, setFocusTarget,
   } = ctx;
-  const { user: authUser } = useAuth();
+  const { user: authUser, profileName: myName } = useAuth();
 
   // 修正依頼タブから飛んできたとき、対象の行を光らせる。
   // 🚨 絞り込みは解除する（既定が「確認待ち」なので受理済みの申請は一覧に出ず、探せなかった）
@@ -1066,8 +1067,6 @@ const LeaveRequestsTab: React.FC = () => {
             </div>
           ) : null;
 
-          const partUsers = users.filter(u => u.is_active !== false && u.employment_type === 'パート');
-
           const confirmDialogModal = confirmDialog ? (
             <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
               <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
@@ -1115,56 +1114,12 @@ const LeaveRequestsTab: React.FC = () => {
                 </button>
               </div>
 
-              {/* パートへ有給申請フォーム送信 */}
-              <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
-                <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', marginBottom: 8 }}>📨 パート・アルバイトへ休暇申請フォームを送信</p>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select
-                    id="part-leave-target"
-                    style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}
-                  >
-                    <option value="">-- パート・アルバイトを選択 --</option>
-                    {partUsers.map(u => (
-                      <option key={u.id} value={u.id}>{u.name || u.email}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => {
-                      const sel = document.getElementById('part-leave-target') as HTMLSelectElement;
-                      const userId = sel?.value;
-                      if (!userId) { setErrorMsg('パートを選択してください'); return; }
-                      const target = partUsers.find(u => u.id === userId);
-                      if (!target) return;
-                      setConfirmDialog({ message: `「${target.name || target.email}」さんに有休申請フォームを送信しますか？`, onConfirm: async () => {
-                        // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
-                        //    リーダー・マネージャーからも呼べる RPC 経由にする（2026-08-10）
-                        const { error } = await supabase.rpc('set_leave_request_enabled', { p_user_id: userId, p_enabled: true });
-                        if (error) { setErrorMsg('送信に失敗しました: ' + error.message); return; }
-                        await fetchUsers();
-                        setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
-                      } });
-                    }}
-                    style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
-                  >送信</button>
-                </div>
-                {partUsers.filter(u => u.leave_request_enabled).length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <p style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 4 }}>現在フォーム表示中のパート：</p>
-                    {partUsers.filter(u => u.leave_request_enabled).map(u => (
-                      <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <span style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>✅ {u.name || u.email}</span>
-                        <button
-                          onClick={async () => {
-                            await supabase.rpc('set_leave_request_enabled', { p_user_id: u.id, p_enabled: false });
-                            await fetchUsers();
-                          }}
-                          style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
-                        >取り消し</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* パート・アルバイトへ休暇申請を依頼。🚨 中身は components/PartLeaveFormBox（休暇申請のページの「📩 申請の依頼」と共用・2026-10-15）。
+                  前はここに同じ枠のコピーがあり、取り下げの失敗を見ていなかった */}
+              {authUser && (
+                <PartLeaveFormBox userId={authUser.id} profileName={myName} isDark={isDarkMode} canSeeAll
+                  style={{ marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }} />
+              )}
 
               {/* 有休奨励日 */}
               <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>

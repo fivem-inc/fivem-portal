@@ -103,3 +103,29 @@ export function dowOf(dateStr: string): string {
 }
 /** 「9/26（金）」の形 */
 export const mdDow = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowOf(d)}）`;
+
+/**
+ * 依頼を作った・取り下げた・パートの方へフォームを出した／取り下げたときに出す合図（2026-10-15）。
+ * ページの2段目のタブ（📩 申請の依頼）の数字が、これを聞いて数え直す。
+ */
+export const APP_REQUEST_CHANGED_EVENT = 'app-request-changed';
+export const notifyAppRequestChanged = () => window.dispatchEvent(new Event(APP_REQUEST_CHANGED_EVENT));
+
+/**
+ * 自分が出して、まだ申請されていない依頼の数（2段目のタブ「📩 申請の依頼」の数字）。
+ * withPart＝パート・アルバイトへ出した休暇申請フォーム（自分が出して、まだ申請されていないもの）も足す。
+ * 読めなければ 0（数字が出ないだけ。枠の中では読めなかったと出す）
+ */
+export async function countMyOpenAskItems(userId: string, withPart: boolean): Promise<number> {
+  const [req, part] = await Promise.all([
+    supabase.from('application_requests').select('id', { count: 'exact', head: true })
+      .eq('requester_id', userId).eq('status', 'open'),
+    withPart
+      ? supabase.from('profiles').select('id', { count: 'exact', head: true })
+          .eq('leave_request_enabled', true).eq('leave_enabled_by', userId).eq('is_active', true)
+      : Promise.resolve({ count: 0, error: null }),
+  ]);
+  if (req.error) console.error('[申請の依頼] 件数を読めませんでした', req.error.message);
+  if (part.error) console.error('[パートへの休暇申請フォーム] 件数を読めませんでした', part.error.message);
+  return (req.error ? 0 : req.count ?? 0) + (part.error ? 0 : part.count ?? 0);
+}

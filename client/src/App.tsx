@@ -33,7 +33,7 @@ const HistoryView = React.lazy(() => import('./components/HistoryView'));
 const MonthlyApplicationStatus = React.lazy(() => import('./components/MonthlyApplicationStatus'));
 const BusinessTripReportForm = React.lazy(() => import('./components/BusinessTripReport'));
 const LeaveRequestForm = React.lazy(() => import('./components/LeaveRequest'));
-const LeaveApprovals = React.lazy(() => import('./components/LeaveApprovals'));
+// 休暇の受理待ちの一覧（LeaveApprovals）は、休暇申請のページの2段目のタブの中で読み込む（2026-10-15）
 const CalendarPage     = React.lazy(() => import('./pages/CalendarPage'));
 const BoardPage        = React.lazy(() => import('./pages/BoardPage'));
 const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
@@ -1418,7 +1418,8 @@ const classifyNotif = (n: NotifLike) => {
     }
     // reference_id（申請ID）があれば ?focus= を付け、飛び先で該当申請を強調する
     const fq = n.reference_id ? `focus=${n.reference_id}` : '';
-    if (isLeavePendingApproval) return { path: `/leave-approvals${fq ? `?${fq}` : ''}`, closeOnTap: false };
+    // 🚨 2026-10-15：受理ページは休暇申請のページの2段目のタブ「✅ 受理待ち」になった（?tab=approve）
+    if (isLeavePendingApproval) return { path: `/leave?tab=approve${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isLeavePendingResubmit) return { path: `/leave?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isLeaveResult) return { path: `/leave?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     // 受理FYI（上長向け・誰がいつ休むか）はカレンダーの該当日へ。view=fyi のときだけ全チーム表示に切替（一般スタッフの欠勤動線には影響しない）
@@ -1447,7 +1448,8 @@ const classifyNotif = (n: NotifLike) => {
     // 🚨 closeOnTap は true（isResultOnly に入れてある）。読めば用が済むお知らせで、
     //    ここでやることは無い（もう一度頼むなら依頼を作り直す）。
     if (isAppRequestDismissed) {
-      return { path: n.reference_id ? `/leave-approvals?focus=${n.reference_id}` : '/leave-approvals', closeOnTap: true };
+      // 依頼の一覧は休暇申請のページの2段目のタブ「📩 申請の依頼」（?tab=ask・2026-10-15）
+      return { path: n.reference_id ? `/leave?tab=ask&focus=${n.reference_id}` : '/leave?tab=ask', closeOnTap: true };
     }
     // 申請の期限が近い／過ぎた（本人あて・朝の催促）。
     // 🚨 closeOnTap は false。申請するまで用が済まないので、ベルの行を消さない。
@@ -1833,7 +1835,7 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
 
   return (
     <div
-      onClick={() => navigate('/leave-approvals')}
+      onClick={() => navigate('/leave?tab=approve')}
       style={{
         margin: '0 0 16px 0',
         padding: '12px 16px',
@@ -2590,35 +2592,30 @@ const TripReportPage: React.FC = () => {
 
 // 休暇申請ページ
 const LeaveRequestPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, leaveRequestEnabled, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, leaveRequestEnabled, canLeaveApprovals, canPartLeaveFormSend, canApplicationRequest, canLeaveShiftAdjust, handleLogout } = useAuth();
+  const featurePublishState = useFeaturePublished();
   if (!user) return <div>読み込んでいます...</div>;
+  // 2段目のタブ「✅ 受理待ち」を出すか。🚨 前の受理ページ（/leave-approvals）を開けた条件と同じ
+  const canApproveTab = isApprover && isFeaturePublished('leave_approvals', featurePublishState, isAdmin, roleTitle) && (isAdmin || canLeaveApprovals);
   return (
     <div style={{ padding: '70px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
+        <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled}
+          canApproveTab={canApproveTab} isAdmin={isAdmin} canShiftAdjust={canLeaveShiftAdjust}
+          canApplicationRequest={canApplicationRequest} canPartFormSend={canPartLeaveFormSend} />
       </Suspense>
     </div>
   );
 };
 
-// 休暇申請承認ページ（リーダー・マネージャー・管理者用）
+// 前の休暇の受理ページ（/leave-approvals）。2026-10-15 から休暇申請のページの2段目のタブ「✅ 受理待ち」になった。
+// 🚨 メールの本文・古いベル・スマホのお知らせにこの URL が残っているので、消さずに ?tab=approve へ移す（?focus= はそのまま渡す）
 const LeaveApprovalsPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveApprovals, canPartLeaveFormSend, canApplicationRequest, canLeaveShiftAdjust, handleLogout, loading } = useAuth();
-  const featurePublishState = useFeaturePublished();
-  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
-  if (roleTitle && !isApprover) return <Navigate to="/" />;
-  // 管理画面の「休暇承認」トグルを実際に効かせる（これまでどこからも読まれていなかった）
-  if (!isFeaturePublished('leave_approvals', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
-  if (!isAdmin && !canLeaveApprovals) return <Navigate to="/" />;
-  return (
-    <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
-      <Suspense fallback={<PageLoader />}>
-        <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} canPartFormSend={canPartLeaveFormSend} canApplicationRequest={canApplicationRequest} canShiftAdjust={canLeaveShiftAdjust} />
-      </Suspense>
-    </div>
-  );
+  const location = useLocation();
+  const q = new URLSearchParams(location.search);
+  q.set('tab', 'approve');
+  return <Navigate to={`/leave?${q.toString()}`} replace />;
 };
 
 // 入社・退職の手続き（/retire）。マネージャー以上と管理者。スマホでも開ける（管理画面はパソコンだけのため別に置く・2026-09-19）

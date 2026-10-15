@@ -202,7 +202,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
               申請者名: responderName,
               休暇種別: '調整休',
               申請日数: '1',
-              リンク: 'https://fivem-portal.vercel.app/leave-approvals',
+              リンク: 'https://fivem-portal.vercel.app/leave?tab=approve',
             };
             if (await shouldSend('leave:new_request', 'slack')) {
               // 🚨 宛先は立場で決める。引けなかったときは今までどおりリーダーのチャンネル

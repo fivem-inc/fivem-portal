@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
-import AppRequestBox from './AppRequestBox';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification, formatLeaveDateSummary, notifyLeaveFinalApprovers } from '../lib/notifications';
 import { formatLeavePeriod } from '../lib/leaveDates';
@@ -20,11 +18,6 @@ interface Props {
   profileName: string | null;
   isAdmin: boolean;
   roleTitle?: string;
-  /** パートへ休暇申請フォームを送れるか（管理画面「役職・機能権限」で役職ごとに指定）。
-   *  🚨 このページを開ける権限（休暇承認）とは別。ページは見られるが送信はさせない、を作れるようにするため */
-  canPartFormSend?: boolean;
-  /** 申請の依頼を出せるか（管理画面「役職・機能権限」→「📩 申請の依頼」） */
-  canApplicationRequest?: boolean;
   /** マネージャー受理のときに「シフト調整：必要／調整不要」を選べるか（「🔁 シフト調整の記録」の権限・2026-09-28） */
   canShiftAdjust?: boolean;
 }
@@ -83,12 +76,11 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:         '差し戻し',
 };
 
-const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend, canApplicationRequest, canShiftAdjust }) => {
+const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canShiftAdjust }) => {
   // 🚨 役職名では判定しない（2026-09-09 属性化）。最終受理＝立場 president
   const roles = useRoles();
   const roleAttrs = attrsFor(roles, roleTitle);
   const isPresident = roleAttrs.acts_as === 'president';
-  const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
   // 通知バナーから ?focus=<申請ID> で来たとき該当カードを強調
   const { highlightId, focusRef } = useFocusHighlight(requests);
@@ -108,13 +100,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // マネージャー本人が申請先の場合の受理方法：'self'=自分が受理して経理へ／'other'=別マネージャーに依頼
   const [approveMode, setApproveMode] = useState<'self' | 'other'>('self');
 
-  // パートへフォーム送信
-  const [partUsers, setPartUsers] = useState<any[]>([]);
-
-  // 申請の依頼（📩 正社員へ）の中身は components/AppRequestBox（残業の確認ページと共用・2026-10-15）
-  const [partSendSuccess, setPartSendSuccess] = useState<string | null>(null);
-  const [partSendError, setPartSendError] = useState<string | null>(null); // パート送信のインラインエラー（alert廃止）
-  const [partConfirmId, setPartConfirmId] = useState<string | null>(null); // パート送信のインライン確認（confirm廃止）
+  // 🚨 2026-10-15：「📩 正社員へ 申請を依頼」「📋 パート・アルバイトへ 休暇申請を依頼」はこの画面から出した。
+  //    休暇申請のページの2段目のタブ「📩 申請の依頼」に置く（components/AppRequestBox・PartLeaveFormBox）。
+  //    この画面は「✅ 受理待ち」のタブの中身（受理待ちの一覧）だけ
   const [staleMsg, setStaleMsg] = useState<string | null>(null);
   // 共通インライン確認（window.confirm廃止）。shiftFor＝マネージャー受理のときだけ「シフト調整」の選択を出す（2026-09-28）
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; shiftFor?: LeaveReq } | null>(null);
@@ -179,16 +167,6 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       });
   }, []);
 
-  // パート一覧取得
-  useEffect(() => {
-    supabase
-      .from('profiles')
-      .select('id, name, email, employment_type, leave_request_enabled')
-      .eq('employment_type', 'パート')
-      .eq('is_active', true)
-      .order('name')
-      .then(({ data }) => { if (data) setPartUsers(data); });
-  }, []);
 
   const fetchRequests = useCallback(async () => {
     // isPresidentをcallback内でも参照できるよう依存に含める
@@ -434,7 +412,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       }
       // サイト通知・メール
       const leaderDays = target.leave_dates ? (() => { try { return String(JSON.parse(target.leave_dates!).length); } catch { return ''; } })() : '';
-      const leaderVars = { 休暇種別: target.leave_type === 'その他' ? (target.leave_type_other || 'その他') : target.leave_type, 申請日数: leaderDays, リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
+      const leaderVars = { 休暇種別: target.leave_type === 'その他' ? (target.leave_type_other || 'その他') : target.leave_type, 申請日数: leaderDays, リンク: 'https://fivem-portal.vercel.app/leave?tab=approve' };
       const applicantEmail = await getUserEmail(target.user_id) ?? '';
       const managerEmail = await getUserEmail(selectedManagerId) ?? '';
       // 同じイベントでも宛先によって役割が違う（マネージャーは要対応、申請者はFYI）ため、source_typeを分けて別々に送る
@@ -533,24 +511,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   };
 
   return (
-    <div style={{ maxWidth: 680, margin: '20px auto', padding: '0 12px' }}>
-      {/* 見出し：残業の確認ページと同じ形（← 戻る・題名・件数・2026-10-15 ユーザー指示で見た目をそろえた） */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <button onClick={() => navigate('/leave')} aria-label="休暇申請に戻る"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: text }}>←</button>
-        <h2 style={{ margin: 0, fontSize: 17, color: text }}>✅ 休暇申請の受理</h2>
-        {!loading && requests.length > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10, border: '1px solid #c62828', background: isDark ? '#4a1515' : '#c628281a', color: isDark ? '#fff' : '#c62828', whiteSpace: 'nowrap' }}>{requests.length}件</span>
-        )}
-      </div>
-      {partSendSuccess && (
-        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240 }}>
-          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{partSendSuccess}</span>
-          <button type="button" onClick={() => setPartSendSuccess(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
-        </div>
-      )}
-
+    <div>
+      {/* 見出しは出さない（休暇申請のページの2段目のタブ「✅ 受理待ち」の中に出すため・2026-10-15） */}
       {staleMsg && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240, maxWidth: 320 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>!</div>
@@ -572,106 +534,6 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         </div>
       )}
 
-      {/* 🚨 「📩 正社員へ」を先、「📨 パート・アルバイトへ」を後に出す（2026-09-09 ユーザー確定）。
-          ブロックの順番を入れ替えるとJSXの対応が崩れやすいので、囲って並びだけ逆にしている。
-          片方が権限で消えても、残ったほうがそのまま出る。 */}
-      <div style={{ display: 'flex', flexDirection: 'column-reverse' }}>
-
-      {/* パートへ申請フォーム送信。権限がOFFの役職には欄ごと出さない（2026-09-09） */}
-      {canPartFormSend && (() => {
-        const canSeeAll = isAdmin || roleAttrs.is_manager_plus;
-        const isLeader = roleAttrs.acts_as === 'leader';
-        // リーダーは自分が送ったものだけ表示
-        const visibleEnabled = partUsers.filter(u =>
-          u.leave_request_enabled && (canSeeAll ? true : u.leave_enabled_by === user.id)
-        );
-        return (
-          <div style={{ background: isDark ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
-            <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 8 }}>📨 パート・アルバイトへ 休暇申請フォームを送信</p>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <select id="part-leave-target-approvals" style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#000', fontSize: 13 }}>
-                <option value="">-- パート・アルバイトを選択 --</option>
-                {partUsers.filter(u => !u.leave_request_enabled).map(u => (
-                  <option key={u.id} value={u.id}>{u.name || u.email}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => {
-                  const sel = document.getElementById('part-leave-target-approvals') as HTMLSelectElement;
-                  const userId = sel?.value;
-                  setPartSendError(null);
-                  if (!userId) { setPartSendError('パートを選択してください'); return; }
-                  setPartConfirmId(userId);
-                }}
-                style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
-              >送信</button>
-            </div>
-            {partSendError && (
-              <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {partSendError}</div>
-            )}
-            {partConfirmId && (() => {
-              const t = partUsers.find(u => u.id === partConfirmId);
-              return (
-                <div style={{ marginTop: 8, background: isDark ? '#3a2e1a' : '#fff8e1', border: '1px solid #f0ad4e', borderRadius: 6, padding: '10px 12px' }}>
-                  <p style={{ fontSize: 13, color: isDark ? '#fff' : '#333', margin: '0 0 8px' }}>「{t?.name || t?.email}」さんに申請フォームを送信しますか？</p>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      onClick={async () => {
-                        const userId = partConfirmId;
-                        setPartConfirmId(null);
-                        setPartSendError(null);
-                        const target = partUsers.find(u => u.id === userId);
-                        if (!target) return;
-                        // 🚨 直接UPDATEしない。RLSで管理者のみに絞ってあるため RPC 経由にする（2026-08-10）
-                        const { error } = await supabase.rpc('set_leave_request_enabled', { p_user_id: userId, p_enabled: true });
-                        if (error) { setPartSendError('送信に失敗しました: ' + error.message); return; }
-                        setPartUsers(prev => prev.map(u => u.id === userId ? { ...u, leave_request_enabled: true, leave_enabled_by: user.id } : u));
-                        setPartSendSuccess(`「${target.name || target.email}」さんに送信しました`);
-                        setTimeout(() => setPartSendSuccess(null), 3000);
-                      }}
-                      style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
-                    >送信する</button>
-                    <button
-                      onClick={() => setPartConfirmId(null)}
-                      style={{ padding: '6px 16px', background: 'transparent', color: isDark ? '#adb5bd' : '#666', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
-                    >キャンセル</button>
-                  </div>
-                </div>
-              );
-            })()}
-            {visibleEnabled.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <p style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', marginBottom: 4 }}>
-                  現在フォーム表示中{isLeader ? '（自分が送ったもの）' : ''}：
-                </p>
-                {visibleEnabled.map(u => (
-                  <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 13, color: isDark ? '#fff' : '#333' }}>✅ {u.name || u.email}</span>
-                    {(canSeeAll || u.leave_enabled_by === user.id) && (
-                      <button
-                        onClick={async () => {
-                          await supabase.rpc('set_leave_request_enabled', { p_user_id: u.id, p_enabled: false });
-                          setPartUsers(prev => prev.map(p => p.id === u.id ? { ...p, leave_request_enabled: false, leave_enabled_by: null } : p));
-                        }}
-                        style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
-                      >取り消し</button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* 📩 申請の依頼（2026-09-09 ユーザー確定）。中身は components/AppRequestBox（残業の確認ページにも同じものを置いた・2026-10-15）。
-          🚨 パートへの送信欄と同じ「上長が相手に何かをさせる」場所なので、その上に並べる。
-          🚨 出すかどうかは管理画面「役職・機能権限」→「📩 申請の依頼」で決まる。 */}
-      {canApplicationRequest && (
-        <AppRequestBox userId={user.id} profileName={profileName} isDark={isDark} partFormBelow />
-      )}
-
-      </div>{/* 並びを逆にする囲いの終わり */}
 
       {/* 一覧は大きな枠で囲まない（残業の確認ページと同じ・1件ずつのカード） */}
       <div>

@@ -1,5 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount, confirmPageSub } from '../lib/buttonStyles';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import ManagerTabs from './ManagerTabs';
+import AppRequestBox from './AppRequestBox';
+import PartLeaveFormBox from './PartLeaveFormBox';
+import { countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
+// 受理待ちの一覧は上長だけが開くので、開いたときに読み込む
+const LeaveApprovals = React.lazy(() => import('./LeaveApprovals'));
 
 // note を渡すと「読んでほしい案内」が付く。
 // 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
@@ -96,6 +102,14 @@ interface Props {
   roleTitle: string;
   leaveRequestEnabled?: boolean;
   onSubmitSuccess?: () => void;
+  /** 2段目のタブ「✅ 受理待ち」を出すか（受理ページを開ける上長・App が決める） */
+  canApproveTab?: boolean;
+  isAdmin?: boolean;
+  /** 受理のときの「シフト調整：必要／調整不要」（LeaveApprovals に渡す） */
+  canShiftAdjust?: boolean;
+  /** 2段目のタブ「📩 申請の依頼」の中身：正社員へ申請を依頼／パート・アルバイトへ休暇申請を依頼 */
+  canApplicationRequest?: boolean;
+  canPartFormSend?: boolean;
 }
 
 interface Approver {
@@ -342,7 +356,7 @@ const DateLocationPicker: React.FC<{
 };
 
 // ---- メインコンポーネント ----
-const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess }) => {
+const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess, canApproveTab = false, isAdmin = false, canShiftAdjust, canApplicationRequest = false, canPartFormSend = false }) => {
   const navigate = useNavigate();
   // 時間調整・調整休を残業申請にまとめる区切りの日（2026-10-13・10/16 から）。null＝今までどおり
   const unifyCutoff = useOvertimeUnifyCutoff();
@@ -352,14 +366,22 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const unifyCleanedNow = !!unifyCleanup && todayJstStr() >= unifyCleanup;
   // 会社カレンダー（休館日・出勤日）。カレンダーの色分けと、選んだあとの注意書きに使う
   const calendarKinds = useCompanyCalendar();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const focusParam = searchParams.get('focus');
   const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(tabParam === 'history' ? 'history' : 'form');
+  // 2段目のタブ（上長の仕事・2026-10-15 ユーザー確定）。開いているときは1段目はどれも選んでいない形。
+  // ?tab=approve（受理待ち）／?tab=ask（申請の依頼）で開く（前の /leave-approvals はここへ移す）
+  const [managerView, setManagerView] = useState<'approve' | 'ask' | null>(
+    tabParam === 'approve' ? 'approve' : tabParam === 'ask' ? 'ask' : null);
   // 🚨 同じページを開いたまま通知をタップされたときも履歴タブに切り替える。
   // 画面は作り直されないので、開いた瞬間の1回だけでは切り替わらない。
   // 依存はURLの「値」なので、画面内のタブ操作（URLは変わらない）とは干渉しない
   useEffect(() => {
+    // 🚨 URL に2段目の指定が無ければ2段目を閉じる（受理待ちを開いたまま、ナビやベルで /leave・/leave?focus= に来たとき、
+    //    依頼のカードがある入力画面に戻すため）
+    if (tabParam === 'approve' || tabParam === 'ask') setManagerView(tabParam);
+    else setManagerView(null);
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
 
@@ -778,7 +800,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           undefined, undefined, undefined, { approverActsAs: apprKey });
       }
       // サイト通知・メール（申請者 or 承認者）
-      const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length), リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
+      const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length), リンク: 'https://fivem-portal.vercel.app/leave?tab=approve' };
       const applicantEmail = user.email || '';
       const leaderEmail = selectedApprover ? (await getUserEmail(selectedApprover.id) ?? '') : '';
       // leave:new_request は承認者(要対応)のみが対象（申請者向け変数が無いため、宛先設定にapplicantは無い）
@@ -841,11 +863,26 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const inputBg = isDark ? '#495057' : 'white';
   const borderColor = isDark ? '#6c757d' : '#ddd';
 
-  const isApprover = myAttrs.is_leader_plus;   // 旧配列＝リーダー以上（フロア責任者を含まない）
   // 🚨 Hook は必ず早期returnより前で呼ぶ。
   // 以前はこの行が下の `if (submitted)` の後ろにあり、申請を送信した瞬間に
   // Hookの数が変わってReactが落ち、画面が真っ黒になっていた（2026-07-25〜）
   const { pendingCount: approvalPendingCount } = useLeavePendingCount(user.id, _roleTitle, false);
+  // パートの方への依頼はリーダー以上だけ（書き込みの RPC がリーダー以上か管理者で確かめるため）
+  const canPartForm = canPartFormSend && (isAdmin || myAttrs.is_leader_plus);
+  const canAskTab = !leaveRequestEnabled && (canApplicationRequest || canPartForm);
+  const [askCount, setAskCount] = useState(0);
+  useEffect(() => {
+    if (!canAskTab) { setAskCount(0); return; }
+    const f = async () => { setAskCount(await countMyOpenAskItems(user.id, canPartForm)); };
+    void f();
+    // 依頼を作った・取り下げたら数え直す（AppRequestBox／PartLeaveFormBox が知らせる）
+    window.addEventListener(APP_REQUEST_CHANGED_EVENT, f);
+    return () => window.removeEventListener(APP_REQUEST_CHANGED_EVENT, f);
+  }, [canAskTab, canPartForm, user.id]);
+  // 開いてよい2段目だけを開く（古いリンク・役職が変わったなどで、使えないタブの URL から来たら入力画面に戻す）
+  const mv = (managerView === 'approve' && !canApproveTab) || (managerView === 'ask' && !canAskTab) ? null : managerView;
+  // 2段目があるときは、下の枠の上の角も丸くする（タブにくっつかなくなるため）
+  const hasManagerRow = !leaveRequestEnabled && (canApproveTab || canAskTab);
 
   if (submitted) {
     return (
@@ -999,33 +1036,43 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               ...(unifyCleanedNow ? [] : [{ key: 'adjustment' as const, label: '🕐 時間調整' }]),
               { key: 'history' as const, label: '📋 申請履歴' },
             ]}
-        active={tab}
-        onChange={t => { setTab(t); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
+        active={(mv ? '' : tab) as typeof tab}
+        onChange={t => { setTab(t); setManagerView(null); if (tabParam === 'approve' || tabParam === 'ask') setSearchParams({}); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
       />
 
-      {isApprover && (
-        <button
-          onClick={() => navigate('/leave-approvals')}
-          style={confirmPageBtn}
-        >
-          {/* 🚨 形は lib/buttonStyles の confirmPageBtn（残業・勤務変更の「確認ページへ」と同じ・2026-10-15） */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            <span>✅ 受理ページへ</span>
-            {approvalPendingCount > 0 && (
-              <span style={confirmPageCount}>{approvalPendingCount > 99 ? '99+' : approvalPendingCount}件</span>
-            )}
-          </div>
-          {/* 🚨 このボタンの説明は「受理ページで何ができるか」の一覧。
-              受理ページに機能を足したら、ここにも足すこと（2026-09-09 ユーザー指摘）。
-              🚨 中の2つの枠（📩 正社員へ／📨 パート・アルバイトへ）と同じ並びにしてある。
-                 順番や対象を変えるときは、受理ページ側と必ず揃えること。 */}
-          <div style={confirmPageSub}>正社員へ残業・休暇の依頼／パートへ休暇フォーム送信</div>
-        </button>
+      {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定。前は［✅ 受理ページへ］のオレンジのボタンで別の画面だった）。
+          形と色は components/ManagerTabs（残業・時間のページと共用） */}
+      {!leaveRequestEnabled && (
+        <ManagerTabs isDark={isDark}
+          items={[
+            ...(canApproveTab ? [{ key: 'approve' as const, label: '✅ 受理待ち', count: approvalPendingCount, urgent: true }] : []),
+            ...(canAskTab ? [{ key: 'ask' as const, label: '📩 申請の依頼', count: askCount }] : []),
+          ]}
+          active={mv}
+          onChange={k => { setManagerView(k); setSearchParams({ tab: k }); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); }}
+        />
+      )}
+
+      {/* ✅ 受理待ち（前の受理ページの中身） */}
+      {mv === 'approve' && (
+        <div>
+          <Suspense fallback={<p style={{ textAlign: 'center', color: subText }}>読み込み中...</p>}>
+            <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={_roleTitle} canShiftAdjust={canShiftAdjust} />
+          </Suspense>
+        </div>
+      )}
+
+      {/* 📩 申請の依頼（正社員へ／パート・アルバイトへ）。見た目は components/RequestBox で2つそろえてある */}
+      {mv === 'ask' && (
+        <div>
+          {canApplicationRequest && <AppRequestBox userId={user.id} profileName={profileName} isDark={isDark} partNote={canPartForm ? 'below' : 'none'} />}
+          {canPartForm && <PartLeaveFormBox userId={user.id} profileName={profileName} isDark={isDark} canSeeAll={isAdmin || myAttrs.is_manager_plus} />}
+        </div>
       )}
 
       {/* 申請フォーム */}
-      {tab === 'form' && (
-        <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+      {!mv && tab === 'form' && (
+        <div style={{ padding: 24, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
           {/* 📩 自分あての休暇の申請依頼（2026-09-26）。カードは残業ページと共用の AppRequestCard */}
           {receivedReqErr && (
             <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{receivedReqErr}</div>
@@ -1474,7 +1521,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       )}
 
       {/* 時間調整フォーム */}
-      {tab === 'adjustment' && !unifyCleanedNow && (() => {
+      {!mv && tab === 'adjustment' && !unifyCleanedNow && (() => {
         const today = new Date();
         const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
         const daysInMonth = new Date(adjCalYear, adjCalMonth + 1, 0).getDate();
@@ -1556,7 +1603,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         // 区切りの日を過ぎたら、入力は出さず案内だけ（登録済みの時間調整は「履歴」の「時間調整」で見られる）
         if (unifyMovedNow) {
           return (
-            <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+            <div style={{ padding: 20, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
               <div style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, borderRadius: 10, padding: '14px 16px' }}>
                 <div style={{ fontWeight: 'bold', fontSize: 14, color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>時間調整は「残業申請」に移りました</div>
                 <div style={{ fontSize: 12.5, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
@@ -1570,7 +1617,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         }
 
         return (
-          <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+          <div style={{ padding: 20, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
             {/* 区切りの日の前：先の日は残業申請で、と知らせる（2026-10-13） */}
             {unifyCutoff && (
               <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px', marginBottom: 12, fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
@@ -1784,8 +1831,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       })()}
 
       {/* 申請履歴 */}
-      {tab === 'history' && (
-        <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+      {!mv && tab === 'history' && (
+        <div style={{ padding: 24, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
           <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>📋 申請履歴</h2>
 
           {/* ── 履歴サブタブ ── */}
