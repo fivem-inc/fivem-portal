@@ -335,12 +335,13 @@ const OvertimeAdminTab: React.FC = () => {
     //    時間帯・履歴は埋め込みで一緒に読む（申請の ID を .in() で並べると、件数が増えたとき URL が長すぎて失敗するため）
     const from = otLoadFrom(otLoadRange);
     type Row = { id: string; applicant_id: string; reviewer_id: string | null; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null; is_post_hoc: boolean; show_on_calendar: boolean | null; late_situation: string | null; early_situation: string | null;
+      from_trip_date: string | null; trip_review_reason: string | null;
       segments: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[] | null;
       hist: { change_kind: string | null; change_summary: string | null }[] | null };
     const rows: Row[] = [];
     for (let off = 0; ; off += 1000) {
       let q = supabase.from('overtime_reports')
-        .select('id, applicant_id, reviewer_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
+        .select('id, applicant_id, reviewer_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, from_trip_date, trip_review_reason, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
         .eq('entry_type', 'manual');
       if (from) q = q.gte('work_date', from);
       const { data, error } = await q.order('work_date', { ascending: false }).order('id').range(off, off + 999);
@@ -375,7 +376,7 @@ const OvertimeAdminTab: React.FC = () => {
     setOtReports(rows.map(r => {
       statusMap[r.id] = r.status;
       calMap[r.id] = { postHoc: r.is_post_hoc, share: r.show_on_calendar };
-      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, furikae_origin_date: r.furikae_origin_date, furikae_origin_location: r.furikae_origin_location, created_at: r.created_at, confirmed_at: r.confirmed_at, change_reason: r.change_reason, late_situation: r.late_situation, early_situation: r.early_situation, segments: segMap[r.id] || [] };
+      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, furikae_origin_date: r.furikae_origin_date, furikae_origin_location: r.furikae_origin_location, created_at: r.created_at, confirmed_at: r.confirmed_at, change_reason: r.change_reason, late_situation: r.late_situation, early_situation: r.early_situation, from_trip_date: r.from_trip_date, trip_review_reason: r.trip_review_reason, segments: segMap[r.id] || [] };
     }));
     setOtStatusMap(statusMap);
     setOtCalMap(calMap);
@@ -1377,6 +1378,12 @@ const OvertimeAdminTab: React.FC = () => {
                                 }}>
                                   {otCalMap[r.id].postHoc ? '事後報告' : '事前申請'}
                                 </span>
+                              </div>
+                            )}
+                            {/* 出張報告から作った申請（2026-10-14）。受理が要った理由があれば添える */}
+                            {r.from_trip_date && (
+                              <div style={{ marginTop: 3 }} title={r.trip_review_reason ? `受理が必要な理由：${r.trip_review_reason}` : undefined}>
+                                <span style={{ padding: '1px 6px', borderRadius: 6, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap', border: '1px solid #b45309', color: isDarkMode ? '#fff' : '#b45309', background: isDarkMode ? '#4a3a10' : '#fff8e1' }}>📍 出張報告から</span>
                               </div>
                             )}
                           </td>

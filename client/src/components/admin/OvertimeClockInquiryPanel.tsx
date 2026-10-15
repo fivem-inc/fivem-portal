@@ -135,6 +135,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const [showAllMessages, setShowAllMessages] = useState(false);
   const [withdrawTarget, setWithdrawTarget] = useState<string | null>(null);
   const [clockRows, setClockRows] = useState<ClockOnlyRow[]>([]);
+  // 打刻の確認への答え（業務はしていません）でできた記録（自動で確認済みになる・2026-10-14）。一覧に「打刻の確認から」と出す
+  const [fromInquiryIds, setFromInquiryIds] = useState<Set<string>>(new Set());
   // 段階2：答えのカードでの対応（開いている操作は1つだけ）
   const [op, setOp] = useState<{ dayId: string; kind: 'cancel' | 'keep' } | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
@@ -243,7 +245,14 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
       .eq('pay_period_start', clockPeriod)
       .order('work_date', { ascending: false }).limit(1000);
     setClockErr(error ? '打刻ズレの記録を読み込めませんでした：' + error.message : '');
-    setClockRows((data ?? []) as ClockOnlyRow[]);
+    const rows = (data ?? []) as ClockOnlyRow[];
+    setClockRows(rows);
+    const ids = rows.map(r => r.id);
+    if (ids.length === 0) { setFromInquiryIds(new Set()); return; }
+    const { data: links, error: linkErr } = await supabase.from('overtime_clock_inquiry_days')
+      .select('result_report_id').in('result_report_id', ids);
+    if (linkErr) console.error('[打刻ズレの記録] 打刻の確認とのつながりを読めませんでした', linkErr.message);
+    setFromInquiryIds(new Set(((links ?? []) as { result_report_id: string | null }[]).map(l => l.result_report_id).filter((x): x is string => !!x)));
   }, [clockPeriod]);
 
   useEffect(() => { loadInquiries(); loadClockRows(); }, [loadInquiries, loadClockRows]);
@@ -854,7 +863,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14 }}>
         <h4 style={{ margin: '0 0 6px', fontSize: 14, color: text }}>打刻ズレの記録（残業なし）</h4>
         <p style={{ margin: '0 0 10px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
-          突き合わせが済んだら「確認済み」にしてください。<b>確認済みにすると本人は取り消せなくなります</b>。
+          突き合わせが済んだら「確認済み」にしてください（チェックを外すと未確認に戻ります）。<b>確認済みにすると本人は取り消せなくなります</b>。<br />
+          打刻の確認への答え（業務はしていません）でできた記録は、経理が聞いて答えが返ってきたものなので、自動で確認済みになります。
         </p>
         {(() => {
           const unchecked = clockRows.filter(r => !r.accounting_checked_at).length;
@@ -891,7 +901,10 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                     <td style={{ padding: '7px 8px', color: text, whiteSpace: 'nowrap' }}>{md(r.work_date)}（{dowOf(r.work_date)}）</td>
                     <td style={{ padding: '7px 8px', color: text, whiteSpace: 'nowrap' }}>{names[r.applicant_id] ?? ''}</td>
                     <td style={{ padding: '7px 8px', color: subText, whiteSpace: 'nowrap' }}>打刻 {hm(r.clock_in_reported)}〜{hm(r.clock_out_reported)}</td>
-                    <td style={{ padding: '7px 8px', color: subText }}>{r.reason ?? ''}</td>
+                    <td style={{ padding: '7px 8px', color: subText }}>
+                      {r.reason ?? ''}
+                      {fromInquiryIds.has(r.id) && <span style={{ marginLeft: 6, fontSize: 11, padding: '0 6px', borderRadius: 8, border: `1px solid ${border}`, whiteSpace: 'nowrap' }}>打刻の確認から</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>

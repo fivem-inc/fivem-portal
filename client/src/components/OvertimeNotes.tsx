@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { jpDateLabel } from '../lib/breakCalc';
 import { useOvertimeUnifyCutoff, useOvertimeUnifyCleanup, cutoffLabel } from '../lib/overtimeUnify';
 import { todayJstStr } from '../lib/breakCalc';
+import { useTripApplyStart } from '../lib/tripPending';
 
 const OvertimeNotes: React.FC<{
   isDark: boolean; advanceMaxDate: string; cardBg: string;
@@ -18,6 +19,9 @@ const OvertimeNotes: React.FC<{
   // 片付けの日（11/16）から日付の言葉を取る
   const unifyCleanup = useOvertimeUnifyCleanup();
   const unifyCleanedNow = !!unifyCleanup && todayJstStr() >= unifyCleanup;
+  // 出張報告から申請の下書き（2026-10-16 から・app_settings trip_apply_start）
+  const tripStart = useTripApplyStart();
+  const tripOn = !!tripStart && todayJstStr() >= tripStart;
   return (
     <div style={{
       background: isDark ? '#2c3e50' : '#e8f4fd',
@@ -38,6 +42,7 @@ const OvertimeNotes: React.FC<{
             ? <>時間調整（遅く出勤・早退）も、1日休む時間外調整休・振替休日も、{cutoffLabel(unifyCutoff)}以降の勤務日はこのページから申請してください（休暇申請からは申請できません）。</>
             : '（時間調整・調整休）'}</li>
         <li>時間外調整休・振替休日・欠勤（終日）は受理された時点で完了します（実績報告は不要です）。</li>
+        {tripOn && <li>出張報告（到着か終了）を送った日は、上の「📋 出張の申請がまだの日」から、日付と勤務地が入った下書きを開けます。実際の時刻と理由を入れて申請してください。決定済みのシフト表どおりの出張は、受理なしで確定します。</li>}
         <li>新規の申請は、支給月の17日までに提出してください。それ以降は前の給与期間の新規申請ができません（締め後に申請したい場合は経理にご相談ください）。</li>
         <li>事前申請ができるのは{jpDateLabel(advanceMaxDate)}までです（3か月先の給与期間まで）。それより先の予定は、その時期が近づいてから申請してください。</li>
       </ol>

@@ -26,7 +26,7 @@ import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
-import { loadMyTripPendingDays, tripDayLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
+import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, mayConfirmAsPlanned, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
@@ -4075,14 +4075,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             {!editTarget && tripDays.length > 0 && (
               <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}` }}>
                 <div style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#f5e3b0' : '#5c4400', marginBottom: 4 }}>📋 出張の申請がまだの日（{tripDays.length}件）</div>
-                <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>出張報告から、日付と勤務地を入れた下書きを作っています。時刻を入れて申請してください。</div>
+                <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>出張報告から下書きを作成しました。早めの申請をお願いします。</div>
                 {tripDays.map(day => (
                   <div key={day.work_date} style={{ borderTop: `1px solid ${isDark ? '#5a4a20' : '#ffe0b2'}`, padding: '7px 0' }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ fontSize: 12.5, color: text, lineHeight: 1.6 }}>
                         {tripDayLabel(day.work_date)} 出張 {day.location}
                         {day.span_start !== day.span_end && <span style={{ color: subText }}>（{tripDayLabel(day.span_start, false)}〜{tripDayLabel(day.span_end, false)}）</span>}
-                        <br /><span style={{ fontSize: 11.5, color: subText }}>{tripTimesText(day)}</span>
+                        <br /><span style={{ fontSize: 11.5, color: subText }}>{tripTimesText(day)}｜最終の締め切り {tripDeadlineLabel(day.work_date)}</span>
                       </div>
                       <button onClick={() => startFromTrip(day)}
                         style={{ flexShrink: 0, padding: '5px 10px', borderRadius: 8, border: `1px solid ${TOGGLE_BLUE}`, background: 'transparent', color: TOGGLE_BLUE, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>内容を確認 ›</button>

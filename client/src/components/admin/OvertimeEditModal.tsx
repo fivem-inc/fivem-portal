@@ -12,6 +12,9 @@ import { OT_TYPE_INFO, isOvertimeType } from '../../lib/overtimeTypes';
 interface Seg { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number; }
 export interface OvertimeRecord {
   id: string;
+  /** 出張報告から作った申請の日・受理が要った理由（表示だけ・2026-10-14） */
+  from_trip_date?: string | null;
+  trip_review_reason?: string | null;
   applicant_id: string;
   applicantName?: string;
   work_date: string;

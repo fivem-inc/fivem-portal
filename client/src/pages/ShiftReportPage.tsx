@@ -27,7 +27,7 @@ import { logFail } from '../lib/logFail';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import type { TodoItem } from '../lib/shiftReportTodo';
-import { loadMyTripPendingDays, tripDayLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
+import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
 import { resolveNormalShift, normalShiftBands, type PatternRow } from '../lib/overtimeShift';
 
 /** 申請の画面に最初から入れておく中身。カレンダーの予定（2026-10-05）か、出張報告（2026-10-14）から */
@@ -47,6 +47,8 @@ import { useAuth } from '../hooks/useAuth';
 type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
 
 interface ShiftReport {
+  /** 出張報告から作った報告の日（表示だけ・2026-10-14） */
+  from_trip_date?: string | null;
   id: string;
   applicant_id: string;
   submitted_by: string;
@@ -1405,6 +1407,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [tripLoaded, setTripLoaded] = useState(false);
   const [tripReplaceFor, setTripReplaceFor] = useState<string | null>(null);
   const [tripErr, setTripErr] = useState('');
+  const tripStartDate = useTripApplyStart();
+  const tripNotesOn = !!tripStartDate && todayStr() >= tripStartDate;
   const fetchTripDays = useCallback(async () => {
     const r = await loadMyTripPendingDays();
     setTripLoaded(true);
@@ -1723,6 +1727,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{(r.applicant as { name: string | null } | null)?.name ?? '不明'}</span>
                   <span style={{ fontSize: 11, color: '#888' }}>{r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）</span>
+                  {r.from_trip_date && <span style={{ fontSize: 10.5, fontWeight: 'bold', padding: '1px 6px', borderRadius: 6, border: '1px solid #b45309', color: isDark ? '#fff' : '#b45309', background: isDark ? '#4a3a10' : '#fff8e1', whiteSpace: 'nowrap' }}>📍 出張報告から</span>}
                   <span style={{ ...typeBadgeStyle(TYPE_INFO[r.application_type].color, TYPE_INFO[r.application_type].darkBg, isDark), marginLeft: 'auto' }}>
                     {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
                   </span>
@@ -1850,14 +1855,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {tripDays.length > 0 && (
               <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}`, textAlign: 'left' }}>
                 <div style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#f5e3b0' : '#5c4400', marginBottom: 4 }}>📋 出張の申請がまだの日（{tripDays.length}件）</div>
-                <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>出張報告から、日付と勤務地を入れた下書きを作っています。時刻を入れて申請してください。</div>
+                <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>出張報告から下書きを作成しました。早めの申請をお願いします。</div>
                 {tripDays.map(day => (
                   <div key={day.work_date} style={{ borderTop: `1px solid ${isDark ? '#5a4a20' : '#ffe0b2'}`, padding: '7px 0' }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
                       <div style={{ fontSize: 12.5, color: text, lineHeight: 1.6 }}>
                         {tripDayLabel(day.work_date)} 出張 {day.location}
                         {day.span_start !== day.span_end && <span style={{ color: subText }}>（{tripDayLabel(day.span_start, false)}〜{tripDayLabel(day.span_end, false)}）</span>}
-                        <br /><span style={{ fontSize: 11.5, color: subText }}>{tripTimesText(day)}</span>
+                        <br /><span style={{ fontSize: 11.5, color: subText }}>{tripTimesText(day)}｜最終の締め切り {tripDeadlineLabel(day.work_date)}</span>
                       </div>
                       <button onClick={() => { void pickTrip(day); }}
                         style={{ flexShrink: 0, padding: '5px 10px', borderRadius: 8, border: `1px solid ${TOGGLE_BLUE}`, background: 'transparent', color: TOGGLE_BLUE, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>内容を確認 ›</button>
@@ -1891,6 +1896,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <li>報告先は、出勤する校の担当のリーダー・マネージャー（フロア責任者）を選択してください。</li>
                 <li>受理されると「受理済み」に変わります。</li>
                 <li>間違えた場合は、担当のリーダー・マネージャーにお知らせください。</li>
+                {tripNotesOn && <li>出張報告（到着か終了）を送った日は、上の「📋 出張の申請がまだの日」から、日付と勤務地が入った下書きを開けます。実際の時刻と理由を入れて報告してください。</li>}
                 {/* 🚨 報告できる期間の上限（2026-09-09）。休暇と同じ上限にそろえている。
                     判定は lib/breakCalc の leaveRequestMaxDate 1か所 */}
                 <li>報告できるのは<b>1年先まで</b>です（{jpDateLabel(leaveRequestMaxDate(todayStr()))}まで）。</li>

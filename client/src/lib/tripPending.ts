@@ -3,6 +3,7 @@
 //    画面で数え直さない（出張報告の画面・残業申請・勤務変更の3か所が同じ答えを使う）
 import { supabase } from './supabaseClient';
 import { useAppDateSetting } from './overtimeUnify';
+import { calcPayPeriodStartJst, payPeriodCloseCutoff } from './breakCalc';
 
 /**
  * 機能を出す日（app_settings trip_apply_start・2026-10-16）。この日から「まだの日」の一覧・下書きの案内・画面の説明が出る。
@@ -59,6 +60,11 @@ export function tripDayLabel(date: string, withDow = true): string {
   const [y, m, d] = date.split('-').map(Number);
   const w = ['日', '月', '火', '水', '木', '金', '土'][new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
   return withDow ? `${m}/${d}（${w}）` : `${m}/${d}`;
+}
+
+/** その日の申請の締め切り（支給月の17日・勤務変更の未報告の一覧と同じ）を "M/D（曜）" で */
+export function tripDeadlineLabel(date: string): string {
+  return tripDayLabel(payPeriodCloseCutoff(calcPayPeriodStartJst(date)));
 }
 
 /** 報告の時刻 "H:MM"（日本時間） */
