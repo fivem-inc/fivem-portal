@@ -426,8 +426,10 @@ serve(async (req) => {
           // bell が付いているイベントは、押したときに着地画面で🔔ベル一覧を開いて
           // 該当行を光らせる（プッシュの文面には中身が書けないため、内容はベルで読んでもらう）。
           // nids はその「該当行」を特定するためのベル通知ID。新しい順に20件まで
-          url: addParams(g.url, g.bell && g.nids.length > 0
-            ? { nids: [...new Set(g.nids)].slice(-20).join(","), bell: "1" }
+          // 2026-10-15：bell の無いイベントにも nids だけは付ける。押して開いたら、
+          // アプリがそのベル通知を既読にする（ベルが開くのは bell=1 のときだけ・今までどおり）
+          url: addParams(g.url, g.nids.length > 0
+            ? { nids: [...new Set(g.nids)].slice(-20).join(","), ...(g.bell ? { bell: "1" } : {}) }
             : {}),
           tag: g.tagKey,
           // キュー側でミュート判定・保留済みなので、send-push側の二重判定を止める

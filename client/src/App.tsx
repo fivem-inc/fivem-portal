@@ -11,7 +11,7 @@ import PayrollCloseBanner from './components/PayrollCloseBanner';
 import { EXPENSE_FORM_ANCHOR_ID } from './lib/payrollClose';
 import { todayJstStr, payPeriodCloseCutoff, calcPayPeriodStartJst } from './lib/breakCalc';
 import { accessUntilLabel } from './lib/retire';
-import { BELL_REFRESH_EVENT } from './lib/notifications';
+import { BELL_REFRESH_EVENT, markBellReadByIds } from './lib/notifications';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
 const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
@@ -541,10 +541,12 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const bellParam = searchParams.get('bell');
   const nidsParam = searchParams.get('nids');
   useEffect(() => {
-    if (bellParam !== '1' || !nidsParam) return;
+    if (!nidsParam) return;
     // 他人が書き換えたURLで壊れないよう、UUIDの形をしたものだけ使う
     const ids = nidsParam.split(',').filter(s => /^[0-9a-f-]{36}$/i.test(s)).slice(0, 20);
-    if (ids.length > 0) {
+    // プッシュを押して開いた＝その通知は見た。どの種類のプッシュでも、ベルの同じ通知を既読にする（2026-10-15）
+    void markBellReadByIds(userId, ids);
+    if (bellParam === '1' && ids.length > 0) {
       if (btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
       setOpen(true);
       setHighlightIds(ids);
@@ -554,7 +556,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
       return () => clearTimeout(t);
     }
     setSearchParams(prev => { prev.delete('bell'); prev.delete('nids'); return prev; }, { replace: true });
-  }, [bellParam, nidsParam, setSearchParams]);
+  }, [bellParam, nidsParam, setSearchParams, userId]);
 
   // 光らせる行が一覧の下の方にあるときは、その行まで自動でスクロールする
   useEffect(() => {

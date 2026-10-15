@@ -93,6 +93,27 @@ export async function markBellReadForMessages(userId: string, messageIds: string
   }
 }
 
+/** プッシュを押して開いたとき、そのプッシュのもとになったベル通知を既読にする（2026-10-15）。
+ *  push-dispatch がすべてのプッシュの飛び先に nids（ベル通知のID）を付けている。
+ *  🚨 自分の行だけ（user_id で絞る）。0件は正常（すでに既読・別の端末で読んだ など）。
+ *  🚨 投げっぱなしで呼ぶので、例外はここで受け止める。 */
+export async function markBellReadByIds(userId: string, notificationIds: string[]) {
+  const ids = [...new Set(notificationIds.filter(Boolean))];
+  if (!userId || ids.length === 0) return;
+  try {
+    const { data, error } = await supabase.from('notifications')
+      .update({ read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('read', false)
+      .in('id', ids)
+      .select('id');
+    if (error) { console.error('ベルの既読化に失敗:', error.code, error.message); return; }
+    if ((data ?? []).length > 0) window.dispatchEvent(new Event(BELL_REFRESH_EVENT));
+  } catch (e) {
+    console.error('ベルの既読化に失敗:', e);
+  }
+}
+
 // pushUrgent: 連絡板の「当日の連絡・緊急」チェック用。true にすると、
 // 受け取る人の「受信時間帯・休暇日」設定を無視してプッシュがすぐ届く
 // （notifications.push_urgent → トリガーが push_queue.urgent へコピー → push-dispatch が判定を飛ばす）
