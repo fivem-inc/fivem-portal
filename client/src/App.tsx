@@ -79,6 +79,7 @@ import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
+import { countMyOpenClockInquiries } from './lib/clockInquiry';
 
 // ページ遷移のたびにスクロールをトップへ戻す
 const ScrollToTop: React.FC = () => {
@@ -862,6 +863,23 @@ const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolea
   return { pendingCount };
 };
 
+// 自分あての、まだ答えていない「打刻の確認」の件数（2026-10-15 ユーザー確定・残業のナビの数字に足す）。
+// 🚨 数え方は lib/clockInquiry の countMyOpenClockInquiries（user_id で絞る。経理は全員の確認が読めるため）
+const useClockInquiryOpenCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
+  const [count, setCount] = useState(0);
+  const fetchCount = useCallback(async () => {
+    if (!userId || !canOvertime) { setCount(0); return; }
+    setCount(await countMyOpenClockInquiries(userId));
+  }, [userId, canOvertime]);
+  // 確認が届くとベル（overtime:clock_inquiry）が入るので、残業の話題の数え直しに乗る
+  useRefreshOn(fetchCount, TOPICS_OVERTIME);
+  useEffect(() => {
+    window.addEventListener('overtime-pending-changed', fetchCount);
+    return () => window.removeEventListener('overtime-pending-changed', fetchCount);
+  }, [fetchCount]);
+  return { count };
+};
+
 // 自分の「実績が未報告の事前申請」（受理済み request_confirmed で勤務日を過ぎた・終日除く）件数。
 // 本人へのリマインド（ホームバナー＋タブバッジ）に使う。
 const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
@@ -952,7 +970,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { rows: appRequestRows } = useAppRequestCount(userId);
   const appRequestCountLeave = appRequestRows.filter(r => r.kind === 'leave').length;
   const appRequestCountOvertime = appRequestRows.length - appRequestCountLeave;
-  const overtimeBadge = overtimePending + overtimeUnreported + appRequestCountOvertime; // 確認依頼＋自分の実績未報告＋申請の依頼（残業）
+  const { count: clockInquiryOpen } = useClockInquiryOpenCount(userId, canOvertime);
+  const overtimeBadge = overtimePending + overtimeUnreported + appRequestCountOvertime + clockInquiryOpen; // 確認依頼＋自分の実績未報告＋申請の依頼（残業）＋経理からの打刻の確認
   const leaveBadge = leavePending + appRequestCountLeave; // 承認待ち＋自分あての休暇の申請依頼
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：

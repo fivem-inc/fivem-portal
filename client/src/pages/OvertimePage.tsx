@@ -3,7 +3,7 @@ import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import AppRequestCard from '../components/AppRequestCard';
-import { loadReceivedAppRequests } from '../lib/appRequests';
+import { loadReceivedAppRequests, isFullDayOtContent } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
@@ -27,6 +27,7 @@ import { retireeReturnNote } from '../lib/retire';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
+import { loadMyOpenClockInquiries, type MyOpenClockInquiry } from '../lib/clockInquiry';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, mayConfirmAsPlanned, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
@@ -38,14 +39,14 @@ import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicatio
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
-import { computeBalance, diffColor } from '../lib/overtimeBalance';
+import { computeBalance, diffColor, plannedBreakdownText } from '../lib/overtimeBalance';
 import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
-import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import { DAY_MARK_STYLE, DAY_MARK_LEGEND, loadDayMarks, monthRange, dayMarkBlocksForm, recordDayCheck, cancelDayCheck, fetchDayCheckEnabled } from '../lib/overtimeDayMark';
 import type { DayMark } from '../lib/overtimeDayMark';
 
@@ -253,7 +254,7 @@ const AUTO_BADGE = { color: '#7d3c98', darkBg: '#3a1f4d' };
 // 🚨 ここに書き写さないこと（本人カード・部門集計・個人詳細・管理画面で数字が食い違う）
 
 // 部門集計の一覧行（1人分）。total=確定合計 / plannedTotal=見込み合計 / absenceDays=欠勤日数（別枠）
-interface SummaryRow { userId: string; name: string; group: string; role: string; total: number; plannedTotal: number; absenceDays: number; }
+interface SummaryRow { userId: string; name: string; group: string; role: string; total: number; plannedTotal: number; absenceDays: number; awaitingActual: number; awaitingReview: number; }
 type ProfLite = { id: string; name: string; group_names: string[] | null; role_title: string | null };
 
 /** "HH:MM(:SS)" → "HH:MM" 表示用 */
@@ -615,6 +616,8 @@ const OvertimeForm: React.FC<{
   const [breakManualMin, setBreakManualMin] = useState(() =>
     editTarget?.break_manual && editTarget.break_minutes != null ? String(editTarget.break_minutes) : (draft?.breakManualMin ?? ''));
   const [reason, setReason] = useState(() => editTarget?.reason ?? draft?.reason ?? '');
+  /** ［このメモを理由に写す］で、理由がもう入っているときの「置き換えますか」（その場で聞く） */
+  const [memoCopyAsk, setMemoCopyAsk] = useState(false);
   // 勤務地：登録済みの校以外の値（自由入力）は「その他」＋カスタム欄に復元する
   // 🚨 読み戻しの規則は lib/overtimeFormParts（表入力と共用・2026-09-29）
   const [location, setLocation] = useState(() => {
@@ -2330,7 +2333,7 @@ const OvertimeForm: React.FC<{
       {!fullDay && !clockOnlyMode && inquiryHint && inquiryHint.date === date && (
         <div style={{ background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12.5, color: isDark ? '#f5e3b0' : '#5c4400', lineHeight: 1.7 }}>
           <b>実際に勤務した時間を入れてください</b><br />
-          {inquiryHint.shift ? <>シフト {inquiryHint.shift} ／ </> : null}打刻 {inquiryHint.clockIn ?? '—'}〜{inquiryHint.clockOut ?? '—'}<br />
+          {inquiryHint.shift ? <>シフト {inquiryHint.shift} ／ </> : null}打刻 {inquiryHint.clock ?? `${inquiryHint.clockIn ?? '—'}〜${inquiryHint.clockOut ?? '—'}`}<br />
           {inquiryHint.note && <>{inquiryHint.from ? `${inquiryHint.from}さん` : '経理'}のひとこと：{inquiryHint.note}<br /></>}
           <span>{(inquiryHint.askSide ?? 'after') === 'before'
             ? '開始の時刻は空欄にしています。実際に勤務を始めた時刻を入れてください（入れないと送れません）。'
@@ -2543,7 +2546,9 @@ const OvertimeForm: React.FC<{
       {/* 「申請の依頼」から来たときの、上長のメモ（2026-09-10 ユーザー確定＝案1）。
           🚨 メモは理由欄に入れない。理由は「本人の言葉」で書く場所で、メモは相談で聞いた内容。
              入れておくと、そのまま送信されて本人の申請理由になっていない、という事故になる。
-          🚨 ［メモを理由に入れる］のようなボタンも置かない（1タップで同じ事故に戻る）。
+          🚨 2026-10-15 ユーザー確定で方針を変えた：［↓ このメモを理由に写す］を置く（9/10 の「ボタンを置かない」をやめた）。
+             上長が依頼のメモに理由の文をそのまま書いていることが多く、写すほうが早いため。
+             最初から理由に入れることはしない（押したときだけ写す・写したあとも直せる）。理由が入っていれば置き換えるか聞く。
           🚨 ポップアップにしない。閉じると見えなくなり、理由を書きながら読み返せない
              （この画面には「閉じたあと二度と見つけられない」という同型の教訓が残っている）。 */}
       {!clockOnlyMode && !isReportPhase && requestMemo && (
@@ -2553,8 +2558,23 @@ const OvertimeForm: React.FC<{
           </div>
           <div style={{ background: isDark ? '#1b2a3a' : '#fff', borderRadius: 6, padding: '8px 10px', fontSize: 12.5, lineHeight: 1.7, color: isDark ? '#dee2e6' : '#495057', whiteSpace: 'pre-wrap' }}>{requestMemo}</div>
           <div style={{ fontSize: 11.5, color: subText, lineHeight: 1.7, marginTop: 7 }}>
-            相談で聞いた内容です。ご自分の言葉で理由を書いてください
+            相談で聞いた内容です。理由に写したあとも直せます
           </div>
+          {reason.trim() !== requestMemo && !memoCopyAsk && (
+            <button type="button"
+              onClick={() => { if (reason.trim()) setMemoCopyAsk(true); else { setReason(requestMemo); clearErr('reason'); } }}
+              style={{ ...tintBtn(isDark), marginTop: 8, padding: '6px 12px', fontSize: 12.5 }}>↓ このメモを理由に写す</button>
+          )}
+          {memoCopyAsk && (
+            <div style={{ marginTop: 8, fontSize: 12.5, color: text }}>
+              <div style={{ marginBottom: 6 }}>理由はもう入力されています。このメモに置き換えますか？</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setMemoCopyAsk(false)} style={{ ...backBtn(isDark), padding: '6px 14px', fontSize: 12.5 }}>やめる</button>
+                <button type="button" onClick={() => { setReason(requestMemo); clearErr('reason'); setMemoCopyAsk(false); }}
+                  style={{ ...primaryBtn(), padding: '6px 14px', fontSize: 12.5 }}>置き換える</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
       {/* 理由。打刻ズレは専用の理由（選択式）を上で出しているのでここは出さない */}
@@ -3036,7 +3056,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         // group_names には権限・配信グループも混在するため、勝手に先頭を拾わない。未登録は「未所属」。
         const group = whitelist.find(g => (p?.group_names ?? []).includes(g)) ?? '未所属';
         const b = computeBalance(byUser.get(userId) ?? [], summaryPeriod);
-        return { userId, name: p?.name ?? '不明', group, role: p?.role_title ?? '', total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays };
+        return { userId, name: p?.name ?? '不明', group, role: p?.role_title ?? '', total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays, awaitingActual: b.awaitingActual, awaitingReview: b.awaitingReview };
       });
       // チーム内は役職の序列順（上位→下位）、同役職は名前順。チーム自体は名前順のまま。
       rows.sort((a, b) => {
@@ -3397,6 +3417,21 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setAppRequests(r.rows);
   }, [user.id]);
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
+  // ─── 経理からの打刻の確認（2026-10-15 ユーザー確定）。答えていない確認をページの上に出す ───
+  // 🚨 ベルとプッシュだけだと、閉じたあとに見つけられない（申請の依頼で9日間気づかれなかったのと同じ）。
+  //    答えると ClockInquiryResponse が overtime-pending-changed を出すので、ここも読み直す
+  const [clockInquiries, setClockInquiries] = useState<MyOpenClockInquiry[]>([]);
+  const fetchClockInquiries = useCallback(async () => {
+    const r = await loadMyOpenClockInquiries(user.id);
+    if (r.error) { console.error('[経理からの打刻の確認] 読み込めませんでした', r.error); return; }
+    setClockInquiries(r.rows);
+  }, [user.id]);
+  useEffect(() => { void fetchClockInquiries(); }, [fetchClockInquiries]);
+  useEffect(() => {
+    const h = () => { void fetchClockInquiries(); };
+    window.addEventListener('overtime-pending-changed', h);
+    return () => window.removeEventListener('overtime-pending-changed', h);
+  }, [fetchClockInquiries]);
   // ─── 出張の申請がまだの日（2026-10-14 ユーザー確定・計画 docs/計画-出張報告から申請.md） ───
   // 🚨 どの日がまだかは DB の my_trip_pending_days だけで決める（出張報告の画面・勤務変更と同じ答え）。読めなければ出さない
   const [tripDays, setTripDays] = useState<TripPendingDay[]>([]);
@@ -3482,14 +3517,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     const reqSegs = (r.segments ?? []).filter(s => s.start && s.end);
     // 🚨 勤務地の決め方は lib/overtimeFormParts の requestSegmentsLocation（表入力と共用・2026-09-29）
     const reqLocation = requestSegmentsLocation(reqSegs);
+    // 🚨 2026-10-15 ユーザー確定：上長が申請内容に終日（時間外調整休・振替休日・欠勤）を選んでいれば、終日で開く。
+    //    勤務地はその日のシフトの校（［計画から申請］と同じ）。振替休日の「振替元の日」は本人が入れる
+    const fullDayFromReq = isFullDayOtContent(r.ot_content) ? r.ot_content : null;
+    const fdNs = fullDayFromReq && first ? resolveNormalShift(patterns, first, pageCalendarKinds[first] ?? null) : null;
     saveDraft(DRAFT_KEYS.overtime, {
       mode: 'advance', date: first,
-      segments: reqSegs.length > 0 ? reqSegs.map(s => ({ start: s.start, end: s.end })) : [{ start: '', end: '' }],
+      segments: !fullDayFromReq && reqSegs.length > 0 ? reqSegs.map(s => ({ start: s.start, end: s.end })) : [{ start: '', end: '' }],
       breakManual: false, breakManualMin: '',
       // 🚨 理由は空。上長のメモは入力欄の上に出すだけにする（2026-09-10 ユーザー確定）。
       //    理由に入れると、そのまま送信されて「本人の言葉になっていない申請」になる。
-      reason: '', location: reqLocation, locationCustom: '', reviewerId: r.requester_id,
+      //    2026-10-15 からはメモの枠に［↓ このメモを理由に写す］がある（押したときだけ写す・最初から入れるのは今もしない）
+      reason: '', location: fullDayFromReq ? (fdNs?.location ?? '') : reqLocation, locationCustom: '', reviewerId: r.requester_id,
       normOverride: false, normStart: '', normEnd: '',
+      ...(fullDayFromReq ? { fullDay: true, fullDayType: fullDayFromReq } : {}),
       // 申請したときに依頼と結び付けるため、依頼IDを持ち回す
       applicationRequestId: r.id,
       requestMemo: r.memo ?? '',
@@ -4014,6 +4055,26 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           </div>
         )}
 
+        {/* 🕐 経理からの打刻の確認（2026-10-15）。答えるまで残る。［答える ›］で回答の画面（?inquiry=id・ベルから開くのと同じ）。
+            🚨 タブの外（上）に置く：申請の依頼があると履歴タブで開くので、フォームのタブの中だとこのカードが見えない */}
+        {!editTarget && clockInquiries.length > 0 && (
+          <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}` }}>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#f5e3b0' : '#5c4400', marginBottom: 4 }}>🕐 経理からの打刻の確認（{clockInquiries.length}件）</div>
+            <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>打刻とシフトの時刻が違う日があります。内容を確認して回答してください。</div>
+            {clockInquiries.map(q => (
+              <div key={q.id} style={{ borderTop: `1px solid ${isDark ? '#5a4a20' : '#ffe0b2'}`, padding: '7px 0', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 12.5, color: text, lineHeight: 1.6, minWidth: 0 }}>
+                  {q.dates.length > 0 ? q.dates.map(d => tripDayLabel(d)).join('・') : '（日付なし）'}
+                  <br /><span style={{ fontSize: 11.5, color: subText }}>
+                    {q.sender_name ? `${q.sender_name}さんから` : '経理から'}{q.message ? `：${q.message.length > 30 ? q.message.slice(0, 30) + '…' : q.message}` : ''}
+                  </span>
+                </div>
+                <button onClick={() => setSearchParams(prev => { const n = new URLSearchParams(prev); n.set('inquiry', q.id); return n; })}
+                  style={{ flexShrink: 0, padding: '5px 10px', borderRadius: 8, border: `1px solid ${TOGGLE_BLUE}`, background: 'transparent', color: TOGGLE_BLUE, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>答える ›</button>
+              </div>
+            ))}
+          </div>
+        )}
         {/* タブ（共通部品 PageTabs）
             履歴タブのバッジ＝「実績未報告（要報告）」件数。開いた瞬間どこに何件あるか分かる */}
         <PageTabs
@@ -4255,7 +4316,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         </p>
                         {ownCardBalance.plannedDelta !== 0 && (
                           <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, textAlign: 'center' }}>
-                            見込み {formatSignedMin(ownCardBalance.plannedTotal)}（確認待ち反映後）
+                            見込み {formatSignedMin(ownCardBalance.plannedTotal)}（{plannedBreakdownText(ownCardBalance)}）
                           </p>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
@@ -4713,7 +4774,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               </span>
                               <span style={{ fontSize: 12, color: subText }}>
                                 確定 <b style={{ color: diffColor(bal.total, isDark) }}>{formatSignedMin(bal.total)}</b>
-                                {bal.plannedDelta !== 0 && <>　見込み <b style={{ color: diffColor(bal.plannedTotal, isDark) }}>{formatSignedMin(bal.plannedTotal)}</b></>}
+                                {bal.plannedDelta !== 0 && <>　見込み <b style={{ color: diffColor(bal.plannedTotal, isDark) }}>{formatSignedMin(bal.plannedTotal)}</b>（{plannedBreakdownText(bal)}）</>}
                               </span>
                             </div>
                             {renderOwnCard(r)}
@@ -4836,10 +4897,18 @@ const MyStudyList: React.FC<{ isDark: boolean }> = ({ isDark }) => {
   );
 };
 
-// 期間の選択肢（今期から過去6期分）
+// 期間の選択肢（先の期間 → 今期 → 過去。新しい順）
+// 🚨 2026-10-15：今期から過去だけで、事前申請を出せる先の期間（来期など）が部門集計・個人詳細で見られなかった
+//    （実機：10/15 に 10/19・10/29 の申請がスマホの部門の履歴に出ない）。
+//    先は本人の合計時間数のカードと同じ「事前申請の上限の期まで」（advanceRequestMaxDate）にそろえる
 function recentPeriods(count = 6): string[] {
   const opts: string[] = [];
-  let p = calcPayPeriodStartJst(todayJstStr());
+  const current = calcPayPeriodStartJst(todayJstStr());
+  const nextLimit = calcPayPeriodStartJst(advanceRequestMaxDate(todayJstStr()));
+  const future: string[] = [];
+  for (let f = shiftPayPeriod(current, 1); f <= nextLimit; f = shiftPayPeriod(f, 1)) future.push(f);
+  opts.push(...future.reverse());
+  let p = current;
   for (let i = 0; i < count; i++) {
     opts.push(p);
     const [y, m] = p.split('-').map(Number);
@@ -4914,6 +4983,10 @@ const SummaryView: React.FC<{
 
   const total = visibleRows.reduce((s, r) => s + r.total, 0);
   const plannedTotal = visibleRows.reduce((s, r) => s + r.plannedTotal, 0);
+  const plannedParts = {
+    awaitingActual: visibleRows.reduce((s, r) => s + r.awaitingActual, 0),
+    awaitingReview: visibleRows.reduce((s, r) => s + r.awaitingReview, 0),
+  };
 
   const selectStyle: React.CSSProperties = { padding: '6px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: inputBg, color: text, fontSize: 13 };
 
@@ -4962,10 +5035,10 @@ const SummaryView: React.FC<{
               <span>表示中の合計（確定）</span>
               <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
             </div>
-            {plannedTotal !== total && (
+            {(plannedParts.awaitingActual !== 0 || plannedParts.awaitingReview !== 0) && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 'normal', color: subText, marginTop: 2 }}>
                 <span>見込み合計</span>
-                <span>{formatSignedMin(plannedTotal)}</span>
+                <span>{formatSignedMin(plannedTotal)}（{plannedBreakdownText(plannedParts)}）</span>
               </div>
             )}
           </div>
@@ -5132,7 +5205,7 @@ const MemberDetailView: React.FC<{
         <p style={{ margin: 0, fontSize: 12.5, color: subText }}>{payMonthLabel(period)}（{payPeriodLabel(period)}）の合計時間数</p>
         <p style={{ margin: '4px 0 2px', fontSize: 24, fontWeight: 'bold', color: diffColor(b.total, isDark) }}>{formatSignedMin(b.total)}</p>
         {b.plannedDelta !== 0 && (
-          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>見込み {formatSignedMin(b.plannedTotal)}（確認待ち反映後）</p>
+          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>見込み {formatSignedMin(b.plannedTotal)}（{plannedBreakdownText(b)}）</p>
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
           <span>残業 {formatSignedMin(b.plus)}</span>

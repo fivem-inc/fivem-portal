@@ -12,7 +12,7 @@
 import React, { useState } from 'react';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { segmentsText } from '../lib/segmentsText';
-import { DISMISS_REASONS, DISMISS_OTHER, APP_REQUEST_KIND_LABEL, dismissAppRequest, mdDow } from '../lib/appRequests';
+import { DISMISS_REASONS, DISMISS_OTHER, APP_REQUEST_KIND_LABEL, APP_REQUEST_OT_CONTENT_LABEL, dismissAppRequest, mdDow } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 
 interface Props {
@@ -66,6 +66,10 @@ const AppRequestCard: React.FC<Props> = ({ r, isDark, focused = false, focusRef,
         {r.due_date && <><br />{mdDow(r.due_date)}までに申請してください。</>}
       </p>
       {/* 入る時間と校（シフト調整の決定で作った依頼だけに入る） */}
+      {/* 上長が選んだ申請内容（2026-10-15） */}
+      {r.ot_content && (
+        <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: textMain }}>申請内容：{APP_REQUEST_OT_CONTENT_LABEL[r.ot_content]}</p>
+      )}
       {(r.segments ?? []).length > 0 && (
         <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: textMain }}>入る時間：{segmentsText(r.segments)}</p>
       )}

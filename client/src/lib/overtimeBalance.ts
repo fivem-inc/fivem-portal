@@ -2,6 +2,8 @@
 // 🚨 同じ計算を画面ごとに書かない。給与に効く数字なので、どこで見ても同じ値にする。
 // 🚨 休暇由来の自動計上（entry_type='leave_auto'）も含める。手で出した申請だけ足すと食い違う。
 
+import { formatSignedMin } from './breakCalc';
+
 /** 計算に要る列だけ（overtime_reports の行）。画面ごとの型に依存しない */
 export interface BalanceRow {
   pay_period_start: string;
@@ -21,6 +23,8 @@ export interface BalanceSummary {
   total: number;         // 確定合計 = Σ diff_minutes（confirmed）。給与に効く数字
   plannedDelta: number;  // 見込みの増分 = Σ diff_minutes（未確定ステータス）
   plannedTotal: number;  // 見込み合計 = total + plannedDelta
+  awaitingActual: number; // plannedDelta のうち「実績待ち」（事前申請が受理済み・実際の時刻の報告がまだ＝request_confirmed）
+  awaitingReview: number; // plannedDelta のうち「確認待ち」（上長の受理がまだ＝requested / reported）
   plus: number;          // 残業（確定・プラス分）
   choseiMinus: number;   // 調整休（確定・マイナス分）
   otherMinus: number;    // 早退・調整（確定・マイナス分）
@@ -63,13 +67,26 @@ export function computeBalance(allRows: BalanceRow[], period: string): BalanceSu
   // 確定合計と同じ二重減算防止を適用: 同日に確定 leave_auto がある未確定の手動 chosei_off は見込みに入れない
   const plannedDelta = inPeriod.filter(r => PLANNED_STATUSES.includes(r.status) && !isDupChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
   const plannedTotal = total + plannedDelta;
+  // 見込みの内訳（2026-10-15 ユーザー確定 A）。「見込み 0:00」だけだと、予定が無いのか差し引き0なのか分からないため
+  const plannedRows = inPeriod.filter(r => PLANNED_STATUSES.includes(r.status) && !isDupChosei(r));
+  const awaitingActual = plannedRows.filter(r => r.status === 'request_confirmed').reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  const awaitingReview = plannedDelta - awaitingActual;
 
   // 欠勤は時間に入れず日数で別枠カウント
   const absenceDays = counted.filter(r => (r.application_types ?? []).includes('absence')).length;
   const absencePending = inPeriod.filter(r => r.status === 'requested' && (r.application_types ?? []).includes('absence')).length;
   const pendingCount = inPeriod.filter(r => r.status === 'requested' || r.status === 'reported').length;
 
-  return { total, plannedDelta, plannedTotal, plus, choseiMinus, otherMinus, holidayPlus, minus, absenceDays, absencePending, pendingCount };
+  return { total, plannedDelta, plannedTotal, awaitingActual, awaitingReview, plus, choseiMinus, otherMinus, holidayPlus, minus, absenceDays, absencePending, pendingCount };
+}
+
+/** 見込みの内訳の文字（2026-10-15 ユーザー確定 A）。「実績待ち ＋8:00」「実績待ち ＋6:00・確認待ち ＋2:00」。無ければ ''
+ *  🚨 本人カード・部門集計・個人詳細・まとめて申請・表入力・管理画面が同じものを呼ぶ（書き写さない） */
+export function plannedBreakdownText(b: { awaitingActual: number; awaitingReview: number }): string {
+  const parts: string[] = [];
+  if (b.awaitingActual !== 0) parts.push(`実績待ち ${formatSignedMin(b.awaitingActual)}`);
+  if (b.awaitingReview !== 0) parts.push(`確認待ち ${formatSignedMin(b.awaitingReview)}`);
+  return parts.join('・');
 }
 
 /** 合計時間数の数字の色（本人カード・表入力で共用）。プラス＝青／マイナス＝橙／0＝灰 */

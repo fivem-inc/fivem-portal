@@ -20,7 +20,7 @@ import {
   gridDayTypeOptions, FURIKAE_ORIGIN_TAKEN_MSG, shortMd, buildDayBase, isNewGridKind,
 } from '../lib/overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
-import { diffColor } from '../lib/overtimeBalance';
+import { diffColor, plannedBreakdownText } from '../lib/overtimeBalance';
 import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { DRAFT_KEYS, loadDraft, saveDraft } from '../lib/draftStorage';
@@ -40,6 +40,7 @@ import ShiftAdjustChoice from './ShiftAdjustChoice';
 import type { BulkRowStatus } from '../lib/overtimeBulkSend';
 import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import type { SegmentLike } from '../lib/segmentsText';
+import { APP_REQUEST_OT_CONTENT_LABEL, isFullDayOtContent, type AppRequestOtContent } from '../lib/appRequests';
 import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
 
 interface Reviewer { id: string; name: string; role_title: string; roles?: unknown }
@@ -62,7 +63,11 @@ interface Props {
   canChooseShiftAdjust?: boolean;
 }
 
-interface BoxRequest { id: string; requester_id: string; requester_name: string | null; target_dates: string[] | null; memo: string | null; segments: SegmentLike[] | null }
+interface BoxRequest {
+  id: string; requester_id: string; requester_name: string | null; target_dates: string[] | null; memo: string | null; segments: SegmentLike[] | null;
+  /** 上長が選んだ申請内容（2026-10-15）。終日の3つは、日付を選んだときに種類へ入れる */
+  ot_content: AppRequestOtContent | null;
+}
 
 /** 箱の1件（1日分）。🚨 同じ日を2つ入れない（追加の時点で止める） */
 interface BoxItem { key: string; date: string; draft: RowDraft }
@@ -127,7 +132,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       supabase.from('overtime_reports')
         .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', winFrom).lte('work_date', winTo),
-      supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments')
+      supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments, ot_content')
         .eq('recipient_id', userId).eq('kind', 'overtime').eq('status', 'open').order('created_at', { ascending: true }),
       fetchFurikaeOrigins(userId, winFrom, winTo),
     ]);
@@ -298,7 +303,13 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
     const req = requestByDate.get(date) ?? null;
     const ns = resolveNormalShift(patterns!, date, calendar![date] ?? null);
     const patch: Partial<RowDraft> = {};
-    if ((d.dayType ?? 'time') === 'time' && !d.segs.some(s => s.start || s.end)) {
+    // 依頼で上長が選んだ申請内容が終日（時間外調整休・振替休日・欠勤）なら、種類に最初から入れる（2026-10-15 ユーザー確定）。
+    // 🚨 まだ何も入れていないときだけ（本人が入れたものは上書きしない）
+    const reqContent = req?.ot_content ?? null;
+    const fullDayFromReq = isFullDayOtContent(reqContent) && (d.dayType ?? 'time') === 'time'
+      && !d.segs.some(s => s.start || s.end) && !d.reason.trim();
+    if (fullDayFromReq && isFullDayOtContent(reqContent)) patch.dayType = reqContent;
+    else if ((d.dayType ?? 'time') === 'time' && !d.segs.some(s => s.start || s.end)) {
       const reqSegs = (req?.segments ?? []).filter(x => x.start && x.end);
       if (reqSegs.length > 0) {
         patch.segs = reqSegs.slice(0, 3).map(x => ({ start: x.start, end: x.end }));
@@ -602,7 +613,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             通常シフト {normalShiftTimeText(inputRow.ns) || '休み'}{inputRow.ns.location ? `（${inputRow.ns.location}）` : ''}
             {inputNg ? <div style={{ color: '#e24b4a', fontWeight: 'bold' }}>{inputNg}</div>
               : <div>→ この日は <b>{c?.mode === 'advance' ? '事前申請' : '事後報告'}</b> になります{inputRow.kind === 'new_today' && dayType === 'time' ? '（今日は、入れた開始時刻がいまより前なら事後報告）' : ''}</div>}
-            {inputRow.req && <div>📩 {inputRow.req.requester_name ?? '上長'}さんから申請の依頼{inputRow.req.memo ? `「${inputRow.req.memo}」` : ''}</div>}
+            {inputRow.req && <div>📩 {inputRow.req.requester_name ?? '上長'}さんから申請の依頼{inputRow.req.ot_content ? `（申請内容：${APP_REQUEST_OT_CONTENT_LABEL[inputRow.req.ot_content]}）` : ''}{inputRow.req.memo ? `「${inputRow.req.memo}」` : ''}</div>}
             {inputRow.originOf && <div style={{ color: '#e24b4a' }}>この日は {md(inputRow.originOf)} の振替休日の振替元です</div>}
           </div>
         )}
@@ -765,6 +776,11 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
           <>
             <label style={lbl}>理由{req}</label>
             <input type="text" value={d.reason} onChange={e => setInputDraft({ reason: e.target.value })} style={fld} aria-label="理由" />
+            {/* 依頼のメモを理由に写す（2026-10-15 ユーザー確定・写したあとも直せる）。理由が空のときだけ出す */}
+            {inputRow?.req?.memo && !d.reason.trim() && (
+              <button type="button" onClick={() => setInputDraft({ reason: inputRow.req!.memo!.trim() })}
+                style={{ ...tintBtn(isDark), marginTop: 6, padding: '5px 12px', fontSize: 12.5 }}>↓ 依頼のメモを理由に写す</button>
+            )}
           </>
         )}
 
@@ -880,6 +896,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
         <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', fontSize: 12.5, margin: '8px 0', lineHeight: 1.7 }}>
           今期の合計 <span style={{ marginLeft: 6 }}>確定</span> <b style={{ color: diffColor(balance.now.total, isDark) }}>{formatSignedMin(balance.now.total)}</b>
           ／見込み <b style={{ color: diffColor(balance.now.plannedTotal, isDark) }}>{formatSignedMin(balance.now.plannedTotal)}</b>
+          {balance.now.plannedDelta !== 0 && <span style={{ color: subText }}>（{plannedBreakdownText(balance.now)}）</span>}
           {sendInPeriod > 0 && (
             <div>このリストを送ると → <b style={{ fontSize: 15, color: diffColor(balance.after.plannedTotal, isDark) }}>{formatSignedMin(balance.after.plannedTotal)}</b>
               <span style={{ color: subText }}>（{formatSignedMin(balance.after.plannedTotal - balance.now.plannedTotal)}）</span></div>

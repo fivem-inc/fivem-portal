@@ -782,7 +782,6 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           requesterId={user.id}
           requesterName={profileName ?? ''}
           isDark={isDark}
-          defaultKind="leave"
           onClose={() => setShowRequestSheet(false)}
           onSubmitted={() => { setShowRequestSheet(false); fetchMyRequests(); }}
         />

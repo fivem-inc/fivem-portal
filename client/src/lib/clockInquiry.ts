@@ -196,3 +196,42 @@ export function followUpOf(d: {
   if (d.answer === 'will_resubmit' && currentReportStatus === 'returned') return { kind: 'waiting', label: '本人の出し直し待ち' };
   return { kind: 'done', label: 'このまま' };
 }
+
+/** 自分あての、まだ答えていない打刻の確認（残業申請のページの上のカード・2026-10-15） */
+export interface MyOpenClockInquiry { id: string; created_at: string; message: string | null; sender_name: string | null; dates: string[] }
+
+/**
+ * 自分あての、まだ答えていない打刻の確認を読む（古い順）。
+ * 🚨 user_id で必ず絞る（経理・管理者は全員の確認が読めるため、絞らないと他の人の確認が並ぶ）。
+ * 読めなかったら error を返す（空の一覧で「確認は無い」と嘘をつかない）
+ */
+export async function loadMyOpenClockInquiries(userId: string): Promise<{ rows: MyOpenClockInquiry[]; error: string | null }> {
+  const { data, error } = await supabase.from('overtime_clock_inquiries')
+    .select('id, created_at, message, sender_id, days:overtime_clock_inquiry_days(work_date)')
+    .eq('user_id', userId).eq('status', 'open').order('created_at', { ascending: true });
+  if (error) return { rows: [], error: error.message };
+  const list = (data ?? []) as { id: string; created_at: string; message: string | null; sender_id: string; days: { work_date: string }[] | null }[];
+  const senderIds = [...new Set(list.map(r => r.sender_id))];
+  let nameOf = new Map<string, string>();
+  if (senderIds.length > 0) {
+    // 名前が読めなくてもカードは出す（「経理」と出す）
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', senderIds);
+    nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p => [p.id, p.name]));
+  }
+  return {
+    rows: list.map(r => ({
+      id: r.id, created_at: r.created_at, message: r.message,
+      sender_name: nameOf.get(r.sender_id) ?? null,
+      dates: (r.days ?? []).map(d => d.work_date).sort(),
+    })),
+    error: null,
+  };
+}
+
+/** 自分あての、まだ答えていない打刻の確認の件数（ナビの数字）。読めなければ 0 */
+export async function countMyOpenClockInquiries(userId: string): Promise<number> {
+  const { count, error } = await supabase.from('overtime_clock_inquiries')
+    .select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'open');
+  if (error) { console.error('[打刻の確認] 件数を読めませんでした', error.message); return 0; }
+  return count ?? 0;
+}

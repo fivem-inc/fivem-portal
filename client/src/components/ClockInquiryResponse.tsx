@@ -56,11 +56,13 @@ const toHHMM = (min: number) => { const m = min % 1440; return `${String(Math.fl
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dowOf = (d: string) => DOW[new Date(d + 'T00:00:00').getDay()];
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
-const hm = (t: string | null) => (t ? t.slice(0, 5) : '—');
 
 /** 「業務をしていました」から事後報告を開くときに、入力画面の上の黄色い枠に出すもの（2026-10-13・段階3） */
 export interface ClockInquiryHint {
   date: string; shift: string; clockIn: string | null; clockOut: string | null; note: string | null; from: string;
+  /** 打刻を2組とも並べた文字（「09:30〜17:30 / 19:15〜—」・lib/clockInquiry の clockText）。
+   *  🚨 2026-10-15：clockIn〜clockOut（最初の出勤〜最後の退勤）だけだと、2組目に退勤が無いとき1組目の退勤が出て、2組目が消えていた */
+  clock?: string;
   /** 何について聞かれたか：事後報告で空欄にする側（after＝終わり／before＝開始／both＝両方） */
   askSide: AskSide;
 }
@@ -215,6 +217,8 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         setSaving(false); return;
       }
       if (claimed === false) { setError('この確認はすでに回答済みです'); setSaving(false); return; }
+      // 答えたら、残業のナビの数字と残業申請のページの「経理からの打刻の確認」を読み直す（2026-10-15）
+      window.dispatchEvent(new Event('overtime-pending-changed'));
 
       // 2) 「業務は終わっていました」の日だけ、打刻ズレの記録を作る。
       //    ここで失敗しても回答は残るので、あとから作り直せる（result_report_id が null で分かる）
@@ -383,13 +387,14 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             {workedDays.map(d => (
               <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
                 <span style={{ fontSize: 12.5, color: '#664d03' }}>
-                  {md(d.work_date)}（{dowOf(d.work_date)}）　打刻 {hm(lastClockOut(d))}
+                  {md(d.work_date)}（{dowOf(d.work_date)}）　打刻 {clockText(d)}
                 </span>
                 <button onClick={() => onReportOvertime(d.work_date, {
                   date: d.work_date,
                   shift: normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '',
                   clockIn: d.clock_in ? d.clock_in.slice(0, 5) : null,
                   clockOut: lastClockOut(d) ? lastClockOut(d)!.slice(0, 5) : null,
+                  clock: clockText(d),
                   note: inquiry?.message ?? null,
                   from: senderName,
                   askSide: d.ask_side ?? 'after',
@@ -408,13 +413,14 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             {adjustedDays.map(d => (
               <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
                 <span style={{ fontSize: 12.5, color: '#664d03' }}>
-                  {md(d.work_date)}（{dowOf(d.work_date)}） 打刻 {hm(d.clock_in)}〜{hm(lastClockOut(d))}
+                  {md(d.work_date)}（{dowOf(d.work_date)}） 打刻 {clockText(d)}
                 </span>
                 <button onClick={() => onReportOvertime(d.work_date, {
                   date: d.work_date,
                   shift: normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '',
                   clockIn: d.clock_in ? d.clock_in.slice(0, 5) : null,
                   clockOut: lastClockOut(d) ? lastClockOut(d)!.slice(0, 5) : null,
+                  clock: clockText(d),
                   note: inquiry?.message ?? null,
                   from: senderName,
                   askSide: 'both',

@@ -4,7 +4,8 @@ import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { DateField } from './common/DateField';
 import { ERROR_BORDER, errorBg } from '../lib/formHighlight';
-import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { APP_REQUEST_OT_CONTENTS, APP_REQUEST_OT_CONTENT_LABEL, type AppRequestOtContent } from '../lib/appRequests';
 
 // 上長がスタッフに「この内容で申請してください」と依頼するシート（2026-09-09 ユーザー確定）。
 //
@@ -20,6 +21,11 @@ type Kind = 'overtime' | 'leave';
 const KIND_LABEL: Record<Kind, string> = {
   overtime: '残業・時間管理',
   leave: '休暇',
+};
+// 種類のボタンの下の説明（2026-10-15 ユーザー確定）。きっかけ：調整休の依頼を「休暇」で作り、本人が申請できずにやり直しになった
+const KIND_HINT: Record<Kind, string> = {
+  overtime: '残業・早出・調整休・振替休日など',
+  leave: '有給休暇・慶弔休暇など',
 };
 
 // メモの入力例。🚨 種類ごとに出し分ける（2026-09-10 実機指摘・ユーザー確定＝案1）。
@@ -50,14 +56,12 @@ interface Props {
   requesterId: string;
   requesterName: string;
   isDark: boolean;
-  /** 既定の種類（休暇の受理ページから開いたときは 'leave'） */
-  defaultKind?: Kind;
   onClose: () => void;
   onSubmitted: () => void;
 }
 
 const ApplicationRequestSheet: React.FC<Props> = ({
-  requesterId, requesterName, isDark, defaultKind, onClose, onSubmitted,
+  requesterId, requesterName, isDark, onClose, onSubmitted,
 }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
@@ -65,7 +69,11 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   const cardBg = isDark ? '#343a40' : '#fff';
   const inputBg = isDark ? '#2b3035' : '#fff';
 
-  const [kind, setKind] = useState<Kind>(defaultKind ?? 'overtime');
+  // 🚨 最初は何も選ばない（2026-10-15 ユーザー確定）。休暇の受理ページから開いても「休暇」を選んでおかない
+  //    （選ばれたまま調整休の依頼を作り、本人が申請できなかった実例があるため）。選ぶまで下の入力は出さない
+  const [kind, setKind] = useState<Kind | null>(null);
+  // 残業の依頼の申請内容（必須）。終日の3つは本人の申請画面に最初から入る（lib/appRequests）
+  const [otContent, setOtContent] = useState<AppRequestOtContent | null>(null);
   const [recipientId, setRecipientId] = useState('');
   const [dates, setDates] = useState<string[]>(['']);
   const [memo, setMemo] = useState('');
@@ -111,7 +119,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   // 候補の絞り込み。権限 → チーム → 名前 の順で絞る。
   // 🚨 いちばん大事なのは1つ目。その申請を使えない人に依頼しても、本人は申請できない
   //    （残業はマネージャー・リーダー・社長・管理者だけ／休暇はパート以外）。
-  const allowedRoles = permByFeature[KIND_FEATURE[kind]];
+  const allowedRoles = kind ? permByFeature[KIND_FEATURE[kind]] : undefined;
   const shownStaff = useMemo(() => {
     const q = staffQuery.trim();
     let list = staff.filter(s => s.id !== requesterId);   // 自分には依頼しない
@@ -125,7 +133,9 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   // 🚨 「1日だけ」の種類に切り替えたら、入っている日付を先頭の1つに詰める。
   //    残したままだと、送信できても本人は1日ぶんしか申請できない。
   useEffect(() => {
-    if (!KIND_MULTI_DATE[kind]) setDates(prev => (prev.length > 1 ? [prev[0] ?? ''] : prev));
+    if (kind && !KIND_MULTI_DATE[kind]) setDates(prev => (prev.length > 1 ? [prev[0] ?? ''] : prev));
+    // 休暇に切り替えたら申請内容は外す（残業の依頼だけのもの）
+    if (kind !== 'overtime') setOtContent(null);
   }, [kind]);
 
   // 🚨 種類を変えると、選んでいた相手がその申請を使えなくなることがある。
@@ -147,7 +157,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   const [existing, setExisting] = useState<{ date: string; label: string }[]>([]);
   useEffect(() => {
     setExisting([]);
-    if (!recipientId || !datesKey) return;
+    if (!kind || !recipientId || !datesKey) return;
     const want = datesKey.split(',');
     let alive = true;
     (async () => {
@@ -182,9 +192,13 @@ const ApplicationRequestSheet: React.FC<Props> = ({
 
   const validate = (): string => {
     const bad = new Set<string>();
+    if (!kind) { bad.add('kind'); }
+    if (kind === 'overtime' && !otContent) { bad.add('otContent'); }
     if (!recipientId) { bad.add('recipient'); }
     if (filledDates.length === 0) { bad.add('dates'); }
     setErrFields(bad);
+    if (bad.has('kind')) return '依頼の種類を選んでください';
+    if (bad.has('otContent')) return '申請内容を選んでください';
     if (bad.has('recipient')) return '依頼する相手を選んでください';
     if (bad.has('dates')) return '対象の日付を1つ以上入れてください';
     return '';
@@ -192,7 +206,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
 
   const submit = async () => {
     const msg = validate();
-    if (msg) { setError(msg); setShowConfirm(false); return; }
+    if (msg || !kind) { setError(msg || '依頼の種類を選んでください'); setShowConfirm(false); return; }
     setSubmitting(true);
     setError('');
     // 🚨 insert は error を見ないと RLS 拒否を握りつぶす
@@ -204,6 +218,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
       memo: memo.trim() || null,
       due_date: dueDate || null,
       consulted_on: consultedOn || null,
+      ot_content: kind === 'overtime' ? otContent : null,
     }).select('id').single();
     if (err) {
       setSubmitting(false);
@@ -219,9 +234,11 @@ const ApplicationRequestSheet: React.FC<Props> = ({
     // 🚨 休暇の依頼は種類を鍵に付ける（2026-09-26）。ベル・スマホから休暇ページへ着くため
     //    （それまでは休暇の依頼でも残業ページに着いていた）。設定（ON/OFF）は先頭2つ＝application_request:received を見るので新しい行は要らない
     const eventKey = kind === 'leave' ? 'application_request:received:leave' : 'application_request:received';
+    // 申請内容（時間・本人が選択 のときは付けない＝何も決まっていないので）
+    const contentLabel = kind === 'overtime' && otContent && otContent !== 'time' && otContent !== 'self' ? `（${APP_REQUEST_OT_CONTENT_LABEL[otContent]}）` : '';
     await insertNotification(
       recipientId,
-      `📩 ${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${dueLabel}`,
+      `📩 ${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${contentLabel}${dueLabel}`,
       memo.trim() || undefined,
       eventKey,
       data.id,
@@ -261,21 +278,52 @@ const ApplicationRequestSheet: React.FC<Props> = ({
 
         {/* 種類 */}
         <div style={{ marginBottom: 14 }}>
-          <span style={label}>依頼の種類</span>
+          <span style={label}>依頼の種類 <span style={{ color: '#dc3545' }}>*</span></span>
           <div style={{ display: 'flex', gap: 8 }}>
             {(['overtime', 'leave'] as Kind[]).map(k => (
-              <button key={k} type="button" onClick={() => setKind(k)}
+              <button key={k} type="button" onClick={() => { setKind(k); setErrFields(prev => { const n = new Set(prev); n.delete('kind'); return n; }); }}
                 style={{
-                  flex: 1, padding: '10px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
-                  border: `2px solid ${kind === k ? '#4a90d9' : border}`,
-                  background: kind === k ? '#e8f4fd' : 'transparent',
-                  color: kind === k ? '#1565c0' : subText,
+                  flex: 1, padding: '9px 6px', borderRadius: 8, cursor: 'pointer',
+                  border: `2px solid ${kind === k ? '#4a90d9' : errFields.has('kind') ? ERROR_BORDER : border}`,
+                  background: kind === k ? (isDark ? '#1e3a5f' : '#e8f4fd') : 'transparent',
                 }}>
-                {KIND_LABEL[k]}
+                <span style={{ display: 'block', fontSize: 13.5, fontWeight: 'bold', color: kind === k ? (isDark ? '#90caf9' : '#1565c0') : text }}>{KIND_LABEL[k]}</span>
+                <span style={{ display: 'block', fontSize: 11, color: subText, marginTop: 3, lineHeight: 1.5 }}>{KIND_HINT[k]}</span>
               </button>
             ))}
           </div>
+          {!kind && <div style={{ fontSize: 11.5, color: subText, textAlign: 'center', marginTop: 6 }}>どちらかを押して選んでください</div>}
+          <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 8, fontSize: 12, lineHeight: 1.6,
+            background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#f0c36d'}`, color: isDark ? '#f5e3b0' : '#7a5a00' }}>
+            ⚠️ 時間外調整休・振替休日は「残業・時間管理」で申請します。「休暇」を選ぶと、相手は申請できません。
+          </div>
         </div>
+
+        {/* 申請内容（残業の依頼だけ・必須・2026-10-15 ユーザー確定） */}
+        {kind === 'overtime' && (
+          <div style={{ marginBottom: 14 }}>
+            <span style={label}>申請内容 <span style={{ color: '#dc3545' }}>*</span></span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {APP_REQUEST_OT_CONTENTS.map(c => {
+                const on = otContent === c;
+                return (
+                  <button key={c} type="button" onClick={() => { setOtContent(c); setErrFields(prev => { const n = new Set(prev); n.delete('otContent'); return n; }); }}
+                    style={{
+                      padding: '6px 12px', borderRadius: 16, cursor: 'pointer', fontSize: 12.5,
+                      border: `1px solid ${errFields.has('otContent') && !on ? ERROR_BORDER : TOGGLE_BLUE}`,
+                      background: on ? TOGGLE_BLUE : 'transparent', color: on ? '#fff' : (isDark ? '#90caf9' : TOGGLE_BLUE),
+                      fontWeight: on ? 'bold' : 'normal',
+                    }}>
+                    {APP_REQUEST_OT_CONTENT_LABEL[c]}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: subText, marginTop: 6 }}>選択した内容が、相手の申請画面にあらかじめ入力されます。</div>
+          </div>
+        )}
+
+        {kind && (<>
 
         {/* 相手 */}
         <div style={{ marginBottom: 14 }}>
@@ -401,6 +449,8 @@ const ApplicationRequestSheet: React.FC<Props> = ({
           <DateField value={dueDate} onChange={setDueDate} isDark={isDark} placeholder="指定しない" />
         </div>
 
+        </>)}
+
         {error && (
           <div style={{ marginBottom: 12, padding: '9px 12px', borderRadius: 8, fontSize: 12.5,
             background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{error}</div>
@@ -409,7 +459,8 @@ const ApplicationRequestSheet: React.FC<Props> = ({
         {showConfirm ? (
           <div ref={confirmBoxRef} style={{ padding: '12px 14px', borderRadius: 10, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, marginBottom: 10 }}>
             <p style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
-              {recipient?.name}さんに、{KIND_LABEL[kind]}の申請をお願いします。<br />
+              {recipient?.name}さんに、{kind ? KIND_LABEL[kind] : ''}の申請をお願いします。<br />
+              {kind === 'overtime' && otContent && <>申請内容：{APP_REQUEST_OT_CONTENT_LABEL[otContent]}<br /></>}
               対象日：{filledDates.map(d => d.slice(5).replace('-', '/')).join('・')}
               {dueDate && <><br />申請期限：{dueDate.slice(5).replace('-', '/')}</>}
               <br />相手にお知らせが届きます。

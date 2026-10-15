@@ -25,6 +25,8 @@ export interface ReceivedAppRequest {
   consulted_on: string | null;
   /** 入る時間と校（シフト調整の決定で作った依頼だけに入る） */
   segments: SegmentLike[] | null;
+  /** 残業の依頼の申請内容（2026-10-15 から・それより前の依頼と休暇の依頼は null） */
+  ot_content: AppRequestOtContent | null;
 }
 
 /** 「対応しない」の理由の選択肢。
@@ -36,10 +38,25 @@ export const DISMISS_OTHER = 'その他';
 
 export const APP_REQUEST_KIND_LABEL: Record<AppRequestKind, string> = { overtime: '残業・勤務変更', leave: '休暇' };
 
+/** 残業の依頼の「申請内容」（2026-10-15 ユーザー確定）。DB の application_requests.ot_content と同じ値。
+ *  🚨 終日の3つは残業の申請の種別（application_types）と同じ綴り。本人が依頼から申請を始めると最初から入る */
+export type AppRequestOtContent = 'time' | 'chosei_off' | 'furikae_off' | 'absence' | 'self';
+export const APP_REQUEST_OT_CONTENTS: AppRequestOtContent[] = ['time', 'chosei_off', 'furikae_off', 'absence', 'self'];
+export const APP_REQUEST_OT_CONTENT_LABEL: Record<AppRequestOtContent, string> = {
+  time: '時間（残業・早出など）',
+  chosei_off: '時間外調整休',
+  furikae_off: '振替休日',
+  absence: '欠勤',
+  self: '本人が選択',
+};
+/** 終日の休みとして申請の画面に最初から入れる内容か（time と self は入れない） */
+export const isFullDayOtContent = (c: string | null | undefined): c is 'chosei_off' | 'furikae_off' | 'absence' =>
+  c === 'chosei_off' || c === 'furikae_off' || c === 'absence';
+
 /** 自分あての開いている依頼を読む（kind を渡せばその種類だけ）。読めなかったら error を返す（空で嘘をつかない） */
 export async function loadReceivedAppRequests(userId: string, kind?: AppRequestKind): Promise<{ rows: ReceivedAppRequest[]; error: string | null }> {
   let q = supabase.from('application_requests')
-    .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments')
+    .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments, ot_content')
     .eq('recipient_id', userId)
     .eq('status', 'open')
     .order('created_at', { ascending: true });

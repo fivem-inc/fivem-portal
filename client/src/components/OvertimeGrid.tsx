@@ -23,7 +23,7 @@ import {
   periodDates, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf, buildDayBase, isNewGridKind,
   locationPick, GRID_SELF_REVIEW, gridBalance, gridDayTypeOptions, FURIKAE_ORIGIN_TAKEN_MSG, shortMd,
 } from '../lib/overtimeGrid';
-import { diffColor } from '../lib/overtimeBalance';
+import { diffColor, plannedBreakdownText } from '../lib/overtimeBalance';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
@@ -41,6 +41,7 @@ import { runBulkSend } from '../lib/overtimeBulkSend';
 import ShiftAdjustChoice from './ShiftAdjustChoice';
 import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill } from '../lib/overtimeFormParts';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
+import { APP_REQUEST_OT_CONTENT_LABEL, isFullDayOtContent, type AppRequestOtContent } from '../lib/appRequests';
 
 /** 送る前の確認で、打刻ズレ（確認なしで確定）をまとめる箱の名前（申請先の id と重ならない値） */
 const CLOCK_GROUP = '__clock__';
@@ -89,6 +90,8 @@ interface GridRequest {
   target_dates: string[] | null;
   memo: string | null;
   segments: SegmentLike[] | null;
+  /** 上長が選んだ申請内容（2026-10-15）。終日の3つは、その日の種類に最初から入れる */
+  ot_content: AppRequestOtContent | null;
 }
 
 const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm, canChooseCalendar, canChooseShiftAdjust }) => {
@@ -126,7 +129,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       supabase.from('overtime_reports')
         .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
-      supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments')
+      supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments, ot_content')
         .eq('recipient_id', userId).eq('kind', 'overtime').eq('status', 'open').order('created_at', { ascending: true }),
       fetchFurikaeOrigins(userId, from, to),
     ]);
@@ -248,6 +251,29 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     if (saved?.defaultReviewerId) setDefaultReviewerId(saved.defaultReviewerId);
     setDraftNote(dropped > 0 ? `前回の入力のうち ${dropped} 日分は、その後に申請の状態が変わったため消しました。` : '');
   }, [ready, draftKey, baseRows, workplaces]);
+
+  // 依頼で上長が選んだ申請内容（時間外調整休・振替休日・欠勤）を、その日の種類に最初から入れる（2026-10-15 ユーザー確定）。
+  // 🚨 入れるのは「新しく出す日」で、まだ何も入れていない行だけ（本人が入れたものは上書きしない）。
+  //    同じ日・同じ依頼には1回だけ（入れたあと本人が［時間］に戻したら、もう入れ直さない）。
+  //    依頼は表の読み込みより少し遅れて届くことがあるので、下書きの読み込みとは別にここで入れる
+  const reqContentAppliedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (loadedKeyRef.current !== draftKey) return;
+    const patch: Drafts = {};
+    baseRows.forEach(r => {
+      const content = r.req?.ot_content;
+      if (!r.req || !isNewGridKind(r.kind) || !isFullDayOtContent(content)) return;
+      const key = r.date + '|' + r.req.id;
+      if (reqContentAppliedRef.current.has(key)) return;
+      reqContentAppliedRef.current.add(key);
+      const d = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
+      const empty = (d.dayType ?? 'time') === 'time' && !d.segs.some(x => x.start || x.end) && !d.reason.trim()
+        && !d.clockInAt && !d.clockOutAt;
+      if (!empty) return;
+      patch[r.date] = { ...d, dayType: content };
+    });
+    if (Object.keys(patch).length > 0) setDrafts(prev => ({ ...prev, ...patch }));
+  }, [baseRows, drafts, draftKey, workplaces]);
 
   // 下書きを保存（入力のたび）。どの種類の行だったかも一緒に残す（状態が変わった日を見分けるため）
   useEffect(() => {
@@ -618,7 +644,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
             <span>{period === calcPayPeriodStartJst(today) ? '今期の合計' : 'この期の合計'}</span>
             <span>確定 <b style={{ fontSize: 16, color: diffColor(balance.now.total, isDark) }}>{formatSignedMin(balance.now.total)}</b></span>
             <span style={{ color: subText }}>／</span>
-            <span>見込み <b style={{ fontSize: 16, color: diffColor(balance.now.plannedTotal, isDark) }}>{formatSignedMin(balance.now.plannedTotal)}</b><span style={{ color: subText }}>（確認待ち反映後）</span></span>
+            <span>見込み <b style={{ fontSize: 16, color: diffColor(balance.now.plannedTotal, isDark) }}>{formatSignedMin(balance.now.plannedTotal)}</b>{balance.now.plannedDelta !== 0 && <span style={{ color: subText }}>（{plannedBreakdownText(balance.now)}）</span>}</span>
           </span>
           {sendable.length > 0 && (
             <span>
@@ -791,7 +817,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         {r.req && (
                           <div style={{ fontSize: 12, marginTop: 3, color: toggleText, fontWeight: 'bold' }}>
                             📩 {r.req.requester_name ?? '上長'}さんから申請の依頼
+                            {r.req.ot_content && <div style={{ fontWeight: 'normal', color: subText }}>申請内容：{APP_REQUEST_OT_CONTENT_LABEL[r.req.ot_content]}</div>}
                             {r.req.memo && <div style={{ fontWeight: 'normal', color: subText }}>「{r.req.memo}」</div>}
+                            {/* 依頼のメモを理由に写す（2026-10-15 ユーザー確定・写したあとも直せる）。表では理由が空のときだけ出す */}
+                            {r.req.memo && editable && (r.draft.dayType ?? 'time') !== 'clock_only' && !r.draft.reason.trim() && (
+                              <button type="button" onClick={() => setRow(r.date, { reason: r.req!.memo!.trim(), touched: true })}
+                                style={{ ...btnSm, marginTop: 2, fontWeight: 'normal' }}>↓ メモを理由に写す</button>
+                            )}
                             {(r.req.segments ?? []).length > 0 && <div style={{ fontWeight: 'normal', color: subText }}>依頼の時間：{segmentsText(r.req.segments)}</div>}
                           </div>
                         )}
