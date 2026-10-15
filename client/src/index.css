@@ -28,6 +28,12 @@ body {
   overflow-x: hidden;
 }
 
+/* 文字の大きさ（lib/textScale.ts）を大きめ・特大にしているときは、描く幅が 320 より狭くなる
+   （例：幅 375 のスマホで特大＝幅 288）。最低 320 の決まりを外さないと、右がはみ出して横に動く */
+html[data-text-scale] body {
+  min-width: 0;
+}
+
 /* NavBarのモバイル横スワイプ用: スクロールバーを見せない（見た目上のスワイプ操作にする） */
 .navbar-scroll::-webkit-scrollbar {
   display: none;

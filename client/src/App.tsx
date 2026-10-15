@@ -6,6 +6,7 @@ import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
 import { BTN_BLUE } from './lib/buttonStyles';
+import TextScaleChoice from './components/TextScaleChoice';
 import RetireChecklistBanner from './components/RetireChecklistBanner';
 import PayrollCloseBanner from './components/PayrollCloseBanner';
 import { EXPENSE_FORM_ANCHOR_ID } from './lib/payrollClose';
@@ -625,7 +626,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
         )}
       </button>
       {open && dropRect && ReactDOM.createPortal(
-        <div ref={portalRef} style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
+        <div ref={portalRef} style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: Math.min(300, dropRect.right - 8) /* 文字の大きさ「特大」だと画面が狭くなり、300 だと左が切れる（2026-10-15）。ベルの右端から左へ広げる幅に収める */, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
           {/* 🚨 いつ消えるのかを書いておく（2026-09-09 ユーザー確定）。
               実際の掃除は毎晩 JST 3:00 の cron（delete_old_read_notifications）で、
               「既読になってから30日」経ったものだけを消す。未読は消えない。
@@ -711,6 +712,8 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
             </div>
           </div>
           <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* 文字の大きさ（2026-10-15・本人が選ぶ・その端末だけ） */}
+            <TextScaleChoice />
             {/* FAQは全ページ共通の入口としてここにも置く。
                 各ページのボタンは「そのページの質問だけ」、こちらは「全部の質問」を開く */}
             {canFaq && (
