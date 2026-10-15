@@ -838,8 +838,8 @@ const UsersTab: React.FC = () => {
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 90 }}>役職</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 120 }}>グループ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終アクセス</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 125 }} title="災害時の安否確認で使う緊急連絡先。初期登録は管理者が行い、以降は本人がアカウント設定から変更できます">緊急連絡先</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }} title="プッシュ通知を許可しているか（アカウント設定で本人が設定）">プッシュ</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 125 }} title="災害時の安否確認で使う緊急連絡先。初期登録は管理者が行い、以降は本人が「設定」から変更できます">緊急連絡先</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }} title="プッシュ通知を許可しているか（「設定」で本人が設定）">プッシュ</th>
                                                 {/* 🚨 「退職者のみ」で絞っているときだけ出す（ふだんは列を増やさない・2026-09-20 実機の指摘） */}
                         {showRetired === 'retired' && (
                           <>

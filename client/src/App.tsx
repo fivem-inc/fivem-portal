@@ -6,7 +6,6 @@ import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
 import { BTN_BLUE } from './lib/buttonStyles';
-import TextScaleChoice from './components/TextScaleChoice';
 import RetireChecklistBanner from './components/RetireChecklistBanner';
 import PayrollCloseBanner from './components/PayrollCloseBanner';
 import { EXPENSE_FORM_ANCHOR_ID } from './lib/payrollClose';
@@ -214,7 +213,7 @@ const PushEnableBanner: React.FC = () => {
               ① 下の共有ボタン（□に↑）をタップ<br />
               ② 「ホーム画面に追加」をタップ<br />
               ③ 追加されたアイコンから開き直す<br />
-              ④ 右上のアイコン →「アカウント設定」→「許可する」
+              ④ 右上のアイコン →「設定」→「許可する」
             </div>
           ) : (
             <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
@@ -708,12 +707,10 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>{initial}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 'bold', color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profileName || email}</div>
-              <div onClick={() => { navigate('/account'); setOpen(false); }} style={{ fontSize: 11, color: '#4a90d9', cursor: 'pointer', marginTop: 2 }}>アカウント設定 →</div>
+              <div onClick={() => { navigate('/account'); setOpen(false); }} style={{ fontSize: 11, color: '#4a90d9', cursor: 'pointer', marginTop: 2 }}>設定 →</div>
             </div>
           </div>
           <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* 文字の大きさ（2026-10-15・本人が選ぶ・その端末だけ） */}
-            <TextScaleChoice />
             {/* FAQは全ページ共通の入口としてここにも置く。
                 各ページのボタンは「そのページの質問だけ」、こちらは「全部の質問」を開く */}
             {canFaq && (

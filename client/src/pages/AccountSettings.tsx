@@ -5,6 +5,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { supabase } from '../lib/supabaseClient';
 import { requestPushPermission, unsubscribePush, getPushPermissionStatus } from '../utils/pushNotification';
 import PushQuietHoursSection from '../components/PushQuietHoursSection';
+import TextScaleChoice from '../components/TextScaleChoice';
 
 export default function AccountSettings() {
   const navigate = useNavigate();
@@ -180,6 +181,18 @@ export default function AccountSettings() {
               )}
             </>
           )}
+        </div>
+
+        {/* 文字の大きさ（2026-10-15・本人が選ぶ・その端末だけ・しくみは lib/textScale.ts） */}
+        <div style={{ background: card, borderRadius: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginTop: 12, padding: '16px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
+            <span style={{ fontSize: 22, width: 32, textAlign: 'center', fontWeight: 700, color: text }}>あ</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 2px', fontSize: 15, fontWeight: 600, color: text }}>文字の大きさ</p>
+              <p style={{ margin: 0, fontSize: 12, color: sub }}>このスマホだけに効きます</p>
+            </div>
+          </div>
+          <TextScaleChoice hintColor={sub} />
         </div>
 
         {/* プッシュ通知設定 */}
