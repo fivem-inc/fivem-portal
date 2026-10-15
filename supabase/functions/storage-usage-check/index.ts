@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // Supabase Freeプランのストレージ上限は1GB（=1024MB）。
 // 閾値を超えたら経理Slack＋管理者へのサイト内通知でアラートする（pg_cronから毎月1回呼び出される想定）
@@ -18,6 +19,13 @@ const corsHeaders = {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  // 🚨 2026-10-15：門が無く、ログインなしで経理への通知と Slack を何度でも送れた。
+  //    呼ぶのは毎週の cron（service_role）だけなので、本物の管理者の鍵だけ通す
+  const gate = await checkCaller(req);
+  if (!gate.ok || gate.kind !== 'service') {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,

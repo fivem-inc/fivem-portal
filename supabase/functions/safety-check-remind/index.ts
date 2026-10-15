@@ -7,6 +7,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 // ⚠️ バージョンを固定する。'@2'（最新追従）だと配信元の最新版が壊れている時に
 //    「Module not found ... auth-js.mjs」でデプロイできなくなる（2026-08-03に実際に発生）
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 安否を聞くもの＝「安否」、出勤可否・応援のお願い＝「緊急」（safety-check-send と同じ出し分け）
 // ⚠️ どちらも実機テスト済みの語。新しい語を使うときは必ず実機で確認してから
@@ -40,14 +41,11 @@ serve(async (req) => {
   // service_role のみ（cron・サーバー間呼び出し専用。verify_jwt=false のためここで確認する）
   // ⚠️ キーの文字列一致だけで判定すると、cronがVaultから渡すJWT形式のキーと一致せず401になる。
   //    send-push・safety-check-send と同じく role クレームも見る二段構えにする。
-  const authHeader = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  let isServiceRole = authHeader === serviceKey;
-  if (!isServiceRole && authHeader) {
-    try {
-      const payload = JSON.parse(atob(authHeader.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-      isServiceRole = payload.role === 'service_role';
-    } catch { /* JWTでない場合はfalseのまま */ }
-  }
+  // 🚨 2026-10-15：それまでは JWT の中身（role=service_role）を読むだけで、署名を確かめていなかった。
+  //    偽の JWT を作れば誰でも催促を進めてプッシュを送れた。共通の門（_shared/callerGate.ts）で
+  //    「本物の管理者の鍵か」を確かめる。cron（Vault の鍵）も、Supabase が入れ替えた鍵も、本物なら通る
+  const gate = await checkCaller(req);
+  const isServiceRole = gate.ok && gate.kind === 'service';
   if (!isServiceRole) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
   }

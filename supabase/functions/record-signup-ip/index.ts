@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 🚨 本番URLだけを許可していたため、ローカル（開発サーバー）から新規登録すると
 //    ブラウザにブロックされてIP・国が記録されなかった。他のEdge Functionと同じ方式に揃える。
@@ -60,8 +61,19 @@ serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
+  // 🚨 2026-10-15：それまではログインなしで、好きな user_id の登録時の IP・国を上書きできた
+  //    （新規登録の画面は 2026-10-04 に無くなり、いま呼ぶ画面は無い）。
+  //    本人（ログイン済み・自分の id）か、管理者の鍵だけ通す
+  const gate = await checkCaller(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), { status: gate.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
   try {
     const { user_id } = await req.json();
+    if (gate.kind !== 'service' && gate.userId !== user_id) {
+      return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     if (!user_id) {
       return new Response(JSON.stringify({ error: 'user_id is required' }), {
         status: 400,
@@ -87,7 +99,8 @@ serve(async (req) => {
     await supabase
       .from('profiles')
       .update({ signup_ip: ip, signup_country: country, signup_city: city })
-      .eq('id', user_id);
+      .eq('id', user_id)
+      .is('signup_ip', null); // 一度記録したら上書きしない（登録時の記録のため）
 
     // 🚨 geo は「地域が引けたか」。鍵が間違っていても IP の記録自体は成功するので、
     //    これが無いと「ずっと国が空のまま」に誰も気づけない（呼び出し側は使っていないが、

@@ -9,6 +9,7 @@
 //
 // cron から週1回（月曜9時JST）呼ばれる。出すものが無ければ何もせず終了する。
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+import { checkCaller } from '../_shared/callerGate.ts'
 
 // チャンネルごとのWebhook URL（Supabase Edge Function Secrets に設定済み）
 const SLACK_WEBHOOK_KEYS: Record<string, string> = {
@@ -23,17 +24,10 @@ type Alert = { key: string; title: string; detail: string; link: string }
 Deno.serve(async (req) => {
   // cron（service_role）からの呼び出しのみ受け付ける。
   // トークンの文字列一致だけでは Vault 経由のJWT形式と一致しないため、role クレームも見る
-  const auth = req.headers.get('Authorization') ?? ''
-  const token = auth.replace('Bearer ', '')
+  // 🚨 2026-10-15：JWT の中身を読むだけ（署名を確かめない）だったのを、共通の門で本物か確かめる形に
+  const gate = await checkCaller(req)
+  if (!gate.ok || gate.kind !== 'service') return new Response('Unauthorized', { status: 401 })
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  let isService = token === serviceKey
-  if (!isService && token) {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]))
-      isService = payload?.role === 'service_role'
-    } catch { /* 判定できなければ拒否 */ }
-  }
-  if (!isService) return new Response('Unauthorized', { status: 401 })
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
