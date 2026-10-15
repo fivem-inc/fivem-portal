@@ -3718,7 +3718,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 2段目を開いているか（使えないタブの URL から来たときは開かない＝いつもの入力画面）
   const askOpen = isAskView && canApplicationRequest;
   const managerOpen = isConfirmView || askOpen;
-  const hasManagerRow = showConfirmTab || canApplicationRequest;
   // 🚨 2026-10-15 ユーザー確定（案B）：確認ページは別の画面にせず、ページのタブ（2段目「✅ 確認待ち」）の中に出す。
   //    ?view=confirm のままで開く（ベル・メール・ホームのお知らせのリンクを変えなくてよいように）。
   //    見出し（← と題名）とエラーの枠は、タブの上のいつもの場所に出るので、ここには置かない
@@ -4085,11 +4084,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定・案B。前は［✅ 確認ページへ］のオレンジのボタンで別の画面だった）。
             ✅ 確認待ち＝確認者・集計閲覧者だけ（前のボタンと同じ条件）／📩 申請の依頼＝依頼を出せる人だけ。
             🚨 URL は ?view=confirm／?view=ask（ベル・メールのリンクはそのまま使える） */}
-        {/* 形と色は components/ManagerTabs（休暇申請のページと共用・灰色＋薄い枠・選んだら緑・確認待ちの数字だけ赤） */}
+        {/* 形と色は components/ManagerTabs（休暇申請のページと共用・うすいオレンジの2行・選んだら緑） */}
         <ManagerTabs isDark={isDark}
           items={[
-            ...(showConfirmTab ? [{ key: 'confirm' as const, label: '✅ 確認待ち', count: pendingForMe.length, urgent: true }] : []),
-            ...(canApplicationRequest ? [{ key: 'ask' as const, label: '📩 申請の依頼', count: myOpenAskCount }] : []),
+            ...(showConfirmTab ? [{ key: 'confirm' as const, label: '✅ 確認待ち', sub: '残業申請を確認する', count: pendingForMe.length }] : []),
+            ...(canApplicationRequest ? [{ key: 'ask' as const, label: '📩 申請の依頼', sub: '正社員へ依頼', count: myOpenAskCount }] : []),
           ]}
           active={isConfirmView ? 'confirm' : askOpen ? 'ask' : null}
           onChange={k => { setEditTarget(null); setSearchParams({ view: k }); window.scrollTo({ top: 0 }); }}
@@ -4106,7 +4105,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           </button>
         )}
 
-        <div style={managerOpen ? undefined : { background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', padding: '16px 14px' }}>
+        <div style={managerOpen ? undefined : { background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
           {isConfirmView ? confirmBody
           : askOpen ? (
             <AppRequestBox userId={user.id} profileName={profileName} isDark={isDark} partNote="leavePage" style={{ marginBottom: 0 }} />

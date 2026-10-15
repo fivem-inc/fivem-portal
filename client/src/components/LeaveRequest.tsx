@@ -881,8 +881,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   }, [canAskTab, canPartForm, user.id]);
   // 開いてよい2段目だけを開く（古いリンク・役職が変わったなどで、使えないタブの URL から来たら入力画面に戻す）
   const mv = (managerView === 'approve' && !canApproveTab) || (managerView === 'ask' && !canAskTab) ? null : managerView;
-  // 2段目があるときは、下の枠の上の角も丸くする（タブにくっつかなくなるため）
-  const hasManagerRow = !leaveRequestEnabled && (canApproveTab || canAskTab);
 
   if (submitted) {
     return (
@@ -1045,8 +1043,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {!leaveRequestEnabled && (
         <ManagerTabs isDark={isDark}
           items={[
-            ...(canApproveTab ? [{ key: 'approve' as const, label: '✅ 受理待ち', count: approvalPendingCount, urgent: true }] : []),
-            ...(canAskTab ? [{ key: 'ask' as const, label: '📩 申請の依頼', count: askCount }] : []),
+            ...(canApproveTab ? [{ key: 'approve' as const, label: '✅ 受理待ち', sub: '休暇申請を受理する', count: approvalPendingCount }] : []),
+            ...(canAskTab ? [{ key: 'ask' as const, label: '📩 申請の依頼', sub: canPartForm && canApplicationRequest ? '正社員・パートへ依頼' : canPartForm ? 'パートへ依頼' : '正社員へ依頼', count: askCount }] : []),
           ]}
           active={mv}
           onChange={k => { setManagerView(k); setSearchParams({ tab: k }); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); }}
@@ -1072,7 +1070,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
       {/* 申請フォーム */}
       {!mv && tab === 'form' && (
-        <div style={{ padding: 24, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+        <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
           {/* 📩 自分あての休暇の申請依頼（2026-09-26）。カードは残業ページと共用の AppRequestCard */}
           {receivedReqErr && (
             <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{receivedReqErr}</div>
@@ -1603,7 +1601,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         // 区切りの日を過ぎたら、入力は出さず案内だけ（登録済みの時間調整は「履歴」の「時間調整」で見られる）
         if (unifyMovedNow) {
           return (
-            <div style={{ padding: 20, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+            <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
               <div style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, borderRadius: 10, padding: '14px 16px' }}>
                 <div style={{ fontWeight: 'bold', fontSize: 14, color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>時間調整は「残業申請」に移りました</div>
                 <div style={{ fontSize: 12.5, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
@@ -1617,7 +1615,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         }
 
         return (
-          <div style={{ padding: 20, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+          <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
             {/* 区切りの日の前：先の日は残業申請で、と知らせる（2026-10-13） */}
             {unifyCutoff && (
               <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px', marginBottom: 12, fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
@@ -1832,7 +1830,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
       {/* 申請履歴 */}
       {!mv && tab === 'history' && (
-        <div style={{ padding: 24, background: bg, borderRadius: hasManagerRow ? 12 : '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+        <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
           <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>📋 申請履歴</h2>
 
           {/* ── 履歴サブタブ ── */}
