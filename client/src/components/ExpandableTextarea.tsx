@@ -27,12 +27,33 @@ interface Props {
   wrapStyle?: React.CSSProperties;
   /** 開いたときに入力欄へ移る（見えるところまで動かす） */
   autoFocus?: boolean;
+  /**
+   * 入力欄を下に固定した画面（グループ・DM・スレッド）の、メッセージと入力欄が入っている箱。
+   * 渡すと、広がる上限をこの箱の高さの fitRatio まで（引っ張っても同じ）にする。
+   * 🚨 渡さないと、窓の高さが足りないときに欄が箱からはみ出し、右下の［送信］が画面の外に出る（2026-10-15 実機で発生）
+   */
+  fitRef?: React.RefObject<HTMLElement | null>;
+  /** fitRef の高さに対する上限の割合（既定 0.45） */
+  fitRatio?: number;
 }
 
-const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onKeyDown, isMobile, isDark, rows, maxHeight, title, style, wrapStyle, autoFocus }) => {
+const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onKeyDown, isMobile, isDark, rows, maxHeight, title, style, wrapStyle, autoFocus, fitRef, fitRatio = 0.45 }) => {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const bigRef = useRef<HTMLTextAreaElement | null>(null);
   const [full, setFull] = useState(false);
+  // 箱（fitRef）の高さ。窓の大きさを変えたときも追いかける
+  const [fitH, setFitH] = useState<number | null>(null);
+  useEffect(() => {
+    const box = fitRef?.current;
+    if (!box) return;
+    const update = () => setFitH(box.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [fitRef]);
+  // 実際の上限：渡された上限と、箱の高さの割合の小さいほう（最低でも 3 行ぶんくらいは残す）
+  const limit = fitH ? Math.max(72, Math.min(maxHeight, Math.round(fitH * fitRatio))) : maxHeight;
   // 表示が変わったら（「戻る」など）全画面を閉じる。書いた文は残る（2026-10-14）
   const location = useLocation();
   const locKey = useRef(location.key);
@@ -49,9 +70,10 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
     if (!value) { el.style.height = ''; return; }
     const prev = el.offsetHeight;
     el.style.height = 'auto';
-    const need = Math.min(el.scrollHeight + 2, maxHeight);
-    el.style.height = `${Math.max(need, prev)}px`;
-  }, [value, maxHeight]);
+    const need = Math.min(el.scrollHeight + 2, limit);
+    // 🚨 縮めないのは「打つたび」だけ。上限より大きくはしない（窓を小さくした・上限が下がったときも上限に収める）
+    el.style.height = `${Math.min(Math.max(need, prev), limit)}px`;
+  }, [value, limit]);
 
   useEffect(() => {
     if (!autoFocus || !ref.current) return;
@@ -72,7 +94,7 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
       <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', ...wrapStyle }}>
         <textarea ref={ref} value={value} rows={rows} placeholder={placeholder}
           onChange={e => onChange(e.target.value)} onKeyDown={onKeyDown}
-          style={{ ...style, flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto' }} />
+          style={{ ...style, flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto', maxHeight: limit }} />
         {isMobile && (
           <button type="button" onClick={() => setFull(true)} aria-label="大きく書く" title="大きく書く"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: isDark ? '#90caf9' : '#1976d2', fontSize: 16, lineHeight: 1, cursor: 'pointer', padding: 0 }}>⤢</button>

@@ -738,6 +738,9 @@ const BoardPage: React.FC = () => {
   const [favMessages,    setFavMessages]    = useState<BoardMessage[]>([]);
   const [favUnreadIds,   setFavUnreadIds]   = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // 入力欄を下に固定した画面の箱（入力欄が広がりすぎて［送信］が画面の外に出ないように・components/ExpandableTextarea の fitRef）
+  const channelColRef = useRef<HTMLDivElement>(null);
+  const threadColRef = useRef<HTMLDivElement>(null);
   const channelListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -2868,7 +2871,7 @@ const BoardPage: React.FC = () => {
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     const parentSender = allProfiles.find(p => p.id === parentMsg.user_id)?.name || '不明';
     return (
-      <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
+      <div ref={threadColRef} style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
         {/* Thread header */}
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, position: 'sticky', top: 0, zIndex: 10 }}>
           <button type="button" onClick={() => { navigate(-1); /* 書きかけは残す（リプライごとに保存・2026-10-14） */ }}
@@ -2942,6 +2945,7 @@ const BoardPage: React.FC = () => {
                 placeholder={isMobile ? 'リプライを入力...' : 'リプライを入力... (Ctrl+Enterで送信)'}
                 rows={2} isMobile={isMobile} isDark={isDark}
                 maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.4)}
+                fitRef={threadColRef}
                 title="リプライ"
                 onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (replyBody.trim()) setShowReplySendConfirm(true); } }}
                 wrapStyle={{ flex: 1, minWidth: 0 }}
@@ -4612,7 +4616,7 @@ const BoardPage: React.FC = () => {
   );
 
   const messagePanel = selectedChannelId && selectedChannel ? (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div ref={channelColRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 110 + searchPad, background: bg }}>
         {channelMessages.length === 0 && (
@@ -4770,6 +4774,7 @@ const BoardPage: React.FC = () => {
             placeholder={isMobile ? 'メッセージを入力...' : 'メッセージを入力... (Ctrl+Enterで送信)'}
             rows={2} isMobile={isMobile} isDark={isDark}
             maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.5)}
+            fitRef={channelColRef}
             title={selectedChannel ? channelDisplayName(selectedChannel) : 'メッセージ'}
             onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}}
             wrapStyle={{ flex: 1, minWidth: 0 }}
@@ -5364,7 +5369,13 @@ const BoardPage: React.FC = () => {
         return (
           <div onClick={() => setShowSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '16px 16px 20px', width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-              <p style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'center' }}>送信プレビュー</p>
+              <p style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'center' }}>送信プレビュー</p>
+              {/* どこへ送るか（2026-10-15 ユーザー指摘：グループをいくつも開いていると、送る先を送信の直前に確かめられなかった） */}
+              {selectedChannel && (
+                <div style={{ marginBottom: 12, padding: '7px 12px', borderRadius: 8, background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, fontSize: 13, color: textColor, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  送信先：<b>{selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : `${channelDisplayName(selectedChannel)}（DM）`}</b>
+                </div>
+              )}
               {/* 誤タップの最終防波堤：緊急として送ることを送信直前に明示する */}
               {newUrgent && (
                 <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid #d97706', background: isDark ? '#3a2e14' : '#fff8e1', color: isDark ? '#fbbf24' : '#b45309', fontSize: 12.5, fontWeight: 700 }}>

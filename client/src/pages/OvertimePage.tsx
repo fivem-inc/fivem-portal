@@ -46,7 +46,8 @@ import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
-import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount, confirmPageSub } from '../lib/buttonStyles';
+import AppRequestBox from '../components/AppRequestBox';
 import { DAY_MARK_STYLE, DAY_MARK_LEGEND, loadDayMarks, monthRange, dayMarkBlocksForm, recordDayCheck, cancelDayCheck, fetchDayCheckEnabled } from '../lib/overtimeDayMark';
 import type { DayMark } from '../lib/overtimeDayMark';
 
@@ -160,6 +161,7 @@ interface Props {
   canShiftDirectoryPerm: boolean;   // 全員のシフト予定を見られる役職か
   canMemoPerm: boolean;             // 残業のメモを使える役職か（2026-09-18・最初はマネージャー以上）
   canGridPerm: boolean;             // 残業の「表でまとめて入力」を使える役職か（2026-09-24・最初はマネージャーだけ。PCだけに出す）
+  canApplicationRequest?: boolean;  // 申請の依頼を出せるか（管理画面「役職・機能権限」→「📩 申請の依頼」・確認ページに［依頼を作る］・2026-10-15）
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -2826,7 +2828,7 @@ const OvertimeForm: React.FC<{
 // ────────────────────────────────────────────────────────────────
 // メインページ
 // ────────────────────────────────────────────────────────────────
-const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm, canMemoPerm, canGridPerm }) => {
+const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm, canMemoPerm, canGridPerm, canApplicationRequest = false }) => {
   // 役職の序列（部門集計の並び・閲覧範囲）は roles から（役職名の表を持たない・2026-09-09）
   const roles = useRoles();
   const isDark = useDarkMode();
@@ -3710,6 +3712,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             )}
           </div>
 
+          {/* 📩 正社員へ 申請を依頼（2026-10-15 ユーザー確定・案A）。休暇の受理ページと同じ部品 components/AppRequestBox */}
+          {canApplicationRequest && (
+            <AppRequestBox userId={user.id} profileName={profileName} isDark={isDark} style={{ marginBottom: 14 }} />
+          )}
+
           {loadError && (
             <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{loadError}</p>
@@ -4095,13 +4102,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         />
 
         {/* 確認ページへ（確認者・集計閲覧者のみ・タブ直下） */}
-        {(canSummary || pendingForMe.length > 0) && (
+        {/* 🚨 申請の依頼を出せる人にも出す（2026-10-15：確認ページに［依頼を作る］を置いたため。確認待ちが0件でも入れるように） */}
+        {(canSummary || pendingForMe.length > 0 || canApplicationRequest) && (
           <button onClick={() => { setSearchParams({ view: 'confirm' }); window.scrollTo({ top: 0 }); }}
-            style={{ width: '100%', padding: '10px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, boxSizing: 'border-box' }}>
-            <span>✅ 確認ページへ</span>
-            {pendingForMe.length > 0 && (
-              <span style={{ background: '#fff', color: '#fd7e14', borderRadius: 10, padding: '1px 8px', fontSize: 12, fontWeight: 'bold' }}>{pendingForMe.length}件</span>
-            )}
+            style={confirmPageBtn}>
+            {/* 🚨 形は lib/buttonStyles の confirmPageBtn（休暇の「受理ページへ」・勤務変更と同じ・2026-10-15） */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <span>✅ 確認ページへ</span>
+              {pendingForMe.length > 0 && <span style={confirmPageCount}>{pendingForMe.length}件</span>}
+            </div>
+            {canApplicationRequest && <div style={confirmPageSub}>正社員へ残業・休暇の依頼</div>}
           </button>
         )}
 

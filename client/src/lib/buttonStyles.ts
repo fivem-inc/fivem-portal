@@ -44,6 +44,20 @@ export function backBtn(isDark: boolean): React.CSSProperties {
   };
 }
 
+/**
+ * 受理・確認のページへ移るオレンジのボタン（休暇・残業・勤務変更のページのタブの下・2026-10-15 ユーザー指示で形をそろえた）。
+ * 件数は右に白い丸（confirmPageCount）。説明の1行を付けるときは confirmPageSub
+ */
+export const CONFIRM_PAGE_ORANGE = '#fd7e14';
+export const confirmPageBtn: React.CSSProperties = {
+  width: '100%', padding: '10px', background: CONFIRM_PAGE_ORANGE, color: 'white', border: 'none', cursor: 'pointer',
+  fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, boxSizing: 'border-box', lineHeight: 1.4,
+};
+export const confirmPageCount: React.CSSProperties = {
+  background: '#fff', color: CONFIRM_PAGE_ORANGE, borderRadius: 10, padding: '1px 8px', fontSize: 12, fontWeight: 'bold',
+};
+export const confirmPageSub: React.CSSProperties = { fontSize: 11, fontWeight: 'normal', opacity: 0.95, marginTop: 1, lineHeight: 1.5 };
+
 /** 追加など2番目のボタン（薄い青）。大きさは呼ぶ側で足す */
 export function tintBtn(isDark: boolean): React.CSSProperties {
   return {

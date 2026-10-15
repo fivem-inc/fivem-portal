@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount, confirmPageSub } from '../lib/buttonStyles';
 
 // note を渡すと「読んでほしい案内」が付く。
 // 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
@@ -1006,21 +1006,20 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {isApprover && (
         <button
           onClick={() => navigate('/leave-approvals')}
-          style={{ width: '100%', padding: '9px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', marginTop: 8, borderRadius: 8, lineHeight: 1.4 }}
+          style={confirmPageBtn}
         >
-          <div style={{ fontSize: 14, fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            ✅ 受理ページへ
+          {/* 🚨 形は lib/buttonStyles の confirmPageBtn（残業・勤務変更の「確認ページへ」と同じ・2026-10-15） */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <span>✅ 受理ページへ</span>
             {approvalPendingCount > 0 && (
-              <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 19, height: 19, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 4px' }}>
-                {approvalPendingCount > 99 ? '99+' : approvalPendingCount}
-              </span>
+              <span style={confirmPageCount}>{approvalPendingCount > 99 ? '99+' : approvalPendingCount}件</span>
             )}
           </div>
           {/* 🚨 このボタンの説明は「受理ページで何ができるか」の一覧。
               受理ページに機能を足したら、ここにも足すこと（2026-09-09 ユーザー指摘）。
               🚨 中の2つの枠（📩 正社員へ／📨 パート・アルバイトへ）と同じ並びにしてある。
                  順番や対象を変えるときは、受理ページ側と必ず揃えること。 */}
-          <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1, lineHeight: 1.5 }}>正社員へ残業・休暇の依頼／パートへ休暇フォーム送信</div>
+          <div style={confirmPageSub}>正社員へ残業・休暇の依頼／パートへ休暇フォーム送信</div>
         </button>
       )}
 
