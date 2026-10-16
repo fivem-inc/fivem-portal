@@ -72,6 +72,10 @@ interface Props {
   userId: string;
 }
 
+// 申請者へのお知らせの言葉（2026-10-16 ユーザー確定 ア）。名前つき＝文の後ろ半分／名前なし＝かっこの中
+const OPINION_SENTENCE: Record<string, string> = { approve: '承認しました', deny: '否認しました', undecided: '「判断できない」としました', other: '「その他」としました' };
+const OPINION_LABEL_SHORT: Record<string, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
+
 const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, reason, notes, quotes, quote_file_path, created_at, requested_manager_ids, board_approver_ids, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location';
 
 const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
@@ -307,6 +311,16 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     window.dispatchEvent(new CustomEvent('purchase-pending-changed'));
   };
 
+  // 申請者が「誰が回答したか」を見てよいか（2026-10-16）。🚨 DB の purchase_request_approval_progress の can_see_names と同じ考え方：
+  // 承認者・審議の依頼先に入っている人、または役職が全員承認の承認者（roles.is_board_approver）。読めなければ名前なし（安全側）
+  const applicantCanSeeNames = async (req: PendingRequest): Promise<boolean> => {
+    if ((req.board_approver_ids ?? []).includes(req.user_id) || (req.requested_manager_ids ?? []).includes(req.user_id)) return true;
+    const { data, error } = await supabase.from('profiles').select('roles!profiles_role_id_fkey(is_board_approver)').eq('id', req.user_id).maybeSingle();
+    if (error || !data) return false;
+    const r = (data as { roles: { is_board_approver: boolean | null } | { is_board_approver: boolean | null }[] | null }).roles;
+    return !!(Array.isArray(r) ? r[0]?.is_board_approver : r?.is_board_approver);
+  };
+
   // 全員承認ルート専用: submit_board_opinion RPCを呼び出す。
   // 全員が承認で揃った場合、RPCがtrueを返しDB側でboard_approvedへ自動確定される。
   // Phase3の既存submitOpinion（直接upsert）はboardルートでは使わない。
@@ -337,7 +351,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     const rows = (ops ?? []) as OpinionRow[];
     setOpinions(prev => ({ ...prev, [req.id]: rows }));
 
-    const others = (req.board_approver_ids ?? []).filter(id => id !== userId);
+    // 🚨 ほかの承認者へは「まだ回答していない人」にだけ（2026-10-16 ユーザー確定）。回答済みの人に毎回届くと多すぎるため
+    const answeredIds = new Set(rows.map(o => o.manager_id));
+    const others = (req.board_approver_ids ?? []).filter(id => id !== userId && !answeredIds.has(id));
     const vars = { '回答者名': names[userId] ?? '', '品目名': itemNameSummary(req) };
 
     if (allApproved) {
@@ -354,7 +370,20 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     } else {
       const tpl = await getNotificationTemplate('purchase_request:board_opinion_submitted', 'site', vars);
       if (tpl && others.length > 0) {
-        await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id, 'purchase_request:opinion_submitted')));
+        // スマホも同じ event_key（通知設定の「全員承認：ほかの承認者が回答したとき」で一緒に変えられる・2026-10-16）
+        await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id, 'purchase_request:board_opinion_submitted')));
+      }
+      // 申請者へ：回答が1件入るたびに（承認・否認・判断できない・その他すべて・2026-10-16 ユーザー確定）。
+      // 🚨 名前を見てよい申請者（マネージャー以上など）だけ名前つき。それ以外は名前なし（DB の purchase_request_approval_progress と同じ考え方）。
+      //    全員そろって確定したときは上の board_all_approved の1通だけ（二重にしない）
+      if (req.user_id !== userId) {
+        const named = await applicantCanSeeNames(req);
+        const appKey = named ? 'purchase_request:board_opinion_to_applicant' : 'purchase_request:board_opinion_to_applicant_anon';
+        const appVars: Record<string, string> = named
+          ? { ...vars, '回答': OPINION_SENTENCE[draft.opinion] ?? '回答しました' }
+          : { '品目名': vars['品目名'], '回答': OPINION_LABEL_SHORT[draft.opinion] ?? '回答' };
+        const appTpl = await getNotificationTemplate(appKey, 'site', appVars);
+        if (appTpl) await insertNotification(req.user_id, appTpl.template, appTpl.subject || undefined, 'purchase_request', req.id, appKey);
       }
       // 初めて否認が出た時点（1回のみ）で全員へ通知する
       const hasDenial = rows.some(o => o.opinion === 'deny');

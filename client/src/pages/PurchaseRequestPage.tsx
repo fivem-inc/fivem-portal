@@ -158,7 +158,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // pendingIds・answers はDB関数側で空配列にされ、件数だけが返る
   const [boardProgress, setBoardProgress] = useState<Record<string, {
     answered: number; required: number; pendingIds: string[];
-    answers: { manager_id: string; opinion: string }[];
+    answers: { manager_id: string; opinion: string; answered_at?: string | null }[];
   }>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -293,8 +293,8 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
         if (progError) {
           console.error('[purchase] 承認の進み具合の取得に失敗', progError);
         } else {
-          const progress: Record<string, { answered: number; required: number; pendingIds: string[]; answers: { manager_id: string; opinion: string }[] }> = {};
-          (prog ?? []).forEach((p: { purchase_request_id: string; answered: number; required: number; pending_ids: string[] | null; answers: { manager_id: string; opinion: string }[] | null }) => {
+          const progress: Record<string, { answered: number; required: number; pendingIds: string[]; answers: { manager_id: string; opinion: string; answered_at?: string | null }[] }> = {};
+          (prog ?? []).forEach((p: { purchase_request_id: string; answered: number; required: number; pending_ids: string[] | null; answers: { manager_id: string; opinion: string; answered_at?: string | null }[] | null }) => {
             const pendingIds = p.pending_ids ?? [];
             const answers = p.answers ?? [];
             progress[p.purchase_request_id] = { answered: p.answered, required: p.required, pendingIds, answers };
@@ -599,7 +599,17 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
             const p = boardProgress[r.id];
             const remaining = Math.max(p.required - p.answered, 0);
             const canSeeNames = p.answers.length > 0 || p.pendingIds.length > 0;
-            const nameList = (ids: string[]) => ids.map(id => names[id] ?? '不明').join('、');
+            // 回答した人は日時も添える（2026-10-16 ユーザー確定・例「濱口 美由紀（10/14 9:12）」）。日時は DB の answered_at（直したら直した日時）
+            const answeredAt = (id: string) => {
+              const t = p.answers.find(x => x.manager_id === id)?.answered_at;
+              return t ? new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+            };
+            // 1人1行（2026-10-16 ユーザー指示「連続でなく行ごとに」）。名前の後ろに回答した日時
+            const personRows = (ids: string[], withTime: boolean) => ids.map(id => (
+              <div key={id} style={{ ...rowStyle, marginTop: 0, paddingLeft: 22, display: 'flex', gap: 10 }}>
+                <span>{names[id] ?? '不明'}</span>{withTime && answeredAt(id) && <span>{answeredAt(id)}</span>}
+              </div>
+            ));
             const idsOf = (...ops: string[]) => p.answers.filter(x => ops.includes(x.opinion)).map(x => x.manager_id);
             const approved = idsOf('approve');
             const denied = idsOf('deny');
@@ -619,10 +629,10 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
                 )}
                 {canSeeNames && (
                   <>
-                    {approved.length > 0 && <div style={rowStyle}>承認（{approved.length}名）：{nameList(approved)}</div>}
-                    {denied.length > 0 && <div style={rowStyle}>否認（{denied.length}名）：{nameList(denied)}</div>}
-                    {held.length > 0 && <div style={rowStyle}>判断できない・その他（{held.length}名）：{nameList(held)}</div>}
-                    {p.pendingIds.length > 0 && <div style={rowStyle}>未回答（{p.pendingIds.length}名）：{nameList(p.pendingIds)}</div>}
+                    {approved.length > 0 && <><div style={rowStyle}>承認（{approved.length}名）</div>{personRows(approved, true)}</>}
+                    {denied.length > 0 && <><div style={rowStyle}>否認（{denied.length}名）</div>{personRows(denied, true)}</>}
+                    {held.length > 0 && <><div style={rowStyle}>判断できない・その他（{held.length}名）</div>{personRows(held, true)}</>}
+                    {p.pendingIds.length > 0 && <><div style={rowStyle}>未回答（{p.pendingIds.length}名）</div>{personRows(p.pendingIds, false)}</>}
                   </>
                 )}
               </div>

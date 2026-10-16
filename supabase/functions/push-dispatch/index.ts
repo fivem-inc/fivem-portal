@@ -135,6 +135,10 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 審議中の回覧（他のマネージャーが意見を出した／否認が出た）。まだ全員の回答が揃っていないので
   // 「未承認」ではなく「審議」。2026-08-18 に社長端末で実機確認済みの語
   "purchase_request:opinion_submitted":      { app: "備品精算", word: "審議", text: "備品購入申請の審議が進んでいます", url: "/purchase?tab=approvals" },
+  // 2026-10-16：全員承認の1件ごとのお知らせ。承認者あては「まだ回答していない人」だけ（画面側）。申請者あては名前を出さない文（スマホは名前なし）
+  "purchase_request:board_opinion_submitted": { app: "備品精算", word: "審議", text: "備品購入申請の審議が進んでいます", url: "/purchase?tab=approvals" },
+  "purchase_request:board_opinion_to_applicant":      { app: "備品精算", word: "審議", text: "備品購入申請に回答がありました", url: "/purchase?tab=history", bell: true },
+  "purchase_request:board_opinion_to_applicant_anon": { app: "備品精算", word: "審議", text: "備品購入申請に回答がありました", url: "/purchase?tab=history", bell: true },
   "purchase_request:returned":              { app: "備品精算", word: "差戻", text: "備品購入申請が差し戻されました", url: "/purchase?tab=history", bell: true },
   // 結果報告系（申請者・共有先へ）＝自分の申請の状況を見る画面へ
   // 「承認」は 2026-08-18 に社長端末で実機確認済み（Chromeの警告表示に化けない）
