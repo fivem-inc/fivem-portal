@@ -23,19 +23,19 @@ export const OvertimeBalanceMain: React.FC<{ b: BalanceLike; isDark: boolean; al
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
+  // 待ちが無いときは数字だけ（2026-10-16 ユーザー確定 案1・前と同じ見た目）。
+  // 🚨「確定」の見出しを付けない：カードの題がもう「合計時間数」で、何も無いのに「確定」とあると「確定でないものもあるの？」と読める
   if (!hasPendingBalance(b)) {
     return (
-      <>
-        <p style={{ margin: '6px 0 0', fontSize: 12.5, color: subText, textAlign: align }}>確定</p>
-        <p style={{ margin: '0 0 2px', fontSize: bigSize, fontWeight: 'bold', color: diffColor(b.total, isDark), textAlign: align }}>{formatSignedMin(b.total)}</p>
-      </>
+      <p style={{ margin: '4px 0 2px', fontSize: bigSize, fontWeight: 'bold', color: diffColor(b.total, isDark), textAlign: align }}>{formatSignedMin(b.total)}</p>
     );
   }
   return (
     <>
       <p style={{ margin: '6px 0 0', fontSize: 12.5, color: subText, textAlign: align }}>この期の見込み</p>
       <p style={{ margin: '0 0 6px', fontSize: bigSize, fontWeight: 'bold', color: diffColor(b.plannedTotal, isDark), textAlign: align }}>{formatSignedMin(b.plannedTotal)}</p>
-      <div style={{ borderTop: `1px dashed ${borderColor}`, paddingTop: 4, marginBottom: 2 }}>
+      {/* 🚨 内訳は必ず左寄せ（まわりが中央寄せの画面でも受け継がない・2026-10-16 実機で「未確定」が中央に寄った） */}
+      <div style={{ borderTop: `1px dashed ${borderColor}`, paddingTop: 4, marginBottom: 2, textAlign: 'left' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, padding: '2px 8px', color: text }}>
           <span style={{ fontWeight: 'bold' }}>確定</span>
           <span style={{ fontWeight: 'bold', color: diffColor(b.total, isDark) }}>{formatSignedMin(b.total)}</span>
@@ -55,13 +55,13 @@ export const OvertimeBalanceMain: React.FC<{ b: BalanceLike; isDark: boolean; al
 };
 
 /** 1行の形（管理画面・表入力・まとめて申請・期の見出し）。
- *  待ちがあれば「見込み ＋2:00（確定 −8:00・実績報告待ち ＋8:00・確認待ち ＋2:00）」、無ければ「確定 ＋3:30」 */
-export const OvertimeBalanceInline: React.FC<{ b: BalanceLike; isDark: boolean; numSize?: number; prefix?: string }> = ({ b, isDark, numSize, prefix = '' }) => {
+ *  待ちがあれば「見込み ＋2:00（確定 −8:00・実績報告待ち ＋8:00・確認待ち ＋2:00）」、無ければ数字だけ（totalLabel を前に付けられる・例「合計 ＋3:30」） */
+export const OvertimeBalanceInline: React.FC<{ b: BalanceLike; isDark: boolean; numSize?: number; prefix?: string; totalLabel?: string }> = ({ b, isDark, numSize, prefix = '', totalLabel = '' }) => {
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const num = (min: number, big?: boolean) => (
     <b style={{ color: diffColor(min, isDark), fontSize: big ? numSize : undefined }}>{formatSignedMin(min)}</b>
   );
-  if (!hasPendingBalance(b)) return <span>{prefix}確定 {num(b.total, true)}</span>;
+  if (!hasPendingBalance(b)) return <span>{prefix}{totalLabel}{num(b.total, true)}</span>;
   return (
     <span>
       {prefix}見込み {num(b.plannedTotal, true)}

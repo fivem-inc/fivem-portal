@@ -1272,7 +1272,7 @@ const OvertimeAdminTab: React.FC = () => {
               ) : (
                 <>
                   {/* 見せ方は本人のカードと同じ（components/OvertimeBalanceView・2026-10-16）。確認待ちの件数は内訳に時間で出るので外した */}
-                  <OvertimeBalanceInline b={otBalance} isDark={isDarkMode} numSize={14} />
+                  <OvertimeBalanceInline b={otBalance} isDark={isDarkMode} numSize={14} totalLabel="合計 " />
                   <span>残業 {formatSignedMin(otBalance.plus)}</span>
                   {otBalance.holidayPlus > 0 && <span style={{ color: subText }}>（うち休日出勤 {formatSignedMin(otBalance.holidayPlus)}）</span>}
                   <span>調整休 {formatSignedMin(otBalance.choseiMinus)}</span>

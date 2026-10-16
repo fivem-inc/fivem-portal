@@ -4772,7 +4772,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 {payMonthPeriodLabel(period)}{period === currentPeriod && '（今期）'}
                               </span>
                               <span style={{ fontSize: 12, color: subText }}>
-                                <OvertimeBalanceInline b={bal} isDark={isDark} />
+                                <OvertimeBalanceInline b={bal} isDark={isDark} totalLabel="合計 " />
                               </span>
                             </div>
                             {renderOwnCard(r)}
@@ -5017,7 +5017,7 @@ const SummaryView: React.FC<{
       </div>
       {filterOpen && (
         <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '10px 12px', marginBottom: 10, fontSize: 12.5, color: subText }}>
-          <p style={{ margin: 0 }}>待っているもの（実績報告待ち・確認待ち）がある方は<strong style={{ color: text }}>見込み</strong>を大きく表示し、<strong style={{ color: text }}>確定</strong>を下に併記します。待っているものが無い方は確定だけを表示します。差し戻し・取消は合計に含みません。</p>
+          <p style={{ margin: 0 }}>待っているもの（実績報告待ち・確認待ち）がある方は<strong style={{ color: text }}>見込み</strong>を大きく表示し、<strong style={{ color: text }}>確定</strong>を下に併記します。待っているものが無い方は、合計の数字だけを表示します（すべて確定した時間です）。差し戻し・取消は合計に含みません。</p>
         </div>
       )}
 
@@ -5224,7 +5224,7 @@ const MemberDetailView: React.FC<{
         {loading ? (
           <p style={{ margin: '10px 0', fontSize: 13, color: subText }}>読み込み中…</p>
         ) : (
-          <OvertimeBalanceMain b={b} isDark={isDark} align="left" bigSize={24} />
+          <OvertimeBalanceMain b={b} isDark={isDark} bigSize={24} />
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
           <span>残業 {formatSignedMin(b.plus)}</span>
