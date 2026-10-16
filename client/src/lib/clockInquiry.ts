@@ -45,8 +45,16 @@ export function clockText(d: { clock_in: string | null; clock_out: string | null
   const first = `${h(d.clock_in)}〜${h(d.clock_out)}`;
   return d.clock_in2 || d.clock_out2 ? `${first} / ${h(d.clock_in2)}〜${h(d.clock_out2)}` : first;
 }
-/** 最後の退勤の打刻（2組目があればそちら）。［退勤の打刻］ボタン・「退勤のあと」の判断・打刻ズレの記録に使う */
-export const lastClockOut = (d: { clock_out: string | null; clock_out2?: string | null }): string | null => d.clock_out2 ?? d.clock_out;
+/** 最後の打刻＝1組目の退勤・2組目の出勤・2組目の退勤のうち、いちばん遅い時刻。［退勤の打刻］ボタン・「退勤のあと」の判断・打刻ズレの記録に使う。
+ *  🚨 押し忘れがあっても送れる（2026-10-16 経理担当の意見）。2組目の退勤を押し忘れた日（9:30〜17:30 / 19:00〜—）は 19:00。
+ *     1組目の出勤は入れない（出勤しか押していない日に、出勤の時刻を退勤として扱わないため）。
+ *     DB の resolve_clock_inquiry_cancel（greatest(clock_out, clock_in2, clock_out2)）と同じ決め方 */
+export const lastClockOut = (d: { clock_out: string | null; clock_in2?: string | null; clock_out2?: string | null }): string | null => {
+  const ts = [d.clock_out, d.clock_in2, d.clock_out2].filter((t): t is string => !!t);
+  if (ts.length === 0) return null;
+  // 'HH:MM' と 'HH:MM:SS' が混ざっても比べられるように先頭5文字で比べる（ゼロ埋めなので文字の大小＝時刻の大小）
+  return ts.reduce((a, b) => (b.slice(0, 5) > a.slice(0, 5) ? b : a));
+};
 
 /** 何について聞くか（2026-10-13 ユーザー確定）：after＝退勤のあと（今まで）／before＝出勤前／both＝両方。DB の ask_side と同じ値 */
 export type AskSide = 'after' | 'before' | 'both';

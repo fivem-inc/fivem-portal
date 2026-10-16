@@ -8,7 +8,7 @@ import { todayJstStr, calcPayPeriodStartJst, shiftPayPeriod, payPeriodLabel } fr
 import { dispatchEmail, getUserEmail } from '../../lib/notificationDispatch';
 import {
   loadDayStates, answerLabel, segmentsText, reportKindText, diffFromShift, signedText, followUpOf,
-  isEarlyClockIn, defaultAskSide, ASK_SIDE_LABEL, clockText,
+  isEarlyClockIn, defaultAskSide, ASK_SIDE_LABEL, clockText, lastClockOut,
 } from '../../lib/clockInquiry';
 import type { InquiryAnswer, DayStateRow, DayState, AskSide } from '../../lib/clockInquiry';
 import { STATUS_INFO } from '../../lib/overtimeStatus';
@@ -275,18 +275,18 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const askSideOf = (r: DayInput, ns: Parameters<typeof normalShiftEdges>[0]): AskSide => {
     const edges = normalShiftEdges(ns);
     if (!isEarlyClockIn(edges?.start, r.clock_in)) return 'after';
-    // 退勤は最後の打刻（2組目があればそちら）
-    return r.ask_side ?? defaultAskSide(edges?.start, edges?.end, r.clock_in, (r.two && r.clock_out2) ? r.clock_out2 : r.clock_out);
+    // 退勤は最後の打刻（1組目の退勤・2組目の出勤・2組目の退勤のうち、いちばん遅い時刻・lib/clockInquiry の lastClockOut）
+    return r.ask_side ?? defaultAskSide(edges?.start, edges?.end, r.clock_in,
+      lastClockOut({ clock_out: r.clock_out || null, clock_in2: r.two ? (r.clock_in2 || null) : null, clock_out2: r.two ? (r.clock_out2 || null) : null }));
   };
 
   const validate = (): string => {
     if (!targetId) return '対象者を選んでください';
     if (sendable.length === 0) return '日を追加してください';
     for (const r of sendable) {
-      if (!r.clock_out && !r.clock_in) return `${md(r.work_date)}の打刻を入力してください`;
-      // 🚨 2組目は出勤・退勤の両方（2026-10-16）。片方だけで送れて、退勤のつもりの 19:15 が「2組目の出勤」に入り、
-      //    本人の画面の「退勤のあと」が 1組目の退勤（17:30）のままになった
-      if (r.two && (!r.clock_in2 !== !r.clock_out2)) return `${md(r.work_date)}の2組目の打刻は、出勤と退勤の両方を入れてください（使わないときは「2組目を外す」）`;
+      // 🚨 4つ（1組目・2組目の出勤・退勤）のうち1つでも入っていれば送れる（2026-10-16 経理担当の意見：打刻の押し忘れがある）。
+      //    押し忘れた所は「—」と出る（clockText）。「退勤のあと」の基準は入っている中でいちばん遅い時刻（lastClockOut）
+      if (!r.clock_out && !r.clock_in && !(r.two && (r.clock_in2 || r.clock_out2))) return `${md(r.work_date)}の打刻を入力してください`;
     }
     return '';
   };
