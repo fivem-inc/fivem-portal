@@ -40,12 +40,13 @@ interface TripDraft {
 }
 
 // note・action は出張の申請の下書きの案内（2026-10-14）。🚨 ボタンがあるときは自動で閉じない（押す前に消えるため）
-const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; note?: string; action?: { label: string; href: string }; onClose: () => void }> = ({ message, icon = 'check', note, action, onClose }) => {
+// warn は「報告は送れたが、そのあとの知らせ（Slack）が送れなかった」ときの黄色い1行（2026-10-16）。🚨 読まれる前に消えないよう自動で閉じない
+const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; note?: string; action?: { label: string; href: string }; warn?: string | null; onClose: () => void }> = ({ message, icon = 'check', note, action, warn, onClose }) => {
   useEffect(() => {
-    if (action) return;
+    if (action || warn) return;
     const t = setTimeout(onClose, note ? 8000 : 3000);
     return () => clearTimeout(t);
-  }, [onClose, note, action]);
+  }, [onClose, note, action, warn]);
   return (
     <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
       <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, textAlign: 'center', position: 'relative' }}>
@@ -54,6 +55,11 @@ const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; note?:
           <span style={{ fontSize: 26, color: '#28a745' }}>{icon === 'send' ? '📤' : '✓'}</span>
         </div>
         <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+        {warn && (
+          <div style={{ fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '8px 10px', marginTop: 10, lineHeight: 1.6, maxWidth: 300, textAlign: 'left' }}>
+            ⚠️ {warn}
+          </div>
+        )}
         {note && (
           <div style={{ fontSize: 13, color: '#155724', marginTop: 8, lineHeight: 1.6, maxWidth: 300, textAlign: 'left' }}>
             {note}
@@ -239,6 +245,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   const tripStart = useTripApplyStart();
   const tripDraftOn = !!tripStart && toJstDateStr(new Date()) >= tripStart;
   // 送ったあとに添える「申請の下書きを作成しました」（その日がまだの日の一覧に入ったときだけ・2026-10-14）
+  // 報告は送れたが Slack に送れなかったとき（2026-10-16・送れたように見えて届いていない、を防ぐ）
+  const [tripWarn, setTripWarn] = useState<string | null>(null);
   const [tripNote, setTripNote] = useState<{ type: '到着' | '終了'; note: string; action?: { label: string; href: string } } | null>(null);
 
   // ── 履歴タブ ──
@@ -414,13 +422,17 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         await dispatchEmail(tripEventKey, tripVars, { applicant: user.email || '', ...tripMail.emails });
       }
       // Slack: 申請者が画面上でチャンネルを手動選択して送信する仕組みのため、ON/OFFチェック対象外
+      // 🚨 invoke は 4xx/5xx でも throw しない。error を見ないと、送れていないのに「送信しました」だけが出る（2026-10-16）
+      let slackFailed = false;
       if (reportType === '終了' && selectedChannels.length > 0) {
         try {
-          await supabase.functions.invoke('send-trip-slack', {
+          const { error: slackErr } = await supabase.functions.invoke('send-trip-slack', {
             body: { message: buildSlackMessage(), channels: selectedChannels },
           });
-        } catch (e) { console.error('Slack通知エラー:', e); }
+          if (slackErr) { slackFailed = true; console.error('Slack通知エラー:', slackErr); }
+        } catch (e) { slackFailed = true; console.error('Slack通知エラー:', e); }
       }
+      setTripWarn(slackFailed ? 'Slack への送信に失敗しました。必要な方へ直接お伝えください。' : null);
 
       // その日の申請の下書きができたか（まだの日の一覧に今日が入ったか）。読めなくても報告は成功なので黙って何も添えない
       {
@@ -692,8 +704,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
 
       {submitted && (
         <BannerSuccess message={tripNote ? `${tripNote.type}の報告を送信しました。` : '報告を送信しました！'}
-          note={tripNote?.note} action={tripNote?.action}
-          onClose={() => { setSubmitted(false); setTripNote(null); }} />
+          note={tripNote?.note} action={tripNote?.action} warn={tripWarn}
+          onClose={() => { setSubmitted(false); setTripNote(null); setTripWarn(null); }} />
       )}
 
       {/* タブ：上段＝報告する（到着／終了）、下段＝見る（履歴）。

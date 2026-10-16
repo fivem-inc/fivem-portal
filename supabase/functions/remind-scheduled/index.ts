@@ -1,12 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkCaller } from '../_shared/callerGate.ts';
 
 const applyVars = (text: string, vars: Record<string, string>) =>
   text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`);
 
 const MONTH_END_DAY = 32; // 管理画面の「月末日」ボタンが表す特別値
 
-serve(async () => {
+serve(async (req) => {
+  // 🚨 門（2026-10-16・セキュリティ点検）：cron・ほかの処理（サーバー用の鍵）からだけ呼べる。ログインしている人も断る。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、お知らせ・メールを何度でも送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok || gate.kind !== 'service') {
+    return new Response(JSON.stringify({ error: 'forbidden' }), { status: gate.ok ? 403 : gate.status, headers: { 'Content-Type': 'application/json' } });
+  }
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);

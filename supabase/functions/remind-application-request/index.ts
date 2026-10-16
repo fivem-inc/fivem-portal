@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 申請依頼「期限」リマインド（日次・2026-09-11 ユーザー依頼）。
 // pg_cron から朝9時（JST）に1回叩かれ、まだ対応していない依頼の**期限が近い／過ぎた**人へ
@@ -35,7 +36,13 @@ const shiftJstDay = (offsetDays: number) =>
 
 const EVENT_KEY = "application_request:due";
 
-serve(async () => {
+serve(async (req) => {
+  // 🚨 門（2026-10-16・セキュリティ点検）：cron・ほかの処理（サーバー用の鍵）からだけ呼べる。ログインしている人も断る。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、お知らせ・メールを何度でも送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok || gate.kind !== 'service') {
+    return new Response(JSON.stringify({ error: 'forbidden' }), { status: gate.ok ? 403 : gate.status, headers: { 'Content-Type': 'application/json' } });
+  }
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   const todayJst = shiftJstDay(0);

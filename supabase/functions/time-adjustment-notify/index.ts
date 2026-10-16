@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+import { checkCaller } from '../_shared/callerGate.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -50,6 +51,12 @@ function timeLabelFor(type: string, time?: string | null): string {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
+  // 🚨 門（2026-10-16・セキュリティ点検）：ログインしている在籍者（期限内の退職者を含む）か、サーバー用の鍵だけ通す。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、好きな名前・文章の知らせ（ベル・スマホ・Slack・メール）を送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), { status: gate.status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+  }
 
   try {
     // details = Slack本文に出す時間（[{ type, time }]）。調整遅出＝13:00〜、調整早退＝〜18:00

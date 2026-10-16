@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 残業「実績未報告」リマインド（日次）。
 // pg_cron から1日1回叩かれ、各人の「申請済み(requested/request_confirmed)・勤務日超過・終日以外」の件数を集計して、
@@ -13,7 +14,13 @@ const applyVars = (text: string, vars: Record<string, string>) =>
   text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`);
 const mdLabel = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 
-serve(async () => {
+serve(async (req) => {
+  // 🚨 門（2026-10-16・セキュリティ点検）：cron・ほかの処理（サーバー用の鍵）からだけ呼べる。ログインしている人も断る。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、お知らせ・メールを何度でも送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok || gate.kind !== 'service') {
+    return new Response(JSON.stringify({ error: 'forbidden' }), { status: gate.ok ? 403 : gate.status, headers: { 'Content-Type': 'application/json' } });
+  }
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   // JST 今日（announcement-remind と同方式）

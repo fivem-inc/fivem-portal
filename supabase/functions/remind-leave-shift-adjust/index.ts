@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 受理済みなのに「シフト調整がまだ」の休暇を、上長に知らせる。
 //
@@ -45,7 +46,13 @@ const mdLabel = (ymd: string) => `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(
 /** "HH:MM[:SS]" → その日の何分目か */
 const timeToMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  // 🚨 門（2026-10-16・セキュリティ点検）：cron・ほかの処理（サーバー用の鍵）からだけ呼べる。ログインしている人も断る。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、お知らせ・メールを何度でも送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok || gate.kind !== 'service') {
+    return new Response(JSON.stringify({ error: 'forbidden' }), { status: gate.ok ? 403 : gate.status, headers: { 'Content-Type': 'application/json' } });
+  }
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',

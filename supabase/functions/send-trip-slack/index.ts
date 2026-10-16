@@ -1,4 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { checkCaller } from '../_shared/callerGate.ts';
 
 const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
 
@@ -44,6 +45,12 @@ async function sendSlack(webhookUrl: string, messageText: string) {
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: getCorsHeaders(req) });
+  }
+  // 🚨 門（2026-10-16・セキュリティ点検）：ログインしている在籍者（期限内の退職者を含む）か、サーバー用の鍵だけ通す。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、好きな名前・文章の知らせ（ベル・スマホ・Slack・メール）を送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), { status: gate.status, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
   }
 
   const authHeader = req.headers.get('Authorization');

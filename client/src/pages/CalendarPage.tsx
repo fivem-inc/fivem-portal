@@ -564,11 +564,13 @@ const AbsenceInputSheet: React.FC<{
   onClose: () => void;
   onSaved: () => void;
   onSaving: () => void;
+  /** 登録はできたが、上長へのお知らせ（attendance-notify）が送れなかった（2026-10-16） */
+  onNotifyFailed?: () => void;
   /** 対象者の一覧を読めなかった理由（空なら問題なし） */
   profilesError: string;
   /** 対象者の一覧を読み直す */
   onReloadProfiles: () => void;
-}> = ({ date, profiles, currentUserId, workplaces, placeGroups: placeGroupsProp, onClose, onSaved, onSaving, profilesError, onReloadProfiles }) => {
+}> = ({ date, profiles, currentUserId, workplaces, placeGroups: placeGroupsProp, onClose, onSaved, onSaving, onNotifyFailed, profilesError, onReloadProfiles }) => {
   // 出張先などが読めなかったときも、校だけは選べるようにする
   const placeGroups: PlaceGroup[] = placeGroupsProp.length > 0 ? placeGroupsProp : [{ label: '校', items: workplaces }];
   // 🚨 開いたときに対象者の一覧が空なら、その場で読み直す（2026-09-29：Android の一部の機種で、ページを開いた瞬間の
@@ -1137,7 +1139,8 @@ const AbsenceInputSheet: React.FC<{
         }),
       },
     });
-    if (notifyErr) console.error('[attendance-notify] 通知失敗:', notifyErr);
+    // 🚨 失敗をコンソールだけにしない。上長に何も届かないのに「登録しました」だけが出るため（2026-10-16）
+    if (notifyErr) { console.error('[attendance-notify] 通知失敗:', notifyErr); onNotifyFailed?.(); }
     clearDraft(DRAFT_KEYS.attendance); // 登録成功で下書きを消す
     onSaving(); // バナー表示
     onClose();  // モーダル・シートを閉じる
@@ -1995,6 +1998,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   const [absenceSaved, setAbsenceSaved] = useState(false);
   const [absenceDeleted, setAbsenceDeleted] = useState(false);
   const [gcalDeleteFailed, setGcalDeleteFailed] = useState(false);
+  // 登録・取消はできたが、上長へのお知らせが送れなかった（2026-10-16）。✕で閉じるまで出す
+  const [attendanceNotifyFailed, setAttendanceNotifyFailed] = useState<'save' | 'delete' | null>(null);
   // 取消そのものが失敗したとき（権限が無い／既に取消済み／通信）。
   // 🚨 gcalDeleteFailed（＝取消は成立したがカレンダーだけ失敗）とは意味が違うので分ける
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -2452,7 +2457,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         details: [{ type: target.type, time: target.actual_time, segments: target.work_segments, location: target.location }],
       },
     });
-    if (notifyErr) console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
+    if (notifyErr) { console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr); setAttendanceNotifyFailed('delete'); }
 
     setDeleting(false);
     setDeleteTarget(null);
@@ -2905,6 +2910,17 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         </div>
       )}
 
+      {/* 登録・取消はできたが上長へのお知らせが送れなかった（黄色・✕で閉じる） */}
+      {attendanceNotifyFailed && (
+        <div style={{ position: 'fixed', top: gcalDeleteFailed ? 130 : 70, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '10px 14px', maxWidth: 420, width: 'calc(100% - 32px)', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 13, color: '#856404', lineHeight: 1.6 }}>
+            ⚠️ {attendanceNotifyFailed === 'save' ? '登録は完了しましたが、上長へのお知らせを送れませんでした。お手数ですが内容をご確認ください。' : '取消しましたが、上長へのお知らせを送れませんでした。お手数ですが内容をご確認ください。'}
+          </span>
+          <button onClick={() => setAttendanceNotifyFailed(null)}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#856404', cursor: 'pointer', fontSize: 15 }}>✕</button>
+        </div>
+      )}
+
       {/* 欠勤登録完了バナー */}
       {absenceSaved && <CalendarResultModal type="save" onClose={() => setAbsenceSaved(false)} />}
 
@@ -2918,6 +2934,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
           placeGroups={placeGroups}
           onClose={() => setAbsenceSheet(null)}
           onSaving={() => { setAbsenceSaved(true); }}
+          onNotifyFailed={() => setAttendanceNotifyFailed('save')}
           onSaved={() => { fetchAbsences(); }}
           profilesError={profilesError}
           onReloadProfiles={() => { void loadProfiles(); }}

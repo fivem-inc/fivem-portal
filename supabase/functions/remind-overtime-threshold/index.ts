@@ -9,6 +9,7 @@
 //
 // cron から毎朝1回呼ばれ、その日が対象日でなければ何もせず終了する。
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 🚨 役職の序列の表（旧 ROLE_RANK）は持たない（2026-09-10 段4）。
 //    roles.sort_order から計算する（DB の role_rank() と同じ式：max+1-sort_order。小さいほど上位・不明は 99）
@@ -33,7 +34,13 @@ const fmt = (min: number) => {
 const applyVars = (t: string, v: Record<string, string>) =>
   t.replace(/\{\{(.+?)\}\}/g, (_, k) => v[k.trim()] ?? `{{${k.trim()}}}`)
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  // 🚨 門（2026-10-16・セキュリティ点検）：cron・ほかの処理（サーバー用の鍵）からだけ呼べる。ログインしている人も断る。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、お知らせ・メールを何度でも送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok || gate.kind !== 'service') {
+    return new Response(JSON.stringify({ error: 'forbidden' }), { status: gate.ok ? 403 : gate.status, headers: { 'Content-Type': 'application/json' } });
+  }
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',

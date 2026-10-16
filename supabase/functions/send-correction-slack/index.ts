@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { checkCaller } from '../_shared/callerGate.ts';
 
 // 修正依頼のSlack通知。管理者チャンネル（＝休暇通知の経理/管理者と同じ想定）へ1通投げる。
 // Secretsは既存のものを再利用：SLACK_WEBHOOK_ACCOUNTING（無ければ LEADER にフォールバック）。
@@ -22,6 +23,12 @@ const TYPE_LABEL: Record<string, string> = { leave: '休暇', shift: '勤務変�
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: getCorsHeaders(req) })
+  }
+  // 🚨 門（2026-10-16・セキュリティ点検）：ログインしている在籍者（期限内の退職者を含む）か、サーバー用の鍵だけ通す。
+  //    これが無いと、公開の鍵だけで誰でも呼べて、好きな名前・文章の知らせ（ベル・スマホ・Slack・メール）を送らせられた
+  const gate = await checkCaller(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), { status: gate.status, headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' } });
   }
   const authHeader = req.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {

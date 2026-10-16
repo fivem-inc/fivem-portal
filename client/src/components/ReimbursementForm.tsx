@@ -7,11 +7,11 @@ import ReceiptUploader, { type ReceiptValue } from './ReceiptUploader';
 import { todayJstStr } from '../lib/breakCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { getUserName } from '../lib/notificationDispatch';
-import { logFail } from '../lib/logFail';
 import { primaryBtn, backBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 
-const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
-  React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+// warn は「精算は送れたが、経理へのお知らせが送れなかった」ときの黄色い1行（2026-10-16）。🚨 読まれる前に消えないよう自動で閉じない
+const BannerSuccess: React.FC<{ message: string; sub?: string; warn?: string | null; onClose: () => void }> = ({ message, sub, warn, onClose }) => {
+  React.useEffect(() => { if (warn) return; const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose, warn]);
   return (
     <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
       <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 220, maxWidth: 300, textAlign: 'center', position: 'relative' }}>
@@ -21,6 +21,11 @@ const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => vo
         </div>
         <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
         {sub && <div style={{ fontSize: 12, color: '#155724', marginTop: 6 }}>{sub}</div>}
+        {warn && (
+          <div style={{ fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '8px 10px', marginTop: 10, lineHeight: 1.6, textAlign: 'left' }}>
+            ⚠️ {warn}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -138,6 +143,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [successBanner, setSuccessBanner] = useState(false);
+  const [notifyWarn, setNotifyWarn] = useState<string | null>(null);
 
   const resetForm = () => {
     setItemName(''); setQuantity('1'); setAmount(''); setPurchasedAt(todayJstStr());
@@ -211,20 +217,29 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
       receipt_storage_path: receipt.receiptType === 'photo' ? receipt.receiptStoragePath : null,
       status: 'recorded',
     });
-    setSubmitting(false);
-
     if (error) {
+      setSubmitting(false);
       setFormError('送信に失敗しました: ' + error.message);
       return;
     }
 
     // 氏名は profiles.name から取る（user_metadata は full_name で入っている人がいて空になる）
-    getUserName(user.id).then(nm => {
-      supabase.functions.invoke('purchase-reimbursement-notify', {
+    // 🚨 経理へのお知らせはこの1本だけ。失敗を見ないと、経理に何も届かないのに「送信しました」だけが出る（2026-10-16）。
+    //    待っている間はボタンを押せないまま（二度送りを防ぐ）
+    let notifyFailed = false;
+    try {
+      const nm = await getUserName(user.id);
+      const { error: notifyErr } = await supabase.functions.invoke('purchase-reimbursement-notify', {
         body: { user_id: user.id, user_name: nm, item_name: itemName.trim(), amount: parsedAmount },
-      }).then(...logFail('精算の通知'));
-    }, () => {});
+      });
+      if (notifyErr) { notifyFailed = true; console.error('[精算の通知] 送れませんでした:', notifyErr); }
+    } catch (e) {
+      notifyFailed = true;
+      console.error('[精算の通知] 送れませんでした:', e);
+    }
+    setSubmitting(false);
 
+    setNotifyWarn(notifyFailed ? '経理へのお知らせは送れませんでした。' : null);
     setSuccessBanner(true);
     resetForm();
   };
@@ -245,7 +260,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         <BannerSuccess
           message="精算を送信しました"
           sub="内容は履歴タブから確認できます"
-          onClose={() => setSuccessBanner(false)}
+          warn={notifyWarn}
+          onClose={() => { setSuccessBanner(false); setNotifyWarn(null); }}
         />
       )}
 

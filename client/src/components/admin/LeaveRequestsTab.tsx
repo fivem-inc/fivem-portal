@@ -422,7 +422,8 @@ const LeaveRequestsTab: React.FC = () => {
       body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
     });
     const sr = syncRes as { success?: boolean } | null;
-    if (syncErr || sr?.success === false) {
+    const gcalDelFailed = !!syncErr || sr?.success === false;
+    if (gcalDelFailed) {
       console.error('[gcal-sync] 勤怠の削除失敗:', syncErr);
       setPartialMsg('取消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
     }
@@ -436,7 +437,13 @@ const LeaveRequestsTab: React.FC = () => {
         details: [{ type: deleteTarget.type, time: deleteTarget.actual_time, segments: deleteTarget.work_segments, location: deleteTarget.location }],
       },
     });
-    if (notifyErr) console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
+    // 🚨 失敗をコンソールだけにしない（上長に何も届かないため・2026-10-16）
+    if (notifyErr) {
+      console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
+      setPartialMsg(gcalDelFailed
+        ? '取消しましたが、Googleカレンダーからの削除と、上長へのお知らせに失敗しました。お手数ですが内容をご確認ください。'
+        : '取消しましたが、上長へのお知らせを送れませんでした。お手数ですが内容をご確認ください。');
+    }
     setDeleting(false);
     setDeleteTarget(null);
     fetchAbsences();
