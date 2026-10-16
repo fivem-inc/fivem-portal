@@ -39,7 +39,7 @@ import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicatio
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
-import { computeBalance, diffColor, plannedBreakdownText } from '../lib/overtimeBalance';
+import { computeBalance, diffColor, plannedBreakdownText, plannedBreakdownRows } from '../lib/overtimeBalance';
 import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
@@ -4312,13 +4312,40 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             </button>
                           </p>
                         )}
-                        <p style={{ margin: '4px 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark), textAlign: 'center' }}>
-                          {formatSignedMin(ownCardBalance.total)}
-                        </p>
-                        {ownCardBalance.plannedDelta !== 0 && (
-                          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, textAlign: 'center' }}>
-                            見込み {formatSignedMin(ownCardBalance.plannedTotal)}（{plannedBreakdownText(ownCardBalance)}）
-                          </p>
+                        {/* 🚨 2026-10-16 ユーザー確定（経理の意見「現状より見込みが大事」・モック b の 2）：
+                            待っているもの（実績報告待ち・確認待ち）があるときは、大きな数字を「この期の見込み」にし、
+                            その下に「確定」（太字）と、うすい箱の「未確定」（内訳だけ・合計は出さない＝同じ数字が2回並ばない）。
+                            前は確定の −8:00 が大きく出て、＋8:00 で埋まる予定でも「8時間足りない」と読めていた。
+                            行の頭に「＋」は付けない（調整休の確認待ちで「＋ −8:00」になるため）。待ちが無いときは「確定」だけ */}
+                        {ownCardBalance.plannedDelta !== 0 || ownCardBalance.awaitingActual !== 0 ? (
+                          <>
+                            <p style={{ margin: '6px 0 0', fontSize: 12.5, color: subText, textAlign: 'center' }}>この期の見込み</p>
+                            <p style={{ margin: '0 0 6px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.plannedTotal, isDark), textAlign: 'center' }}>
+                              {formatSignedMin(ownCardBalance.plannedTotal)}
+                            </p>
+                            <div style={{ borderTop: `1px dashed ${borderColor}`, paddingTop: 4, marginBottom: 2 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, padding: '2px 8px', color: text }}>
+                                <span style={{ fontWeight: 'bold' }}>確定</span>
+                                <span style={{ fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark) }}>{formatSignedMin(ownCardBalance.total)}</span>
+                              </div>
+                              <div style={{ background: isDark ? '#343a40' : '#e9ecef', borderRadius: 8, padding: '4px 8px 6px', marginTop: 4 }}>
+                                <div style={{ fontSize: 13.5, fontWeight: 'bold', color: text, padding: '2px 0' }}>未確定</div>
+                                {plannedBreakdownRows(ownCardBalance).map(([label, min]) => (
+                                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: subText, padding: '1px 0 1px 8px' }}>
+                                    <span>└ {label}</span>
+                                    <span style={{ fontWeight: 'bold', color: diffColor(min, isDark) }}>{formatSignedMin(min)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p style={{ margin: '6px 0 0', fontSize: 12.5, color: subText, textAlign: 'center' }}>確定</p>
+                            <p style={{ margin: '0 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark), textAlign: 'center' }}>
+                              {formatSignedMin(ownCardBalance.total)}
+                            </p>
+                          </>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
                           <span>残業 {formatSignedMin(ownCardBalance.plus)}</span>
@@ -4331,8 +4358,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           </p>
                         )}
                         <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
-                          期ごとの過不足管理（毎期リセット・繰り越しなし）
-                          {ownCardBalance.pendingCount > 0 && `・確認待ち${ownCardBalance.pendingCount}件は未計上`}
+                          時間数は給与期間ごとに集計し、翌期間へは繰り越しません。
                         </p>
                         {/* 🚨 調整案は「その期の数字のすぐ下」に置く（2026-09-09 ユーザー確定）。
                             変えたいのはこの数字なので、いちばん近い場所にある。

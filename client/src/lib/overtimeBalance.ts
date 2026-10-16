@@ -80,13 +80,19 @@ export function computeBalance(allRows: BalanceRow[], period: string): BalanceSu
   return { total, plannedDelta, plannedTotal, awaitingActual, awaitingReview, plus, choseiMinus, otherMinus, holidayPlus, minus, absenceDays, absencePending, pendingCount };
 }
 
-/** 見込みの内訳の文字（2026-10-15 ユーザー確定 A）。「実績待ち ＋8:00」「実績待ち ＋6:00・確認待ち ＋2:00」。無ければ ''
+/** 見込みの内訳の文字（2026-10-15 ユーザー確定 A）。「実績報告待ち ＋8:00」「実績報告待ち ＋6:00・確認待ち ＋2:00」。無ければ ''
  *  🚨 本人カード・部門集計・個人詳細・まとめて申請・表入力・管理画面が同じものを呼ぶ（書き写さない） */
 export function plannedBreakdownText(b: { awaitingActual: number; awaitingReview: number }): string {
-  const parts: string[] = [];
-  if (b.awaitingActual !== 0) parts.push(`実績待ち ${formatSignedMin(b.awaitingActual)}`);
-  if (b.awaitingReview !== 0) parts.push(`確認待ち ${formatSignedMin(b.awaitingReview)}`);
-  return parts.join('・');
+  return plannedBreakdownRows(b).map(([label, min]) => `${label} ${formatSignedMin(min)}`).join('・');
+}
+
+/** 見込みの内訳を行ごとに（本人カードの「未確定」の箱・2026-10-16）。0 の行は出さない。
+ *  🚨 言葉は「実績報告待ち」（2026-10-16 ユーザー確定・前は「実績待ち」）。タブ「履歴・実績報告」・ボタン「実績を報告する」にそろえた */
+export function plannedBreakdownRows(b: { awaitingActual: number; awaitingReview: number }): [string, number][] {
+  const rows: [string, number][] = [];
+  if (b.awaitingActual !== 0) rows.push(['実績報告待ち', b.awaitingActual]);
+  if (b.awaitingReview !== 0) rows.push(['確認待ち', b.awaitingReview]);
+  return rows;
 }
 
 /** 合計時間数の数字の色（本人カード・表入力で共用）。プラス＝青／マイナス＝橙／0＝灰 */
