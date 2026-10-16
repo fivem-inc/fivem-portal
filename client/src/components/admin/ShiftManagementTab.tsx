@@ -22,6 +22,7 @@ import { dayIssue, studyCellText, studyLabel, versionsOnDate, type StudyVersion 
 import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
 import CleaningRosterPanel from './CleaningRosterPanel';
 import KidsShiftPanel from './KidsShiftPanel';
+import AdminShiftPanel from './AdminShiftPanel';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
 import { cellIssues, cellValue, cellVersionOn, rosterCleaningLines, rowPlaceLabel } from '../../lib/cleaningRoster';
 import { loadCleaningData, type CleaningData } from '../../lib/cleaningRosterApi';
@@ -92,10 +93,10 @@ const ShiftManagementTab: React.FC = () => {
   const [areasOpen, setAreasOpen] = useState(false);
   const [areaErr, setAreaErr] = useState('');
   const [newArea, setNewArea] = useState({ name: '', short_name: '', color: 'gray' });
-  const [view, setView] = useState<'roster' | 'study' | 'cleaning' | 'kids' | 'adult'>('roster');
+  const [view, setView] = useState<'roster' | 'study' | 'cleaning' | 'kids' | 'adult' | 'admin'>('roster');
   // 🚨 いちど開いた画面は画面から外さずに隠すだけにする（外すと未保存の入力が消えるため・2026-09-16 レビュー U1）
   const [visited, setVisited] = useState<Set<string>>(new Set(['roster']));
-  const goView = (v: 'roster' | 'study' | 'cleaning' | 'kids' | 'adult') => {
+  const goView = (v: 'roster' | 'study' | 'cleaning' | 'kids' | 'adult' | 'admin') => {
     setVisited(prev => new Set([...prev, v]));
     setView(v);
   };
@@ -598,6 +599,7 @@ const ShiftManagementTab: React.FC = () => {
         <button type="button" onClick={() => goView('cleaning')} style={toggle(view === 'cleaning')}>掃除担当表</button>
         <button type="button" onClick={() => goView('kids')} style={toggle(view === 'kids')}>こどもシフト表</button>
         <button type="button" onClick={() => goView('adult')} style={toggle(view === 'adult')}>大人シフト表</button>
+        <button type="button" onClick={() => goView('admin')} style={toggle(view === 'admin')}>管理部シフト表</button>
       </div>
     </>
   );
@@ -630,6 +632,12 @@ const ShiftManagementTab: React.FC = () => {
       {visited.has('adult') && (
         <div style={{ display: view === 'adult' ? 'block' : 'none' }}>
           <KidsShiftPanel isDarkMode={isDarkMode} board="adult" />
+        </div>
+      )}
+      {/* 管理部シフト表（2026-10-16・入力しない表・勤務表から作る・docs/計画-管理部シフト表.md） */}
+      {visited.has('admin') && (
+        <div style={{ display: view === 'admin' ? 'block' : 'none' }}>
+          <AdminShiftPanel />
         </div>
       )}
     </>
