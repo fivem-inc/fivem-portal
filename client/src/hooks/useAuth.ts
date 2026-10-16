@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage';
 import { IDLE_CONFIG_CACHE_KEY, readIdleLogoutSetting, writeIdleLogoutSetting } from '../lib/idleLogout';
+import { readDeviceId, writeDeviceId } from '../lib/deviceInfo';
+import { recordLogout } from '../lib/loginHistory';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -459,6 +461,8 @@ export const useAuth = (): UseAuthReturn => {
     const dest = reason === 'idle' ? '/signin?reason=idle' : '/signin';
     console.log('[logout] clicked');
     try {
+      // ログアウトの記録（2026-10-16・lib/loginHistory）。ログインが消える前に送る。失敗してもログアウトは続ける（最大1.5秒）
+      await recordLogout(reason === 'idle' ? 'idle_logout' : 'logout');
       const { error } = await supabase.auth.signOut({ scope: 'local' });
       if (error) { console.error('[logout] signOut error', error); return; }
       console.log('[logout] signOut success');
@@ -472,11 +476,14 @@ export const useAuth = (): UseAuthReturn => {
       const keepIdleLogout = readIdleLogoutSetting();
       // 管理者の設定の写し（分数・スマホに出すか）も残す。ログイン画面は app_settings を読めないので、これが無いと既定値に戻る
       const keepIdleCfg = localStorage.getItem(IDLE_CONFIG_CACHE_KEY);
+      // 端末番号（lib/deviceInfo）も残す。消えると同じ端末が別の端末に見え、強制ログアウトで通知を止められなくなる（2026-10-16）
+      const keepDeviceId = readDeviceId();
       localStorage.clear();
       sessionStorage.clear();
       writeRawPendingQueue(keepSafetyQueue);
       if (keepIdleLogout) writeIdleLogoutSetting(keepIdleLogout);
       if (keepIdleCfg) localStorage.setItem(IDLE_CONFIG_CACHE_KEY, keepIdleCfg);
+      if (keepDeviceId) writeDeviceId(keepDeviceId);
       window.location.href = dest;
     } catch (error) {
       console.error('[logout] unexpected error:', error);

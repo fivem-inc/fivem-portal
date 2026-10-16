@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { getDeviceId } from '../lib/deviceInfo';
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string;
 
@@ -24,21 +25,28 @@ export async function requestPushPermission(): Promise<'granted' | 'denied' | 'u
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
     });
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return 'denied';
-
-    const { endpoint } = subscription;
-    const { p256dh, auth } = subscription.toJSON().keys as { p256dh: string; auth: string };
-
-    await supabase.from('push_subscriptions').upsert(
-      { user_id: user.id, endpoint, p256dh, auth },
-      { onConflict: 'user_id,endpoint' }
-    );
-
-    return 'granted';
+    return (await saveSubscription(subscription)) ? 'granted' : 'denied';
   } catch {
     return 'denied';
   }
+}
+
+/**
+ * ブラウザの通知の登録を DB に保存する（通知をオンにしたとき・強制ログアウトのあと入り直したときに作り直す）。
+ * 🚨 失敗を黙って成功にしない（2026-10-16 レビュー：保存できていないのに「オン」と出ていた）
+ */
+export async function saveSubscription(subscription: PushSubscription): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { endpoint } = subscription;
+  const { p256dh, auth } = subscription.toJSON().keys as { p256dh: string; auth: string };
+  const { error } = await supabase.from('push_subscriptions').upsert(
+    // device_id：どの端末の登録か（管理者が端末を強制ログアウトしたとき、その端末の通知も止めるため・2026-10-16）
+    { user_id: user.id, endpoint, p256dh, auth, device_id: getDeviceId() },
+    { onConflict: 'user_id,endpoint' }
+  );
+  if (error) { console.error('通知の登録を保存できませんでした:', error.message); return false; }
+  return true;
 }
 
 export async function unsubscribePush(): Promise<void> {

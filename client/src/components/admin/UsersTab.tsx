@@ -10,6 +10,7 @@ import { BTN_BLUE, TOGGLE_BLUE, tintBtn, backBtn, primaryBtn } from '../../lib/b
 import PrehireSection from './PrehireSection';
 import EmailEditRow from './EmailEditRow';
 import PwRequestHistory from './PwRequestHistory';
+import LoginHistorySection from './LoginHistorySection';
 import DateTimeInput from '../DateTimeInput';
 import { dateTimeProblem } from '../../lib/dateTimeValue';
 import { isPrehire } from '../../lib/staffState';
@@ -1174,6 +1175,8 @@ const UsersTab: React.FC = () => {
                 </div>
               </div>
             )}
+            {/* 🔐 ログインの記録・端末の強制ログアウト（管理者だけ・2026-10-16） */}
+            <LoginHistorySection />
           </div>
   );
 };
