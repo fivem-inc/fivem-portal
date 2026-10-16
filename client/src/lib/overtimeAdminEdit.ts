@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 import { calcTotalBreak, calcLaborMinutes, checkLegalBreak, minToTime, formatSignedMin, type WorkSegment } from './breakCalc';
 import { notifyOvertimeAdminEdited } from './overtimeNotify';
+import { normalShiftWindow } from './overtimeShift';
 
 // 管理者が残業の申請を直す処理（計算・変更点・保存）。
 // 🚨 ［📋修正］の画面（OvertimeEditModal）と、打刻の確認のカードの［この時刻で申請を直す］（2026-10-13）の
@@ -49,13 +50,13 @@ export const EDIT_FIELD_LABELS: Record<string, string> = { work_date: '勤務日
  */
 export function typesForClockOnlyEdit(
   types: string[] | null | undefined, segs: WorkSegment[], diffMin: number,
-  ns: { start_time?: string | null; end_time?: string | null; end_time2?: string | null } | null,
+  ns: { start_time?: string | null; end_time?: string | null; start_time2?: string | null; end_time2?: string | null } | null,
 ): string[] | null {
   if (!(types ?? []).includes('clock_only') || diffMin === 0 || segs.length === 0) return null;
-  const toMin = (t?: string | null) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
-  const sStart = toMin(ns?.start_time);
-  let sEnd = toMin(ns?.end_time2 ?? ns?.end_time);
-  if (sStart != null && sEnd != null && sEnd <= sStart) sEnd += 1440;
+  // 🚨 シフトの始まり・終わりは全体の「いちばん早い始まり・いちばん遅い終わり」（2本目の終わりと決め打ちしない・2026-10-16）
+  const w = normalShiftWindow(ns);
+  const sStart = w ? w.startMin : null;
+  const sEnd = w ? w.endMin : null;
   const first = Math.min(...segs.map(x => x.startMin));
   const last = Math.max(...segs.map(x => x.endMin));
   const out: string[] = [];

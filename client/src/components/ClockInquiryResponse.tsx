@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { resolveNormalShift, normalShiftTimeText } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftTimeText, normalShiftEdges, normalShiftSegsSorted } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
 import { calcPayPeriodStartJst } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
@@ -236,8 +236,8 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
           if (a == null || b0 == null) return;
           segs.push({ start_min: a, end_min: b0 <= a ? b0 + 1440 : b0 });
         };
-        push(ns.start_time, ns.end_time);
-        push(ns.start_time2 ?? null, ns.end_time2 ?? null);
+        // 🚨 時刻の早い順に（1本目→2本目の順にしない。2本目のほうが早い人がいる・2026-10-16）
+        for (const sg of normalShiftSegsSorted(ns)) push(sg.start, sg.end);
 
         const reasonText = p.reason === 'その他' ? p.note.trim() : p.reason;
         const { data: rep, error: repErr } = await supabase.from('overtime_reports').insert({
@@ -482,7 +482,9 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
         const ws = p.answer === 'time_differs' ? toWorkSegments(p.segs) : [];
         const shiftLabor = st?.normal_shift?.labor_minutes ?? null;
         const newDiff = ws.length > 0 ? diffFromShift(ws, shiftLabor) : null;
-        const shiftEndMin = timeToMinutes(d.shift_end2 ?? d.shift_end);
+        // 🚨 シフトの終わりは「いちばん遅い終わり」（2本目の終わりと決め打ちしない・2026-10-16）
+        const edges = normalShiftEdges({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 });
+        const shiftEndMin = timeToMinutes(edges?.end ?? null);
         const clockOutMin = timeToMinutes(lastClockOut(d));
         // 近道：最後の時間帯の終わりだけを置き換える（開始と2本目は残す）
         const setLastEnd = (min: number | null) => {
@@ -507,7 +509,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
               {st?.report_id && st.segments && st.segments.length > 0 && <><br />出している申請 {segmentsText(st.segments)}（{signedText(st.diff_minutes)}）</>}
               <br />打刻 <b>{clockText(d)}</b>
               {/* 何について聞かれているか（出勤前／退勤のあと／両方・2026-10-13） */}
-              <br /><span style={{ color: '#b45309' }}>{askSideNote(d.ask_side ?? 'after', d.shift_start, d.shift_end2 ?? d.shift_end, d.clock_in, lastClockOut(d))}</span>
+              <br /><span style={{ color: '#b45309' }}>{askSideNote(d.ask_side ?? 'after', edges?.start ?? null, edges?.end ?? null, d.clock_in, lastClockOut(d))}</span>
             </div>
 
             {canRespond ? (

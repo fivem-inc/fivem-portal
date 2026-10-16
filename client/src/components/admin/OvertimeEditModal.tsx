@@ -117,7 +117,7 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
   );
 
   // 打刻ズレの時間を変えて差が出たら、種類も直す（2026-10-13）
-  const fixTypes = typesForClockOnlyEdit(record.application_types, workSegments, diffMin, record.normal_shift as { start_time?: string | null; end_time?: string | null; end_time2?: string | null } | null);
+  const fixTypes = typesForClockOnlyEdit(record.application_types, workSegments, diffMin, record.normal_shift as { start_time?: string | null; end_time?: string | null; start_time2?: string | null; end_time2?: string | null } | null);
   const typeName = (ts: string[]) => ts.map(t => (isOvertimeType(t) ? OT_TYPE_INFO[t].label : t)).join('・');
   const allChanges = fixTypes ? { ...changes, application_types: { old: '打刻ズレ', new: typeName(fixTypes) } } : changes;
   const allSummary = fixTypes ? summary.replace(/を修正$/, '・種別を修正') : summary;

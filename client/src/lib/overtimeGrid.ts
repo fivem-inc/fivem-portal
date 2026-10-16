@@ -12,7 +12,7 @@ import {
   effectiveLocationOf, validateOvertime, overtimePhase, isSameAsNormalShift,
 } from './overtimeSubmit';
 import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSubmit';
-import { buildWorkDiff, fullDayDiffMin, resolveNormalShift, reportGateMin } from './overtimeShift';
+import { buildWorkDiff, fullDayDiffMin, resolveNormalShift, reportGateMin, normalShiftSegsSorted } from './overtimeShift';
 import type { NormalShiftSnapshot, PatternRow } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, furikaeOriginCalc, effectiveOtherLocation } from './overtimeFormParts';
@@ -270,12 +270,9 @@ export function minToInput(min: number): string {
   return `${h.padStart(2, '0')}:${m}`;
 }
 
-/** 通常シフトの帯を入力欄の形に（1件フォームの normalSegs と同じ：1本目→2本目の順・"HH:MM"） */
+/** 通常シフトの帯を入力欄の形に（1件フォームの normalSegs と同じ：時刻の早い順・"HH:MM"・2026-10-16 から早い順） */
 export function normalSegsOf(ns: NormalShiftSnapshot): SegInput[] {
-  const out: SegInput[] = [];
-  if (ns.start_time) out.push({ start: (ns.start_time ?? '').slice(0, 5), end: (ns.end_time ?? '').slice(0, 5) });
-  if (ns.start_time2) out.push({ start: (ns.start_time2 ?? '').slice(0, 5), end: (ns.end_time2 ?? '').slice(0, 5) });
-  return out;
+  return normalShiftSegsSorted(ns);
 }
 
 /**

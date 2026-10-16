@@ -37,7 +37,7 @@ import { isPointerDevice } from '../lib/idleLogout';
 import type { OvertimeStatus } from '../lib/overtimeStatus';
 import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES, situationOf } from '../lib/overtimeSubmit';
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftSegsSorted, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance, diffColor } from '../lib/overtimeBalance';
 import { OvertimeBalanceMain, OvertimeBalanceInline } from '../components/OvertimeBalanceView';
@@ -836,13 +836,10 @@ const OvertimeForm: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalShift.location]);
 
-  // 通常シフトの時間帯（band1＋band2）を {start,end} の配列にしたもの
-  const normalSegs = useMemo(() => {
-    const segs: { start: string; end: string }[] = [];
-    if (normalShift.start_time) segs.push({ start: fmtTime(normalShift.start_time), end: fmtTime(normalShift.end_time) });
-    if (normalShift.start_time2) segs.push({ start: fmtTime(normalShift.start_time2), end: fmtTime(normalShift.end_time2) });
-    return segs;
-  }, [normalShift.start_time, normalShift.end_time, normalShift.start_time2, normalShift.end_time2]);
+  // 通常シフトの時間帯（band1＋band2）を {start,end} の配列にしたもの。🚨 時刻の早い順（2本目のほうが早い人がいる・2026-10-16）
+  const normalSegs = useMemo(() => normalShiftSegsSorted(normalShift).map(s => ({ start: fmtTime(s.start), end: fmtTime(s.end) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [normalShift.start_time, normalShift.end_time, normalShift.start_time2, normalShift.end_time2]);
 
   // 日付を選ぶ／変えると、その日の通常シフトで「予定の勤務時間」を埋め直す（新規のみ・日付ごとに1回）。
   // 利用者はここから残業・早退などの差分に直して送信する。日付を変えれば新しい日のシフトに連動する。

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import SearchableSelect from '../common/SearchableSelect';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText } from '../../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftEdges } from '../../lib/overtimeShift';
 import type { PatternRow } from '../../lib/overtimeShift';
 import type { CalendarKind } from '../../lib/breakCalc';
 import { todayJstStr, calcPayPeriodStartJst, shiftPayPeriod, payPeriodLabel } from '../../lib/breakCalc';
@@ -269,10 +269,14 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const sendable = rows;
 
   /** 何について聞くか。出勤が早くない日はいつも「退勤のあと」（選ぶ欄も出さない） */
-  const askSideOf = (r: DayInput, ns: { start_time?: string | null; end_time?: string | null; end_time2?: string | null }): AskSide => {
-    if (!isEarlyClockIn(ns.start_time, r.clock_in)) return 'after';
+  //  🚨 シフトの始まり・終わりは「いちばん早い始まり・いちばん遅い終わり」（normalShiftEdges）。
+  //     1本目の始まり・2本目の終わりと決め打ちすると、2本目のほうが早い人（朝 6:30〜7:15 ＋ 9:30〜17:30）で
+  //     終わりが 7:15 になっていた（2026-10-16 経理担当の指摘）
+  const askSideOf = (r: DayInput, ns: Parameters<typeof normalShiftEdges>[0]): AskSide => {
+    const edges = normalShiftEdges(ns);
+    if (!isEarlyClockIn(edges?.start, r.clock_in)) return 'after';
     // 退勤は最後の打刻（2組目があればそちら）
-    return r.ask_side ?? defaultAskSide(ns.start_time, ns.end_time2 ?? ns.end_time, r.clock_in, (r.two && r.clock_out2) ? r.clock_out2 : r.clock_out);
+    return r.ask_side ?? defaultAskSide(edges?.start, edges?.end, r.clock_in, (r.two && r.clock_out2) ? r.clock_out2 : r.clock_out);
   };
 
   const validate = (): string => {
@@ -280,6 +284,9 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     if (sendable.length === 0) return '日を追加してください';
     for (const r of sendable) {
       if (!r.clock_out && !r.clock_in) return `${md(r.work_date)}の打刻を入力してください`;
+      // 🚨 2組目は出勤・退勤の両方（2026-10-16）。片方だけで送れて、退勤のつもりの 19:15 が「2組目の出勤」に入り、
+      //    本人の画面の「退勤のあと」が 1組目の退勤（17:30）のままになった
+      if (r.two && (!r.clock_in2 !== !r.clock_out2)) return `${md(r.work_date)}の2組目の打刻は、出勤と退勤の両方を入れてください（使わないときは「2組目を外す」）`;
     }
     return '';
   };
@@ -551,7 +558,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                         {st?.state === 'leave' && (
                           <div style={{ marginTop: 3, fontSize: 11.5, color: '#b45309' }}>⚠️ この日は休暇の日です</div>
                         )}
-                        {isEarlyClockIn(ns.start_time, r.clock_in) && (() => {
+                        {isEarlyClockIn(normalShiftEdges(ns)?.start, r.clock_in) && (() => {
                           const side = askSideOf(r, ns);
                           return (
                             <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', whiteSpace: 'normal' }}>

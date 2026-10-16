@@ -188,6 +188,40 @@ export function normalShiftWindow(ns: ShiftLike | null | undefined): { startMin:
   return { startMin: Math.min(...starts), endMin: Math.max(...ends) };
 }
 
+/** "HH:MM" に（0時からの分 → 24時を超えたら翌日の時刻に戻す） */
+const minToHHMM = (m: number) => {
+  const x = ((m % 1440) + 1440) % 1440;
+  return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+};
+
+/**
+ * 通常シフト全体の「いちばん早い始まり」と「いちばん遅い終わり」を "HH:MM" で（2026-10-16）。休みなら null。
+ * 🚨 「始まり＝start_time」「終わり＝end_time2 ?? end_time」と決め打ちしない。
+ *    2本目が1本目より早い人（例：朝 6:30〜7:15 ＋ 9:30〜17:30）で、終わりが 7:15 になり、
+ *    打刻の確認の「退勤のあと」の判断や案内がずれていた（2026-10-16 経理担当の指摘）
+ */
+export function normalShiftEdges(ns: ShiftLike | null | undefined): { start: string; end: string } | null {
+  const w = normalShiftWindow(ns);
+  return w ? { start: minToHHMM(w.startMin), end: minToHHMM(w.endMin) } : null;
+}
+
+/**
+ * 通常シフトの帯を、時刻の早い順に "HH:MM" の組で（入力欄に入れるとき・記録を作るとき）。
+ * 🚨 1本目→2本目の順に並べない（帯の順番は決まっていない。2本目のほうが早い人がいる・2026-10-16）
+ */
+export function normalShiftSegsSorted(ns: ShiftLike | null | undefined): { start: string; end: string }[] {
+  if (!ns) return [];
+  const out: { st: number; start: string; end: string }[] = [];
+  const add = (s?: string | null, e?: string | null) => {
+    if (!s) return;
+    const st = timeToMin(s.slice(0, 5));
+    out.push({ st: st ?? 0, start: s.slice(0, 5), end: (e ?? '').slice(0, 5) });
+  };
+  add(ns.start_time, ns.end_time);
+  add(ns.start_time2, ns.end_time2);
+  return out.sort((a, b) => a.st - b.st).map(({ start, end }) => ({ start, end }));
+}
+
 /** 通常シフトを1行で表す。例 "6:30〜7:15 / 9:30〜17:30"（休みなら空文字）
  *  区切りは実績側（segmentsLabel）と同じ " / " に揃えてある */
 export function normalShiftTimeText(ns: ShiftLike | null | undefined): string {
