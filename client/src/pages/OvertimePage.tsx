@@ -39,7 +39,8 @@ import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicatio
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
-import { computeBalance, diffColor, plannedBreakdownText, plannedBreakdownRows } from '../lib/overtimeBalance';
+import { computeBalance, diffColor } from '../lib/overtimeBalance';
+import { OvertimeBalanceMain, OvertimeBalanceInline } from '../components/OvertimeBalanceView';
 import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
@@ -2949,6 +2950,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 部門集計の「目安超え」（userId → その方の目安・分）。overtime_threshold_over_visible() が部門集計と同じ範囲だけ返す（自分は含まない）
   const [summaryOver, setSummaryOver] = useState<Map<string, number> | null>(null);
   const [summaryOverErr, setSummaryOverErr] = useState('');
+  // 部門集計を読み込み中か（2026-10-16）。前は読み込み中にも「表示できる方がいません」と出て、見まちがえた
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [myGroups, setMyGroups] = useState<string[]>([]);           // 閲覧者自身の部門（初期スコープ用）
   const [summaryDept, setSummaryDept] = useState('');               // 部門(チーム)フィルタ。''=自所属を初期選択 / '__all__'=全チーム
   const [summaryNameQuery, setSummaryNameQuery] = useState('');      // 名前検索
@@ -3030,6 +3033,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 集計モードのデータ取得。確定・見込みの2値を出すため全ステータスを取得（集約のみ・segmentsは詳細で遅延取得）。
   useEffect(() => {
     if (historyMode !== 'summary' || !canSummary) return;
+    setSummaryLoading(true);
     (async () => {
       const [repRes, setRes, overRes] = await Promise.all([
         supabase.from('overtime_reports')
@@ -3088,7 +3092,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         return roleRankOf(roles, a.role) - roleRankOf(roles, b.role) || a.name.localeCompare(b.name, 'ja');
       });
       setSummaryRows(rows);
-    })();
+      setSummaryLoading(false);
+    })().then(null, () => setSummaryLoading(false));
   }, [historyMode, canSummary, summaryPeriod]);
 
   // 個人詳細の選択/解除。ブラウザ戻る対応のため ?staff= を URL に載せる（他のクエリは保持）。
@@ -4274,7 +4279,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     nameQuery={summaryNameQuery} onChangeName={setSummaryNameQuery}
                     filterOpen={summaryFilterOpen} onToggleFilter={() => setSummaryFilterOpen(o => !o)}
                     onSelect={selectStaff}
-                    overMap={summaryOver} overErr={summaryOverErr} glow={thresholdGlow === 'summary'}
+                    overMap={summaryOver} overErr={summaryOverErr} glow={thresholdGlow === 'summary'} loading={summaryLoading}
                   />
                 )
               ) : (
@@ -4312,41 +4317,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             </button>
                           </p>
                         )}
-                        {/* 🚨 2026-10-16 ユーザー確定（経理の意見「現状より見込みが大事」・モック b の 2）：
-                            待っているもの（実績報告待ち・確認待ち）があるときは、大きな数字を「この期の見込み」にし、
-                            その下に「確定」（太字）と、うすい箱の「未確定」（内訳だけ・合計は出さない＝同じ数字が2回並ばない）。
-                            前は確定の −8:00 が大きく出て、＋8:00 で埋まる予定でも「8時間足りない」と読めていた。
-                            行の頭に「＋」は付けない（調整休の確認待ちで「＋ −8:00」になるため）。待ちが無いときは「確定」だけ */}
-                        {ownCardBalance.plannedDelta !== 0 || ownCardBalance.awaitingActual !== 0 ? (
-                          <>
-                            <p style={{ margin: '6px 0 0', fontSize: 12.5, color: subText, textAlign: 'center' }}>この期の見込み</p>
-                            <p style={{ margin: '0 0 6px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.plannedTotal, isDark), textAlign: 'center' }}>
-                              {formatSignedMin(ownCardBalance.plannedTotal)}
-                            </p>
-                            <div style={{ borderTop: `1px dashed ${borderColor}`, paddingTop: 4, marginBottom: 2 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, padding: '2px 8px', color: text }}>
-                                <span style={{ fontWeight: 'bold' }}>確定</span>
-                                <span style={{ fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark) }}>{formatSignedMin(ownCardBalance.total)}</span>
-                              </div>
-                              <div style={{ background: isDark ? '#343a40' : '#e9ecef', borderRadius: 8, padding: '4px 8px 6px', marginTop: 4 }}>
-                                <div style={{ fontSize: 13.5, fontWeight: 'bold', color: text, padding: '2px 0' }}>未確定</div>
-                                {plannedBreakdownRows(ownCardBalance).map(([label, min]) => (
-                                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: subText, padding: '1px 0 1px 8px' }}>
-                                    <span>└ {label}</span>
-                                    <span style={{ fontWeight: 'bold', color: diffColor(min, isDark) }}>{formatSignedMin(min)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <p style={{ margin: '6px 0 0', fontSize: 12.5, color: subText, textAlign: 'center' }}>確定</p>
-                            <p style={{ margin: '0 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark), textAlign: 'center' }}>
-                              {formatSignedMin(ownCardBalance.total)}
-                            </p>
-                          </>
-                        )}
+                        {/* 🚨 2026-10-16 ユーザー確定（経理の意見「現状より見込みが大事」）：見せ方は components/OvertimeBalanceView（部門集計の個人の詳細と共用） */}
+                        <OvertimeBalanceMain b={ownCardBalance} isDark={isDark} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
                           <span>残業 {formatSignedMin(ownCardBalance.plus)}</span>
                           <span>調整休 {formatSignedMin(ownCardBalance.choseiMinus)}</span>
@@ -4800,8 +4772,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 {payMonthPeriodLabel(period)}{period === currentPeriod && '（今期）'}
                               </span>
                               <span style={{ fontSize: 12, color: subText }}>
-                                確定 <b style={{ color: diffColor(bal.total, isDark) }}>{formatSignedMin(bal.total)}</b>
-                                {bal.plannedDelta !== 0 && <>　見込み <b style={{ color: diffColor(bal.plannedTotal, isDark) }}>{formatSignedMin(bal.plannedTotal)}</b>（{plannedBreakdownText(bal)}）</>}
+                                <OvertimeBalanceInline b={bal} isDark={isDark} />
                               </span>
                             </div>
                             {renderOwnCard(r)}
@@ -4965,9 +4936,10 @@ const SummaryView: React.FC<{
   /** 目安を超えた人（userId → 目安・分）。読めなかったら null */
   overMap: Map<string, number> | null;
   overErr: string;
+  loading?: boolean;
   /** 目安超えのお知らせから来た直後（6秒）。目安を超えた人の行を光らせて、そこまで移る */
   glow: boolean;
-}> = ({ isDark, rows, period, onChangePeriod, myGroups, dept, onChangeDept, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect, overMap, overErr, glow }) => {
+}> = ({ isDark, rows, period, onChangePeriod, myGroups, dept, onChangeDept, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect, overMap, overErr, glow, loading }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
@@ -5045,11 +5017,13 @@ const SummaryView: React.FC<{
       </div>
       {filterOpen && (
         <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '10px 12px', marginBottom: 10, fontSize: 12.5, color: subText }}>
-          <p style={{ margin: 0 }}>合計は<strong style={{ color: text }}>確定</strong>を主に表示し、<strong style={{ color: text }}>見込</strong>（申請中・受理済み・報告待ちを反映）を下に併記します。差し戻し・取消は合計に含みません。</p>
+          <p style={{ margin: 0 }}>待っているもの（実績報告待ち・確認待ち）がある方は<strong style={{ color: text }}>見込み</strong>を大きく表示し、<strong style={{ color: text }}>確定</strong>を下に併記します。待っているものが無い方は確定だけを表示します。差し戻し・取消は合計に含みません。</p>
         </div>
       )}
 
-      {visibleRows.length === 0 ? (
+      {loading ? (
+        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
+      ) : visibleRows.length === 0 ? (
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
           {rows.length === 0
             ? '表示できる方がいません。この一覧には、あなたと同じ役職か、それより下の役職の方だけが表示されます。'
@@ -5058,25 +5032,24 @@ const SummaryView: React.FC<{
       ) : (
         <>
           <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 14, fontWeight: 'bold', color: text }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>表示中の合計（確定）</span>
-              <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
+            {/* 見せ方は本人のカードと同じ（components/OvertimeBalanceView・2026-10-16 ユーザー指示「全部直して」） */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <span>表示中の合計</span>
+              <span style={{ fontWeight: 'normal', textAlign: 'right' }}>
+                <OvertimeBalanceInline b={{ total, plannedTotal, ...plannedParts }} isDark={isDark} numSize={15} />
+              </span>
             </div>
-            {(plannedParts.awaitingActual !== 0 || plannedParts.awaitingReview !== 0) && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 'normal', color: subText, marginTop: 2 }}>
-                <span>見込み合計</span>
-                <span>{formatSignedMin(plannedTotal)}（{plannedBreakdownText(plannedParts)}）</span>
-              </div>
-            )}
           </div>
           <p style={{ margin: '0 0 12px', fontSize: 11.5, color: subText }}>
-            名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字です。
+            名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字／見込み＝実績報告待ち・確認待ちが確定したときの数字です。
             {overMap && overMap.size > 0 && <>「目安超え」＝その期の見込みが、その方の目安を超えています。</>}
           </p>
           {overErr && <p style={{ margin: '0 0 12px', fontSize: 11.5, color: '#dc3545' }}>「目安超え」の表示を読み込めませんでした（{overErr}）</p>}
           {groupOrder.map(g => {
             const grows = visibleRows.filter(r => r.group === g);
             const sub = grows.reduce((s, r) => s + r.total, 0);
+            const subPlanned = grows.reduce((s, r) => s + r.plannedTotal, 0);
+            const subPending = grows.some(r => r.awaitingActual !== 0 || r.awaitingReview !== 0);
             return (
               <div key={g} style={{ marginBottom: 14 }}>
                 <p style={{ margin: '0 0 6px', fontSize: 12.5, fontWeight: 'bold', color: subText }}>{g}</p>
@@ -5098,9 +5071,15 @@ const SummaryView: React.FC<{
                           {r.absenceDays > 0 && <span style={{ marginLeft: 8 }}>欠{r.absenceDays}日</span>}
                         </td>
                         <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <span style={{ color: diffColor(r.total, isDark), fontWeight: 'bold' }}>{formatSignedMin(r.total)}</span>
-                          {r.plannedTotal !== r.total && (
-                            <span style={{ display: 'block', fontSize: 11, color: subText }}>見込 {formatSignedMin(r.plannedTotal)}</span>
+                          {/* 待っているものがある方は見込みを大きく・確定を小さく（本人のカードと同じ・2026-10-16） */}
+                          {(r.awaitingActual !== 0 || r.awaitingReview !== 0) ? (
+                            <>
+                              <span style={{ fontSize: 10.5, color: subText, marginRight: 4 }}>見込み</span>
+                              <span style={{ color: diffColor(r.plannedTotal, isDark), fontWeight: 'bold' }}>{formatSignedMin(r.plannedTotal)}</span>
+                              <span style={{ display: 'block', fontSize: 11, color: subText }}>確定 {formatSignedMin(r.total)}</span>
+                            </>
+                          ) : (
+                            <span style={{ color: diffColor(r.total, isDark), fontWeight: 'bold' }}>{formatSignedMin(r.total)}</span>
                           )}
                         </td>
                         <td style={{ padding: '7px 0 7px 8px', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', color: subText, width: 14 }}>›</td>
@@ -5108,7 +5087,17 @@ const SummaryView: React.FC<{
                     ))}
                     <tr>
                       <td colSpan={2} style={{ padding: '5px 0', fontWeight: 'bold' }}>小計</td>
-                      <td style={{ padding: '5px 0', textAlign: 'right', fontWeight: 'bold', color: diffColor(sub, isDark), whiteSpace: 'nowrap' }}>{formatSignedMin(sub)}</td>
+                      <td style={{ padding: '5px 0', textAlign: 'right', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                        {subPending ? (
+                          <>
+                            <span style={{ fontSize: 10.5, fontWeight: 'normal', color: subText, marginRight: 4 }}>見込み</span>
+                            <span style={{ color: diffColor(subPlanned, isDark) }}>{formatSignedMin(subPlanned)}</span>
+                            <span style={{ display: 'block', fontSize: 11, fontWeight: 'normal', color: subText }}>確定 {formatSignedMin(sub)}</span>
+                          </>
+                        ) : (
+                          <span style={{ color: diffColor(sub, isDark) }}>{formatSignedMin(sub)}</span>
+                        )}
+                      </td>
                       <td />
                     </tr>
                   </tbody>
@@ -5230,9 +5219,12 @@ const MemberDetailView: React.FC<{
       {/* 合計時間数カード（確定・見込み・内訳） */}
       <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }}>
         <p style={{ margin: 0, fontSize: 12.5, color: subText }}>{payMonthLabel(period)}（{payPeriodLabel(period)}）の合計時間数</p>
-        <p style={{ margin: '4px 0 2px', fontSize: 24, fontWeight: 'bold', color: diffColor(b.total, isDark) }}>{formatSignedMin(b.total)}</p>
-        {b.plannedDelta !== 0 && (
-          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>見込み {formatSignedMin(b.plannedTotal)}（{plannedBreakdownText(b)}）</p>
+        {/* 本人のカードと同じ見せ方（2026-10-16 ユーザー指示「全部直して」・本人と上長で見え方を食い違わせない）。
+            🚨 読み込み中は数字を出さない（前は読み込み中に 0:00 と出ていた） */}
+        {loading ? (
+          <p style={{ margin: '10px 0', fontSize: 13, color: subText }}>読み込み中…</p>
+        ) : (
+          <OvertimeBalanceMain b={b} isDark={isDark} align="left" bigSize={24} />
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
           <span>残業 {formatSignedMin(b.plus)}</span>

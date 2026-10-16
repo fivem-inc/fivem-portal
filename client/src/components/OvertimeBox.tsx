@@ -20,7 +20,8 @@ import {
   gridDayTypeOptions, FURIKAE_ORIGIN_TAKEN_MSG, shortMd, buildDayBase, isNewGridKind,
 } from '../lib/overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
-import { diffColor, plannedBreakdownText } from '../lib/overtimeBalance';
+import { diffColor } from '../lib/overtimeBalance';
+import { OvertimeBalanceInline } from './OvertimeBalanceView';
 import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { DRAFT_KEYS, loadDraft, saveDraft } from '../lib/draftStorage';
@@ -894,9 +895,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       {/* ===== 今期の合計（表入力と同じ計算） ===== */}
       {balance && (
         <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', fontSize: 12.5, margin: '8px 0', lineHeight: 1.7 }}>
-          今期の合計 <span style={{ marginLeft: 6 }}>確定</span> <b style={{ color: diffColor(balance.now.total, isDark) }}>{formatSignedMin(balance.now.total)}</b>
-          ／見込み <b style={{ color: diffColor(balance.now.plannedTotal, isDark) }}>{formatSignedMin(balance.now.plannedTotal)}</b>
-          {balance.now.plannedDelta !== 0 && <span style={{ color: subText }}>（{plannedBreakdownText(balance.now)}）</span>}
+          {/* 見せ方は本人のカードと同じ（components/OvertimeBalanceView・2026-10-16） */}
+          <OvertimeBalanceInline b={balance.now} isDark={isDark} prefix="今期の合計　" />
           {sendInPeriod > 0 && (
             <div>このリストを送ると → <b style={{ fontSize: 15, color: diffColor(balance.after.plannedTotal, isDark) }}>{formatSignedMin(balance.after.plannedTotal)}</b>
               <span style={{ color: subText }}>（{formatSignedMin(balance.after.plannedTotal - balance.now.plannedTotal)}）</span></div>

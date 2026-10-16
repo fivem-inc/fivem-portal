@@ -23,7 +23,8 @@ import {
   periodDates, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf, buildDayBase, isNewGridKind,
   locationPick, GRID_SELF_REVIEW, gridBalance, gridDayTypeOptions, FURIKAE_ORIGIN_TAKEN_MSG, shortMd,
 } from '../lib/overtimeGrid';
-import { diffColor, plannedBreakdownText } from '../lib/overtimeBalance';
+import { diffColor } from '../lib/overtimeBalance';
+import { OvertimeBalanceInline } from './OvertimeBalanceView';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
@@ -642,9 +643,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 13.5, marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: '4px 20px', alignItems: 'baseline' }}>
           <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'baseline' }}>
             <span>{period === calcPayPeriodStartJst(today) ? '今期の合計' : 'この期の合計'}</span>
-            <span>確定 <b style={{ fontSize: 16, color: diffColor(balance.now.total, isDark) }}>{formatSignedMin(balance.now.total)}</b></span>
-            <span style={{ color: subText }}>／</span>
-            <span>見込み <b style={{ fontSize: 16, color: diffColor(balance.now.plannedTotal, isDark) }}>{formatSignedMin(balance.now.plannedTotal)}</b>{balance.now.plannedDelta !== 0 && <span style={{ color: subText }}>（{plannedBreakdownText(balance.now)}）</span>}</span>
+            {/* 見せ方は本人のカードと同じ（components/OvertimeBalanceView・2026-10-16） */}
+            <OvertimeBalanceInline b={balance.now} isDark={isDark} numSize={16} />
           </span>
           {sendable.length > 0 && (
             <span>

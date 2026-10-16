@@ -18,7 +18,8 @@ import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar, typeLabelFor } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 import { describeUpdate } from '../../lib/statusUpdate';
-import { computeBalance, plannedBreakdownText, type BalanceRow } from '../../lib/overtimeBalance';
+import { computeBalance, type BalanceRow } from '../../lib/overtimeBalance';
+import { OvertimeBalanceInline } from '../OvertimeBalanceView';
 import { logFail } from '../../lib/logFail';
 import { DAY_MARK_STYLE } from '../../lib/overtimeDayMark';
 import { STATUS_INFO } from '../../lib/overtimeStatus';
@@ -1270,9 +1271,8 @@ const OvertimeAdminTab: React.FC = () => {
                 <span style={{ color: subText }}>合計を読み込んでいます…</span>
               ) : (
                 <>
-                  <span>合計（確定）<b style={{ fontSize: 14, marginLeft: 4 }}>{formatSignedMin(otBalance.total)}</b></span>
-                  {otBalance.plannedDelta !== 0 && <span style={{ color: subText }}>見込み {formatSignedMin(otBalance.plannedTotal)}（{plannedBreakdownText(otBalance)}）</span>}
-                  {otBalance.pendingCount > 0 && <span style={{ color: subText }}>確認待ち {otBalance.pendingCount}件</span>}
+                  {/* 見せ方は本人のカードと同じ（components/OvertimeBalanceView・2026-10-16）。確認待ちの件数は内訳に時間で出るので外した */}
+                  <OvertimeBalanceInline b={otBalance} isDark={isDarkMode} numSize={14} />
                   <span>残業 {formatSignedMin(otBalance.plus)}</span>
                   {otBalance.holidayPlus > 0 && <span style={{ color: subText }}>（うち休日出勤 {formatSignedMin(otBalance.holidayPlus)}）</span>}
                   <span>調整休 {formatSignedMin(otBalance.choseiMinus)}</span>
