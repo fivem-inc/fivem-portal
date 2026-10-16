@@ -5,6 +5,8 @@ import './App.css'
 import App from './App.tsx'
 import { bootMark } from './lib/bootMark'
 import { initTextScale } from './lib/textScale'
+import { installChunkReloadHandler } from './lib/chunkReload'
+import AppErrorBoundary from './components/AppErrorBoundary'
 // 🚨 「ホーム画面に追加」の合図（beforeinstallprompt）は開いた直後に1回だけ来るので、画面より先に受け取る
 import './lib/installPrompt'
 
@@ -20,8 +22,13 @@ bootMark('boot:1 アプリが動き出した');
 // 文字の大きさ（右上のメニューで本人が選ぶ・lib/textScale.ts）。画面を描く前に効かせて、一瞬小さく見えるのを防ぐ
 initTextScale();
 
+// 新しい版を出した直後に古い画面のまま別のページを開くと真っ黒になる件の対策（lib/chunkReload.ts・2026-10-16）
+installChunkReloadHandler();
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 )
