@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveCorrectionRequest, declineCorrectionRequest } from '../../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../../lib/correctionRequest';
@@ -32,7 +32,7 @@ const datesLabel = (leaveDates: string | null, start: string | null) => {
 };
 
 const CorrectionRequestsTab: React.FC = () => {
-  const { supabase, isDarkMode, setActiveTab, setSuccessMsg, setFocusTarget } = useAdminPanel() as any;
+  const { supabase, isDarkMode, setActiveTab, setSuccessMsg, setFocusTarget, focusTarget } = useAdminPanel() as any;
 
   const [rows, setRows] = useState<CorrectionRequestRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
@@ -123,6 +123,24 @@ const CorrectionRequestsTab: React.FC = () => {
     setActiveTab(TYPE_TAB[r.target_type]);
   };
 
+  // 元の申請の行の「依頼を見る ›」から来たとき（2026-10-16）：その申請への依頼（いちばん新しいもの）を光らせる。
+  //  対応済みのものなら「対応済み・対応不可」を開く。6秒で目印を消す（ほかのタブと同じ）
+  const focusCorrId = (() => {
+    if (!focusTarget || loading) return null;
+    const hit = rows.find(r => r.target_type === focusTarget.type && r.target_id === focusTarget.id && r.status !== 'withdrawn');
+    return hit?.id ?? null;
+  })();
+  const focusCardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!focusCorrId) return;
+    const hit = rows.find(r => r.id === focusCorrId);
+    if (hit && hit.status !== 'open') setShowHandled(true);
+    const t1 = setTimeout(() => focusCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+    const t2 = setTimeout(() => setFocusTarget(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCorrId]);
+
   useEffect(() => {
     load();
     const h = () => load();
@@ -179,7 +197,8 @@ const CorrectionRequestsTab: React.FC = () => {
         ? { label: '対応済み', bg: isDarkMode ? '#0F6E56' : '#E1F5EE', fg: isDarkMode ? '#9FE1CB' : '#0F6E56' }
         : { label: '対応不可', bg: isDarkMode ? '#791F1F' : '#FCEBEB', fg: isDarkMode ? '#F7C1C1' : '#A32D2D' };
     return (
-      <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderLeft: `3px solid ${accent}`, borderRadius: 8, padding: 14, marginBottom: 10 }}>
+      <div key={r.id} ref={r.id === focusCorrId ? focusCardRef : undefined}
+        style={{ background: r.id === focusCorrId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : cardBg, border: `1px solid ${border}`, borderLeft: `3px solid ${accent}`, borderRadius: 8, padding: 14, marginBottom: 10, transition: 'background 0.6s' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: kindChip.bg, color: kindChip.fg, fontWeight: 'bold' }}>{kindChip.label}</span>

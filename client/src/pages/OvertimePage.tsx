@@ -63,6 +63,8 @@ const ERR_FIELD_BY_MSG: Record<string, string> = {
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import CorrectionNotice from '../components/CorrectionNotice';
+import { useLatestCorrections } from '../lib/correctionNotice';
 import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
@@ -3649,6 +3651,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reports]);
   useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
+  // 確認待ちのカードに出す修正依頼（2026-10-16）。確認待ちを開いているときだけ読む。見えるのは自分が確認する申請の分だけ（RLS）
+  const reviewCorrections = useLatestCorrections('overtime', isConfirmView);
 
   // ────────────────────────────────────────────
   // 残業調整 提案の回答/閲覧ビュー（?proposal=<id>）
@@ -3761,6 +3765,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>
                   </div>
                 </div>
+
+                {reviewCorrections.get(r.id) && (
+                  <div style={{ marginBottom: 6 }}><CorrectionNotice latest={reviewCorrections.get(r.id)} isDark={isDark} /></div>
+                )}
 
                 {/* 出張報告から作った申請（2026-10-14）。シフト表どおりなら受理なしで確定するので、ここに来たのは受理が要った理由がある申請 */}
                 {r.from_trip_date && (

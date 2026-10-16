@@ -6,6 +6,8 @@ import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs, shiftLegalBreak, legalBreakReviewNote } from '../../lib/shiftCalc';
 import { logFail } from '../../lib/logFail';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
+import CorrectionNotice from '../CorrectionNotice';
+import { useLatestCorrections } from '../../lib/correctionNotice';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
 
@@ -96,7 +98,9 @@ function payPeriodLabel(s: string) {
 type StatusFilter = 'active' | 'confirmed' | 'cancelled' | 'all';
 
 const ShiftReportsTab: React.FC = () => {
-  const { isDarkMode, supabase, setSuccessMsg, focusTarget, setFocusTarget } = useAdminPanel();
+  const { isDarkMode, supabase, setSuccessMsg, focusTarget, setFocusTarget, setActiveTab } = useAdminPanel();
+  // 元の申請の行に修正依頼を出す（2026-10-16）
+  const corrections = useLatestCorrections('shift');
 
   // 修正依頼タブから飛んできたとき、対象の行を光らせる（絞り込みは解除して必ず一覧に出す）
   const focusId = focusTarget?.type === 'shift' ? focusTarget.id : null;
@@ -729,6 +733,15 @@ const ShiftReportsTab: React.FC = () => {
                         </div>
                       </td>
                     </tr>
+                    {/* 修正依頼が来ている申請：行のすぐ下に帯（押すと修正依頼のタブのその依頼へ・2026-10-16） */}
+                    {corrections.get(r.id) && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${border}` }}>
+                          <CorrectionNotice latest={corrections.get(r.id)} isDark={isDarkMode}
+                            onOpen={() => { setFocusTarget({ type: 'shift', id: r.id }); setActiveTab('corrections'); }} />
+                        </td>
+                      </tr>
+                    )}
                     {/* 展開：修正履歴 */}
                     {hasHist && (
                       <tr>

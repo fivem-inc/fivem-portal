@@ -23,6 +23,8 @@ import { OvertimeBalanceInline } from '../OvertimeBalanceView';
 import { logFail } from '../../lib/logFail';
 import { DAY_MARK_STYLE } from '../../lib/overtimeDayMark';
 import { STATUS_INFO } from '../../lib/overtimeStatus';
+import CorrectionNotice from '../CorrectionNotice';
+import { useLatestCorrections } from '../../lib/correctionNotice';
 
 // 言葉はスタッフの画面（lib/overtimeStatus の STATUS_INFO）と同じものを使う（2026-10-13 ユーザー確定）。
 // 🚨 ここに言葉を書き写さない。色だけ管理画面の今の色のまま
@@ -246,7 +248,9 @@ function dowLabelOt(dateStr: string): string {
 const OvertimeAdminTab: React.FC = () => {
   const roles = useRoles();
   const ctx = useAdminPanel();
-  const { isDarkMode, supabase, focusTarget, setFocusTarget } = ctx;
+  const { isDarkMode, supabase, focusTarget, setFocusTarget, setActiveTab } = ctx;
+  // 元の申請の行に修正依頼を出す（2026-10-16）
+  const corrections = useLatestCorrections('overtime');
 
   // 修正依頼タブから飛んできたとき、受理済み一覧に切り替えて対象の行を光らせる
   const focusId = focusTarget?.type === 'overtime' ? focusTarget.id : null;
@@ -1497,6 +1501,15 @@ const OvertimeAdminTab: React.FC = () => {
                             </div>
                           </td>
                         </tr>
+                        {/* 修正依頼が来ている申請：行のすぐ下に帯（押すと修正依頼のタブのその依頼へ・2026-10-16） */}
+                        {corrections.get(r.id) && (
+                          <tr>
+                            <td colSpan={8} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${isDarkMode ? '#495057' : '#dee2e6'}` }}>
+                              <CorrectionNotice latest={corrections.get(r.id)} isDark={isDarkMode}
+                                onOpen={() => { setFocusTarget({ type: 'overtime', id: r.id }); setActiveTab('corrections'); }} />
+                            </td>
+                          </tr>
+                        )}
                         {isOpen && (
                           <tr>
                             <td colSpan={8} style={{ padding: '8px 12px', background: isDarkMode ? '#2a1e00' : '#fff8f0', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14' }}>

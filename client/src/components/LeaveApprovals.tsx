@@ -12,6 +12,8 @@ import { actedAtLabel } from '../lib/actedAt';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import { leavePurposeLabel } from '../lib/encouragementDay';
+import CorrectionNotice from './CorrectionNotice';
+import { useLatestCorrections } from '../lib/correctionNotice';
 
 interface Props {
   user: AuthUser;
@@ -123,6 +125,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       : {};
 
   const isDark = useDarkMode();
+  // 修正依頼が来ている申請に帯を出す（2026-10-16）。見えるのは自分が受理する申請の分だけ（RLS）
+  const corrections = useLatestCorrections('leave');
   const bg = isDark ? '#343a40' : 'white';
   const text = isDark ? '#fff' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
@@ -577,6 +581,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                       {STATUS_LABEL[req.status] || req.status}
                     </span>
                   </div>
+                  {corrections.get(req.id) && (
+                    <div style={{ marginBottom: 8 }}><CorrectionNotice latest={corrections.get(req.id)} isDark={isDark} /></div>
+                  )}
 
                   {/* 受理の進み具合。休暇は2人が順に受理するので、
                       「自分が1人目なのか」「誰が先に受理したのか」が分からないと判断できない。

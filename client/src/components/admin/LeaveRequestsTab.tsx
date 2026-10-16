@@ -15,6 +15,8 @@ import {
   type AttendanceType, type WorkSegment,
 } from '../../lib/attendanceTypes';
 import { describeUpdate, describePartial } from '../../lib/statusUpdate';
+import CorrectionNotice from '../CorrectionNotice';
+import { useLatestCorrections } from '../../lib/correctionNotice';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import { ENC_PURPOSE_MARK, ENC_REASON_MARK, leavePurposeLabel } from '../../lib/encouragementDay';
 
@@ -85,8 +87,10 @@ const LeaveRequestsTab: React.FC = () => {
     isDarkMode, leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
     users, fetchLeaveRequests,
     setAdminManagerList, setAdminSelectedManagerId, setAdminSelectingManagerFor,
-    sendLeaveSlack, supabase, setSuccessMsg, setErrorMsg, setPartialMsg, focusTarget, setFocusTarget,
+    sendLeaveSlack, supabase, setSuccessMsg, setErrorMsg, setPartialMsg, focusTarget, setFocusTarget, setActiveTab,
   } = ctx;
+  // 元の申請の行に修正依頼を出す（2026-10-16）
+  const corrections = useLatestCorrections('leave');
   const { user: authUser, profileName: myName } = useAuth();
 
   // 修正依頼タブから飛んできたとき、対象の行を光らせる。
@@ -1685,6 +1689,15 @@ const LeaveRequestsTab: React.FC = () => {
                               </div>
                             </td>
                           </tr>
+                          {/* 修正依頼が来ている申請：行のすぐ下に帯（押すと修正依頼のタブのその依頼へ・2026-10-16） */}
+                          {corrections.get(req.id) && (
+                            <tr key={`corr-${req.id}`}>
+                              <td colSpan={9} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
+                                <CorrectionNotice latest={corrections.get(req.id)} isDark={isDarkMode}
+                                  onOpen={() => { setFocusTarget({ type: 'leave', id: req.id }); setActiveTab('corrections'); }} />
+                              </td>
+                            </tr>
+                          )}
                           {/* 再申請展開行：元申請の情報を同列フォーマットで表示 */}
                           {expandedReapply === req.id && (() => {
                             const parentId = req.reason?.match(/【再申請】元申請ID: (\S+)/)?.[1];
