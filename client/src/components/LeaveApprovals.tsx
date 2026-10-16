@@ -74,6 +74,8 @@ const STATUS_LABEL: Record<string, string> = {
   admin_approved:   '経理受理済み',
   approved:         '受理済み',
   rejected:         '差し戻し',
+  // 本人か管理者が取り消した申請（2026-10-16）。無いと英語の「cancelled」のまま出ていた
+  cancelled:        '取消済み',
 };
 
 const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canShiftAdjust }) => {
@@ -175,7 +177,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       let query = supabase
         .from('leave_requests')
         .select('*')
-        .not('status', 'in', '("approved","rejected")')
+        // 🚨 取消済み（cancelled）も外す（2026-10-16）。外し忘れていて、管理者の画面にだけ取り消した申請が［受理］つきで出ていた。
+        //    押すと取り消した申請が「受理済み」に戻り、同じ日の休暇が2重に受理される
+        .not('status', 'in', '("approved","rejected","cancelled")')
         .order('created_at', { ascending: false });
 
       if (!isAdmin) {
