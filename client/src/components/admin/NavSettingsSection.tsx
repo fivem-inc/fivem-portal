@@ -15,6 +15,7 @@ import { rankOf, rolesByRank } from '../../lib/roleAttrs';
 import { invalidatePublishedCache } from '../../hooks/useFeaturePublished';
 import { NAV_REORDERABLE, NAV_KEY_NAME, NAV_FIXED_FIRST, NAV_FIXED_LAST, NAV_FRONT_IF_NEW, parseNavRollout, type NavKey, type NavRollout, type NavRolloutRule } from '../../lib/navItems';
 import { TOGGLE_BLUE, backBtn, primaryBtn, tintBtn } from '../../lib/buttonStyles';
+import SaveBar from './SaveBar';
 
 interface Staff { id: string; name: string | null; role_title: string | null; group_names: string[] | null; sort_order: number | null }
 /**
@@ -53,7 +54,8 @@ const NavSettingsSection: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [fail, setFail] = useState(false);
-  const [confirmOff, setConfirmOff] = useState<RuleKind | null>(null);
+  // 使える人の下書き（1つの欄ずつ・null＝見るだけ）。［保存］を押すまでナビは変わらない
+  const [ruleDraft, setRuleDraft] = useState<{ kind: RuleKind; rule: NavRolloutRule } | null>(null);
   // 知らせは押した場所のすぐ下に出す（2026-10-17 ユーザー指摘「下に出るけどわかりにくい」）
   const [msgArea, setMsgArea] = useState<MsgArea | null>(null);
   // 初めの並びは［並べ替える］→ ▲▼ →［保存］（保存するまでナビは変わらない・本人の「設定」と同じ形・2026-10-17 ユーザー指示）
@@ -125,7 +127,7 @@ const NavSettingsSection: React.FC = () => {
   // 🚨 片方を変えるときも、もう片方の値は消さずにそのまま保存する
   const saveRule = async (kind: RuleKind, nextRule: NavRolloutRule, okMsg: string) => {
     const next: NavRollout = { ...rollout, [kind]: nextRule };
-    if (await saveSetting('nav_rollout', next, okMsg, kind)) { setRollout(next); setConfirmOff(null); }
+    if (await saveSetting('nav_rollout', next, okMsg, kind)) { setRollout(next); setRuleDraft(null); }
   };
 
   const myRoleId = roles.find(r => r.name === staff.find(s => s.id === user?.id)?.role_title)?.id;
@@ -143,52 +145,56 @@ const NavSettingsSection: React.FC = () => {
   const reorderLabel = rollout.reorder.mode === 'off' ? 'いまはオフなので、誰のナビも変わりません'
     : rollout.reorder.mode === 'all' ? 'いまは全員に使われます' : 'いまは「選んだ人だけ」の方に使われます';
 
-  // 使える人の切り替え（並べ替え・2段の両方がこれを使う）
+  // 使える人の切り替え（並べ替え・2段・分けるの3つがこれを使う）
+  const MODE_NAME: Record<NavRolloutRule['mode'], string> = { off: 'オフ', selected: '選んだ人だけ', all: '全員' };
   const ruleEditor = (kind: RuleKind, title: string, offText: string) => {
-    const rule = rollout[kind];
+    const saved = rollout[kind];
+    const editing = ruleDraft?.kind === kind;
+    const rule = editing ? ruleDraft!.rule : saved;
+    const setRule = (next: NavRolloutRule) => setRuleDraft({ kind, rule: next });
     const meIncluded = rule.mode === 'all' || (rule.mode === 'selected' && ((!!user && rule.user_ids.includes(user.id)) || (!!myRoleId && rule.role_ids.includes(myRoleId))));
-    const setMode = (mode: NavRolloutRule['mode']) => {
-      if (mode === rule.mode) return;
-      if (mode === 'off') { setConfirmOff(kind); return; }   // オフに戻すときだけ確かめる
-      void saveRule(kind, { ...rule, mode }, mode === 'all' ? '全員にしました' : '選んだ人だけにしました');
-    };
-    const toggleRole = (id: string) => {
-      const role_ids = rule.role_ids.includes(id) ? rule.role_ids.filter(r => r !== id) : [...rule.role_ids, id];
-      void saveRule(kind, { ...rule, role_ids }, '対象の役職を保存しました');
-    };
-    const addUser = (id: string) => {
-      if (!id || rule.user_ids.includes(id)) return;
-      void saveRule(kind, { ...rule, user_ids: [...rule.user_ids, id] }, '対象の方を足しました');
-    };
-    const removeUser = (id: string) => void saveRule(kind, { ...rule, user_ids: rule.user_ids.filter(u => u !== id) }, '対象の方を外しました');
+    const toggleRole = (id: string) => setRule({ ...rule, role_ids: rule.role_ids.includes(id) ? rule.role_ids.filter(r => r !== id) : [...rule.role_ids, id] });
+    const addUser = (id: string) => { if (id && !rule.user_ids.includes(id)) setRule({ ...rule, user_ids: [...rule.user_ids, id] }); };
+    const removeUser = (id: string) => setRule({ ...rule, user_ids: rule.user_ids.filter(u => u !== id) });
+    // 変える内容（保存の帯に出す）
+    const changes: string[] = [];
+    if (editing) {
+      if (rule.mode !== saved.mode) changes.push(`使える人：${MODE_NAME[saved.mode]} → ${MODE_NAME[rule.mode]}`);
+      for (const r of roles) {
+        const was = saved.role_ids.includes(r.id), now = rule.role_ids.includes(r.id);
+        if (was !== now) changes.push(`役職「${r.name}」を${now ? '足す' : '外す'}`);
+      }
+      for (const id of new Set([...saved.user_ids, ...rule.user_ids])) {
+        const was = saved.user_ids.includes(id), now = rule.user_ids.includes(id);
+        if (was !== now) changes.push(`${nameOf(id)}を${now ? '足す' : '外す'}`);
+      }
+    }
     const modeBtn = (m: NavRolloutRule['mode'], label: string) => (
-      <button key={m} type="button" disabled={saving} onClick={() => setMode(m)}
-        style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13,
+      <button key={m} type="button" disabled={saving || !editing} onClick={() => setRule({ ...rule, mode: m })}
+        style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: editing ? 'pointer' : 'default', fontSize: 13,
           background: rule.mode === m ? TOGGLE_BLUE : chipBg, color: rule.mode === m ? '#fff' : text, fontWeight: rule.mode === m ? 'bold' : 'normal' }}>{label}</button>
     );
     return (
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 6 }}>{title}</div>
+      <div style={{ marginBottom: 14, ...(editing ? { border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px' } : {}) }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 'bold' }}>{title}</div>
+          {editing
+            ? <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold', flexShrink: 0 }}>✏️ 編集中</span>
+            : <button type="button" disabled={!!ruleDraft || saving} onClick={() => { setRuleDraft({ kind, rule: { ...saved, role_ids: [...saved.role_ids], user_ids: [...saved.user_ids] } }); setMsg(''); }}
+                style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 'bold', fontSize: 12, cursor: ruleDraft ? 'default' : 'pointer', opacity: ruleDraft ? 0.5 : 1, flexShrink: 0 }}>✏️ 変更する</button>}
+        </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
           {modeBtn('off', 'オフ')}{modeBtn('selected', '選んだ人だけ')}{modeBtn('all', '全員')}
         </div>
-        {confirmOff === kind && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5, marginBottom: 8 }}>
-            <span>{offText}</span>
-            <button type="button" style={{ ...backBtn(isDarkMode), padding: '5px 12px' }} onClick={() => setConfirmOff(null)}>やめる</button>
-            <button type="button" style={{ ...primaryBtn({ disabled: saving }), padding: '5px 12px' }} disabled={saving}
-              onClick={() => saveRule(kind, { ...rule, mode: 'off' }, 'オフにしました')}>オフにする</button>
-          </div>
-        )}
         {rule.mode === 'selected' && (
           <div style={{ border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
-            <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>役職で選ぶ（押すと切り替わります）</div>
+            <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>役職で選ぶ{editing ? '（押すと切り替わります）' : ''}</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
               {roles.map(r => {
                 const onR = rule.role_ids.includes(r.id);
                 return (
-                  <button key={r.id} type="button" disabled={saving} onClick={() => toggleRole(r.id)}
-                    style={{ padding: '4px 12px', borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 12.5,
+                  <button key={r.id} type="button" disabled={saving || !editing} onClick={() => toggleRole(r.id)}
+                    style={{ padding: '4px 12px', borderRadius: 14, border: 'none', cursor: editing ? 'pointer' : 'default', fontSize: 12.5,
                       background: onR ? TOGGLE_BLUE : chipBg, color: onR ? '#fff' : text }}>{r.name}</button>
                 );
               })}
@@ -197,28 +203,34 @@ const NavSettingsSection: React.FC = () => {
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
               {rule.user_ids.length === 0 && <span style={{ fontSize: 12, color: subText }}>（まだいません）</span>}
               {rule.user_ids.map(id => (
-                <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 6px 3px 10px', borderRadius: 14, background: chipBg, fontSize: 12.5 }}>
+                <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: editing ? '3px 6px 3px 10px' : '3px 10px', borderRadius: 14, background: chipBg, fontSize: 12.5 }}>
                   {nameOf(id)}
-                  <button type="button" aria-label={`${nameOf(id)}を外す`} disabled={saving} onClick={() => removeUser(id)}
-                    style={{ border: 'none', background: 'transparent', color: subText, cursor: 'pointer', fontSize: 13 }}>✕</button>
+                  {editing && <button type="button" aria-label={`${nameOf(id)}を外す`} disabled={saving} onClick={() => removeUser(id)}
+                    style={{ border: 'none', background: 'transparent', color: subText, cursor: 'pointer', fontSize: 13 }}>✕</button>}
                 </span>
               ))}
             </div>
-            <select value="" onChange={e => addUser(e.target.value)} disabled={saving}
-              style={{ padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13 }}>
-              <option value="">＋ 人を足す</option>
-              {staffGroups(staff.filter(s => !rule.user_ids.includes(s.id))).map(g => (
-                <optgroup key={g.role} label={g.role}>
-                  {g.people.map(s => <option key={s.id} value={s.id}>{s.name}{deptOf(s, depts) ? `（${deptOf(s, depts)}）` : ''}</option>)}
-                </optgroup>
-              ))}
-            </select>
+            {editing && (
+              <select value="" onChange={e => addUser(e.target.value)} disabled={saving}
+                style={{ padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13 }}>
+                <option value="">＋ 人を足す</option>
+                {staffGroups(staff.filter(s => !rule.user_ids.includes(s.id))).map(g => (
+                  <optgroup key={g.role} label={g.role}>
+                    {g.people.map(s => <option key={s.id} value={s.id}>{s.name}{deptOf(s, depts) ? `（${deptOf(s, depts)}）` : ''}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            )}
           </div>
         )}
         {rule.mode !== 'off' && !meIncluded && (
           <div style={{ fontSize: 12, color: subText }}>あなたは対象に入っていません（ご自身の画面は変わりません）。</div>
         )}
-        {msgBox(kind)}
+        {editing
+          ? <SaveBar isDark={isDarkMode} changes={changes} saving={saving} msg={msg && msgArea === kind && fail ? { text: msg, fail: true } : null}
+              warn={rule.mode === 'off' && saved.mode !== 'off' ? offText : undefined}
+              onCancel={() => { setRuleDraft(null); setMsg(''); }} onSave={() => void saveRule(kind, rule, '保存しました')} />
+          : msgBox(kind)}
       </div>
     );
   };

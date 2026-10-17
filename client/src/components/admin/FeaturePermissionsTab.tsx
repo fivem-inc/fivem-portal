@@ -9,6 +9,7 @@ import IdleLogoutSettingsSection from './IdleLogoutSettingsSection';
 // マネージャー以上に開く管理画面のタブ（2026-09-15・docs/計画-管理画面の開放.md）
 import ManagerAdminTabsSection from './ManagerAdminTabsSection';
 import NavSettingsSection from './NavSettingsSection';
+import SaveBar, { SaveNotice, type SaveMsg } from './SaveBar';
 
 interface Role {
   id: string;
@@ -122,6 +123,8 @@ const RetireeFeatureSection: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [fail, setFail] = useState(false);
+  // ［変更する］を押したあとの下書き（null＝見るだけ）。🚨 押した瞬間には保存しない（2026-10-17）
+  const [draft, setDraft] = useState<string[] | null>(null);
 
   useEffect(() => {
     supabase.from('app_settings').select('value').eq('key', 'retiree_feature_keys').maybeSingle()
@@ -141,15 +144,24 @@ const RetireeFeatureSection: React.FC = () => {
     setSaving(false);
     if (error) { setFail(true); setMsg('保存できませんでした：' + error.message); return; }
     if (!data || data.length === 0) { setFail(true); setMsg('保存できませんでした（0件）。管理者のアカウントでお試しください'); return; }
-    setKeys(next);
-    setMsg(`保存しました（${next.length}件）`);
+    setKeys(next); setDraft(null);
+    setMsg(`保存しました（出す機能 ${next.length}件）`);
   };
+  const labelOf = (k: string) => { const f = FEATURES.find(x => x.key === k); return f ? `${f.icon} ${f.label}` : k; };
+  const changes = keys && draft ? RETIREE_SELECTABLE.filter(k => keys.includes(k) !== draft.includes(k))
+    .map(k => `${labelOf(k)}：${keys.includes(k) ? '出す → 出さない' : '出さない → 出す'}`) : [];
 
   if (keys === null) return null;
 
   return (
     <div style={{ background: isDarkMode ? '#343a40' : '#fff', border: `1px solid ${border}`, borderRadius: 12, padding: '16px 18px', marginTop: 16 }}>
-      <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 6 }}>📋 退職後の申請期間に出す機能</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+        <div style={{ fontSize: 15, fontWeight: 'bold', color: text }}>📋 退職後の申請期間に出す機能</div>
+        {draft === null
+          ? <button type="button" onClick={() => { setDraft([...keys]); setMsg(''); setFail(false); }}
+              style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 'bold', fontSize: 12, cursor: 'pointer' }}>✏️ 変更する</button>
+          : <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
+      </div>
       <div style={{ fontSize: 12.5, color: subText, lineHeight: 1.8, marginBottom: 12 }}>
         退職した方が、申請できる期間のあいだに使える機能です。<br />
         🚨 ここで ✓ にしても、<strong>その方が辞める前の役職で使えていた機能</strong>でなければ出ません（両方を満たすものだけ）。<br />
@@ -158,11 +170,12 @@ const RetireeFeatureSection: React.FC = () => {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {RETIREE_SELECTABLE.map(k => {
           const f = FEATURES.find(x => x.key === k);
-          const on = keys.includes(k);
+          const cur = draft ?? keys;
+          const on = cur.includes(k);
           return (
-            <button key={k} type="button" disabled={saving}
-              onClick={() => save(on ? keys.filter(x => x !== k) : [...keys, k])}
-              style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+            <button key={k} type="button" disabled={saving || draft === null}
+              onClick={() => draft && setDraft(on ? draft.filter(x => x !== k) : [...draft, k])}
+              style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, cursor: draft === null ? 'default' : 'pointer', opacity: draft === null ? 0.8 : 1,
                 border: on ? '2px solid #1976d2' : `1px solid ${border}`,
                 background: on ? '#1976d2' : (isDarkMode ? '#495057' : '#e3f2fd'),
                 color: on ? '#fff' : (isDarkMode ? '#e9ecef' : '#1565c0') }}>
@@ -171,13 +184,10 @@ const RetireeFeatureSection: React.FC = () => {
           );
         })}
       </div>
-      {msg && (
-        <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12.5,
-          background: fail ? '#f8d7da' : '#d4edda', border: `1px solid ${fail ? '#f5c2c7' : '#c3e6cb'}`,
-          color: fail ? '#842029' : '#155724' }}>
-          {fail ? '' : '✓ '}{msg}
-        </div>
-      )}
+      {draft !== null
+        ? <SaveBar isDark={isDarkMode} changes={changes} saving={saving} msg={msg ? { text: msg, fail } : null}
+            onCancel={() => { setDraft(null); setMsg(''); }} onSave={() => save(draft)} />
+        : <SaveNotice msg={msg ? { text: msg, fail } : null} />}
     </div>
   );
 };
@@ -198,7 +208,13 @@ const FeaturePermissionsTab: React.FC = () => {
   const [publishedPresident, setPublishedPresident] = useState<Record<string, boolean>>({});
   const [savedPublishedPresident, setSavedPublishedPresident] = useState<Record<string, boolean>>({});
   const [isEditMode, setIsEditMode] = useState(false);
-  const [isDirty, setIsDirty] = useState(false);
+  // 知らせは押した［保存］のすぐ下に出す（2026-10-17・前は画面の真ん中に出していた）
+  const [permMsg, setPermMsg] = useState<SaveMsg | null>(null);
+  const [roleMsg, setRoleMsg] = useState<SaveMsg | null>(null);
+  // 役職の並びは編集中だけ画面の中で動かし、［保存］で書く（前は ▲▼ を押した瞬間に保存・失敗も見ていなかった）
+  const [roleOrderDraft, setRoleOrderDraft] = useState<string[] | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [, setIsDirty] = useState(false);   // 変えたかどうかは permChanges（変える内容の一覧）で見る
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -313,8 +329,26 @@ const FeaturePermissionsTab: React.FC = () => {
     setIsDirty(true);
   };
 
+  // 変える内容の一覧（保存の帯に出す）。🚨 固定の役職（管理者）はいつも全部オンなので数えない
+  const onOff = (v: boolean) => v ? 'オン' : 'オフ';
+  const permChanges: string[] = [];
+  for (const f of FEATURES) {
+    const pubNow = published[f.key] !== false, pubWas = savedPublished[f.key] !== false;
+    if (pubNow !== pubWas) permChanges.push(`${f.label}：全公開 ${onOff(pubWas)} → ${onOff(pubNow)}`);
+    const lNow = publishedLeader[f.key] === true, lWas = savedPublishedLeader[f.key] === true;
+    if (lNow !== lWas) permChanges.push(`${f.label}：リーダー以上に先に公開 ${onOff(lWas)} → ${onOff(lNow)}`);
+    const pNow = publishedPresident[f.key] === true, pWas = savedPublishedPresident[f.key] === true;
+    if (pNow !== pWas) permChanges.push(`${f.label}：社長だけに先に公開 ${onOff(pWas)} → ${onOff(pNow)}`);
+    for (const r of roles) {
+      if (r.is_fixed) continue;
+      const now = perms[r.id]?.[f.key] ?? false, was = savedPerms[r.id]?.[f.key] ?? false;
+      if (now !== was) permChanges.push(`${r.name}：${f.label} ${onOff(was)} → ${onOff(now)}`);
+    }
+  }
+  const cancelPerms = () => { setPerms(JSON.parse(JSON.stringify(savedPerms))); setPublished({ ...savedPublished }); setPublishedLeader({ ...savedPublishedLeader }); setPublishedPresident({ ...savedPublishedPresident }); setIsDirty(false); setIsEditMode(false); };
+
   const handleSavePerms = async () => {
-    setSaving(true);
+    setSaving(true); setPermMsg(null);
     const upserts = roles.flatMap(role =>
       FEATURES.map(feat => ({
         role_id:     role.id,
@@ -330,32 +364,50 @@ const FeaturePermissionsTab: React.FC = () => {
       supabase.from('app_settings').upsert({ key: 'feature_published_president', value: publishedPresident, updated_at: new Date().toISOString() }, { onConflict: 'key' }),
     ]);
     setSaving(false);
-    if (error || pubError || pubLeaderError || pubPresError) { setErrorMsg('保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
+    if (error || pubError || pubLeaderError || pubPresError) { setPermMsg({ fail: true, text: '保存できませんでした：' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message) }); return; }
     setSavedPerms(JSON.parse(JSON.stringify(perms)));
     setSavedPublished({ ...published });
     setSavedPublishedLeader({ ...publishedLeader });
     setSavedPublishedPresident({ ...publishedPresident });
     setIsDirty(false);
     setIsEditMode(false);
-    setSuccessMsg('権限設定を保存しました');
+    setPermMsg({ fail: false, text: `権限を保存しました（${permChanges.length}件）。次に画面を開いたときから反映されます` });
   };
 
   // ── 並び替え ──
-  const handleMove = async (role: Role, direction: 'up' | 'down') => {
-    const sortable = roles.filter(r => !r.is_fixed);
-    const idx = sortable.findIndex(r => r.id === role.id);
-    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= sortable.length) return;
-
-    const target = sortable[swapIdx];
-    const newOrderA = target.sort_order;
-    const newOrderB = role.sort_order;
-
-    await Promise.all([
-      supabase.from('roles').update({ sort_order: newOrderA }).eq('id', role.id),
-      supabase.from('roles').update({ sort_order: newOrderB }).eq('id', target.id),
-    ]);
-    fetchAll();
+  // 🚨 並びは役職の上下（序列）そのもの（lib/roleAttrs の rankOf が sort_order を見る）。押した瞬間には書かない
+  const handleMove = (role: Role, direction: 'up' | 'down') => {
+    const ids = roleOrderDraft ?? roles.filter(r => !r.is_fixed).map(r => r.id);
+    const idx = ids.indexOf(role.id);
+    const j = direction === 'up' ? idx - 1 : idx + 1;
+    if (idx < 0 || j < 0 || j >= ids.length) return;
+    const next = [...ids];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setRoleOrderDraft(next); setRoleMsg(null);
+  };
+  const savedRoleOrder = roles.filter(r => !r.is_fixed).map(r => r.id);
+  const roleOrderChanged = !!roleOrderDraft && roleOrderDraft.join() !== savedRoleOrder.join();
+  const roleOrderChanges = roleOrderChanged
+    ? [`役職の並び（上から）：${roleOrderDraft!.map(id => roles.find(r => r.id === id)?.name ?? '').join(' → ')}`]
+    : [];
+  const saveRoleOrder = async () => {
+    if (!roleOrderDraft) return;
+    setSavingOrder(true); setRoleMsg(null);
+    // 今の sort_order の値の組をそのまま使い、並べた順に配り直す（固定の役職の値は触らない）
+    const slots = roles.filter(r => !r.is_fixed).map(r => r.sort_order);
+    const writes = roleOrderDraft.map((id, i) => ({ id, sort_order: slots[i] }))
+      .filter(w => roles.find(r => r.id === w.id)?.sort_order !== w.sort_order);
+    const results = await Promise.all(writes.map(w => supabase.from('roles').update({ sort_order: w.sort_order }).eq('id', w.id).select('id')));
+    setSavingOrder(false);
+    const bad = results.find(r => r.error || !r.data || r.data.length === 0);
+    if (bad) {
+      setRoleMsg({ fail: true, text: '並びを保存できませんでした：' + (bad.error?.message ?? '0件（権限が不足しているか、役職が削除されています）') + '。読み直しました。もう一度並べてください' });
+      setRoleOrderDraft(null); fetchAll(); refreshRoles();
+      return;
+    }
+    setRoleOrderDraft(null); setIsRoleEditMode(false);
+    await fetchAll(); refreshRoles();
+    setRoleMsg({ fail: false, text: '役職の並びを保存しました。次に画面を開いたときから反映されます' });
   };
 
   // ── 役職追加 ──
@@ -483,7 +535,7 @@ const FeaturePermissionsTab: React.FC = () => {
     fontSize: 12, background: isDarkMode ? '#495057' : '#f8f9fa', color: text,
   };
 
-  const sortable = roles.filter(r => !r.is_fixed);
+  const sortable = roleOrderDraft ? roleOrderDraft.map(id => roles.find(r => r.id === id)!).filter(Boolean) : roles.filter(r => !r.is_fixed);
 
   if (loading) {
     return <p style={{ textAlign: 'center', color: subText, padding: 40 }}>読み込み中...</p>;
@@ -504,21 +556,23 @@ const FeaturePermissionsTab: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {isRoleEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
               {!isRoleEditMode ? (
-                <button onClick={() => setIsRoleEditMode(true)}
+                <button onClick={() => { setIsRoleEditMode(true); setRoleMsg(null); }}
                   style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold', padding: '5px 12px', fontSize: 12 }}>
                   ✏️ 変更する
                 </button>
               ) : (
-                <button onClick={() => { setIsRoleEditMode(false); setNewRoleName(''); }}
-                  style={{ ...btnBase, background: '#6c757d', color: '#fff', border: 'none', padding: '5px 12px', fontSize: 12 }}>
-                  完了
-                </button>
+                !roleOrderChanged && (
+                  <button onClick={() => { setIsRoleEditMode(false); setNewRoleName(''); setRoleOrderDraft(null); }}
+                    style={{ ...btnBase, background: '#6c757d', color: '#fff', border: 'none', padding: '5px 12px', fontSize: 12 }}>
+                    完了
+                  </button>
+                )
               )}
             </div>
           </div>
 
           <div style={{ padding: '8px 0' }}>
-            {roles.map((role) => {
+            {(roleOrderDraft ? [...roles.filter(r => r.is_fixed), ...roleOrderDraft.map(id => roles.find(r => r.id === id)!).filter(Boolean)] : roles).map((role) => {
               const nonFixedIdx = sortable.findIndex(r => r.id === role.id);
               const canUp   = !role.is_fixed && nonFixedIdx > 0;
               const canDown = !role.is_fixed && nonFixedIdx < sortable.length - 1;
@@ -577,6 +631,15 @@ const FeaturePermissionsTab: React.FC = () => {
             })}
           </div>
 
+          {/* 並びを変えたときだけ、保存の帯（押すまで変わらない） */}
+          {isRoleEditMode && roleOrderChanged && (
+            <div style={{ padding: '0 16px 12px' }}>
+              <SaveBar isDark={isDarkMode} changes={roleOrderChanges} saving={savingOrder} msg={null}
+                warn="役職の並びは、役職の上下（承認の順番・表の並び）に使われます。"
+                onCancel={() => setRoleOrderDraft(null)} onSave={saveRoleOrder} />
+            </div>
+          )}
+          {roleMsg && <div style={{ padding: '0 16px 12px' }}><SaveNotice msg={roleMsg} /></div>}
           {/* 追加フォーム（編集モード時のみ） */}
           {isRoleEditMode && (
             <div style={{ padding: '8px 16px 14px', display: 'flex', gap: 8 }}>
@@ -757,35 +820,11 @@ const FeaturePermissionsTab: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {isEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
               {!isEditMode ? (
-                <button onClick={() => setIsEditMode(true)}
+                <button onClick={() => { setIsEditMode(true); setPermMsg(null); }}
                   style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold', padding: '5px 12px', fontSize: 12 }}>
                   ✏️ 変更する
                 </button>
-              ) : (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    onClick={() => { setPerms(JSON.parse(JSON.stringify(savedPerms))); setPublished({ ...savedPublished }); setPublishedLeader({ ...savedPublishedLeader }); setPublishedPresident({ ...savedPublishedPresident }); setIsDirty(false); setIsEditMode(false); }}
-                    style={{ ...btnBase, padding: '5px 12px', fontSize: 12 }}
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={handleSavePerms}
-                    disabled={saving || !isDirty}
-                    style={{
-                      ...btnBase, padding: '5px 12px', fontSize: 12, border: 'none',
-                      background: saving ? '#6c757d' : isDirty ? '#22c55e' : (isDarkMode ? '#495057' : '#e9ecef'),
-                      color: isDirty || saving ? '#fff' : subText,
-                      opacity: !isDirty && !saving ? 0.5 : 1,
-                      cursor: isDirty ? 'pointer' : 'default',
-                      fontWeight: isDirty ? 'bold' : 'normal',
-                      transition: 'background .2s',
-                    }}
-                  >
-                    {saving ? '保存中...' : isDirty ? '✓ 保存する' : '変更なし'}
-                  </button>
-                </div>
-              )}
+              ) : null}
             </div>
           </div>
 
@@ -987,6 +1026,9 @@ const FeaturePermissionsTab: React.FC = () => {
             ・すべてOFF → <strong>管理者のみ</strong>（公開前の準備状態）<br />
             🔵 管理者は常にすべての機能を利用できます（変更不可）。各役職のトグルは表示される機能の中での可否です。
           </div>
+          {isEditMode
+            ? <div style={{ padding: '0 14px 12px' }}><SaveBar isDark={isDarkMode} changes={permChanges} saving={saving} msg={permMsg} sticky onCancel={cancelPerms} onSave={handleSavePerms} /></div>
+            : permMsg && <div style={{ padding: '0 14px 12px' }}><SaveNotice msg={permMsg} /></div>}
 
         </div>
       </div>

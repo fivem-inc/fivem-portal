@@ -5,6 +5,7 @@ import {
   type IdleLogoutConfig,
 } from '../../lib/idleLogout';
 import { loadIdleConfig, saveIdleConfig } from '../../lib/idleLogoutConfig';
+import SaveBar, { SaveNotice } from './SaveBar';
 
 // 共有パソコンの自動ログアウトの設定（2026-09-14 ユーザー確定）。置き場所は「権限管理」タブの末尾。
 // 決めたこと・写しの仕組みは lib/idleLogout.ts の冒頭を見ること。
@@ -21,6 +22,9 @@ const IdleLogoutSettingsSection: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  // ［変更する］を押したあとだけ触れる（2026-10-17・ページの決まり：押した瞬間には保存しない）
+  const [editing, setEditing] = useState(false);
+  const [mobileDraft, setMobileDraft] = useState(false);
 
   const bg = isDarkMode ? '#343a40' : 'white';
   const text = isDarkMode ? '#fff' : '#333';
@@ -67,9 +71,16 @@ const IdleLogoutSettingsSection: React.FC = () => {
     if (failure) { setErr('保存できませんでした：' + failure); return; }
     setCfg(next);
     setMinutesText(String(next.minutes));
-    setMsg('✓ 保存しました');
-    setTimeout(() => setMsg(''), 3000);
+    setEditing(false);
+    setMsg('保存しました。各端末が次にログインしたときから効きます');
   };
+  const changes: string[] = [];
+  if (cfg && editing) {
+    if (minutesInRange && parsedMinutes !== cfg.minutes) changes.push(`ログアウトまでの時間：${formatMinutes(cfg.minutes)} → ${formatMinutes(parsedMinutes!)}`);
+    if (mobileDraft !== cfg.show_on_mobile) changes.push(`スマホ・タブレットにもチェックを出す：${cfg.show_on_mobile ? '出す' : '出さない'} → ${mobileDraft ? '出す' : '出さない'}`);
+  }
+  const startEdit = () => { if (!cfg) return; setMinutesText(String(cfg.minutes)); setMobileDraft(cfg.show_on_mobile); setEditing(true); setMsg(''); setErr(''); };
+  const cancelEdit = () => { if (cfg) setMinutesText(String(cfg.minutes)); setEditing(false); setErr(''); };
 
   return (
     <div style={{ marginTop: 20 }}>
@@ -79,6 +90,14 @@ const IdleLogoutSettingsSection: React.FC = () => {
       }}>
         共有パソコンの自動ログアウト
       </div>
+      {cfg && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+          {!editing
+            ? <button type="button" onClick={startEdit}
+                style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 'bold', fontSize: 12, cursor: 'pointer' }}>✏️ 変更する</button>
+            : <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
+        </div>
+      )}
 
       <div style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 12, padding: '14px 16px' }}>
         <div style={{ fontSize: 12, color: subText, lineHeight: 1.7, marginBottom: 12 }}>
@@ -89,7 +108,7 @@ const IdleLogoutSettingsSection: React.FC = () => {
           いまログイン中の端末には、次にログイン画面を通るまで何も起きません。
         </div>
 
-        {err && (
+        {err && !editing && (
           <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, fontSize: 12,
             background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{err}</div>
         )}
@@ -107,25 +126,13 @@ const IdleLogoutSettingsSection: React.FC = () => {
                   step={1}
                   value={minutesText}
                   onChange={e => setMinutesText(e.target.value)}
-                  style={inputStyle}
+                  disabled={!editing}
+                  style={{ ...inputStyle, opacity: editing ? 1 : 0.7 }}
                 />
                 <span style={{ fontSize: 13, color: text }}>分</span>
                 {minutesInRange && parsedMinutes !== cfg.minutes && (
                   <span style={{ fontSize: 12, color: subText }}>＝ {formatMinutes(parsedMinutes)}</span>
                 )}
-                <button
-                  type="button"
-                  disabled={saving || !minutesInRange || parsedMinutes === cfg.minutes}
-                  onClick={() => parsedMinutes !== null && save({ minutes: parsedMinutes })}
-                  style={{
-                    padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 'bold',
-                    background: '#1976d2', color: '#fff', border: '2px solid #1565c0',
-                    cursor: saving || !minutesInRange || parsedMinutes === cfg.minutes ? 'default' : 'pointer',
-                    opacity: saving || !minutesInRange || parsedMinutes === cfg.minutes ? 0.5 : 1,
-                  }}
-                >
-                  {saving ? '保存中…' : '時間を保存'}
-                </button>
               </div>
               {!minutesInRange && minutesText.trim() !== '' && (
                 <div style={{ ...note, color: '#dc3545' }}>{IDLE_MINUTES_MIN}〜{IDLE_MINUTES_MAX} の整数で入れてください</div>
@@ -136,8 +143,8 @@ const IdleLogoutSettingsSection: React.FC = () => {
             <div style={{ marginBottom: 4 }}>
               <div style={label}>スマホ・タブレットのログイン画面にもチェックを出す</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button type="button" onClick={() => save({ show_on_mobile: false })} style={chip(!cfg.show_on_mobile)}>出さない（パソコンだけ）</button>
-                <button type="button" onClick={() => save({ show_on_mobile: true })} style={chip(cfg.show_on_mobile)}>出す</button>
+                <button type="button" disabled={!editing} onClick={() => setMobileDraft(false)} style={{ ...chip(!(editing ? mobileDraft : cfg.show_on_mobile)), cursor: editing ? 'pointer' : 'default' }}>出さない（パソコンだけ）</button>
+                <button type="button" disabled={!editing} onClick={() => setMobileDraft(true)} style={{ ...chip(editing ? mobileDraft : cfg.show_on_mobile), cursor: editing ? 'pointer' : 'default' }}>出す</button>
               </div>
               <div style={note}>
                 「出す」にしても、スマホ・タブレットでのチェックの初期値は OFF です（個人用の端末がほとんどのため）。
@@ -145,7 +152,10 @@ const IdleLogoutSettingsSection: React.FC = () => {
               </div>
             </div>
 
-            {msg && <div style={{ marginTop: 10, fontSize: 12, color: '#1e8449', fontWeight: 'bold' }}>{msg}</div>}
+            {editing
+              ? <SaveBar isDark={isDarkMode} changes={changes} saving={saving} msg={err ? { text: err, fail: true } : null}
+                  onCancel={cancelEdit} onSave={() => void save({ ...(minutesInRange ? { minutes: parsedMinutes! } : {}), show_on_mobile: mobileDraft })} />
+              : <SaveNotice msg={msg ? { text: msg, fail: false } : null} />}
             {cfg.minutes === DEFAULT_IDLE_CONFIG.minutes && !cfg.show_on_mobile && (
               <div style={{ ...note, marginTop: 10 }}>いまは初期値（1分・パソコンだけ）です。</div>
             )}
