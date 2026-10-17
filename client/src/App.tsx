@@ -56,6 +56,7 @@ import { fetchActiveAnnouncements, type Announcement } from './lib/announcements
 import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
+import { buildNavItems, navItemsSignature } from './lib/navItems';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
 import { TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
@@ -976,6 +977,19 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { count: clockInquiryOpen } = useClockInquiryOpenCount(userId, canOvertime);
   const overtimeBadge = overtimePending + overtimeUnreported + appRequestCountOvertime + clockInquiryOpen; // 確認依頼＋自分の実績未報告＋申請の依頼（残業）＋経理からの打刻の確認
   const leaveBadge = leavePending + appRequestCountLeave; // 承認待ち＋自分あての休暇の申請依頼
+  // ナビのボタンの表（2026-10-17・lib/navItems.ts）。🚨 出す条件・並び・数字はここで表にしてから描く（ボタンを1つずつ書かない）
+  const navItems = buildNavItems({
+    canAdminOpen: adminAccess.canOpen, isAdmin,
+    canExpense: !!canExpense, canTripReport: !!canTripReport, canLeave: !!canLeave, canCalendar: !!canCalendar,
+    canShiftReport: !!canShiftReport, canOvertime: !!canOvertime, canPurchaseRequest: !!canPurchaseRequest,
+    canRoomBooking: !!canRoomBooking, canBoard: !!canBoard, canProcedures, canFaqNav: !!canFaqNav,
+    isPub,
+    // 🚨 休暇の数字は leaveBadge（承認待ち＋申請の依頼）。前は出す条件が leaveBadge なのに数字が leavePending で、依頼だけのとき「0」と出ていた
+    // 🚨 連絡板を開いている間は数字を出さない（前と同じ）
+    badges: { admin: adminSetupBadge, leave: leaveBadge, shift: shiftPending, overtime: overtimeBadge, purchase: purchaseNavBadge,
+      board: location.pathname !== '/board' ? boardUnread : 0 },
+  });
+  const navSig = navItemsSignature(navItems);
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -1041,8 +1055,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     return () => window.removeEventListener('resize', updateScrollFade);
     // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する。
     // 各バッジの件数が増減したときも隠れている合計を数え直す
-  }, [updateScrollFade, isMobile, featurePublishState, isAdmin, canLeave, canShiftReport, canCalendar,
-      leavePending, shiftPending, overtimeBadge, purchaseNavBadge, boardUnread, canProcedures]);
+  }, [updateScrollFade, isMobile, navSig]);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -1082,118 +1095,25 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             scrollbarWidth: 'none', padding: isMobile ? '6px 4px' : 0, boxSizing: 'border-box',
           }}
         >
-          {adminAccess.canOpen && (
-            <div data-nav-badge={adminSetupBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-              <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span>{navLabel('管理')}</> : '⚙️ 管理'}
+          {/* ボタンは lib/navItems.ts の表の順に描く（2026-10-17）。数字のあるボタンだけ、数字の枠（data-nav-badge）で包む */}
+          {navItems.map(item => {
+            const button = (
+              <button key={item.key} onClick={() => navTo(item.path)} style={btnStyle(location.pathname === item.path, item.activeColor)}>
+                {isMobile ? <><span style={{ fontSize: 20 }}>{item.icon}</span>{navLabel(item.mobileLabel)}</> : `${item.icon} ${item.label}`}
               </button>
-              {/* 設定の入力もれ（次年度の会社カレンダー未登録など）。登録が済めば自動で消える */}
-              {adminSetupBadge > 0 && (
-                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {adminSetupBadge > 99 ? '99+' : adminSetupBadge}
-                </span>
-              )}
-            </div>
-          )}
-          {canExpense && isPub('expense') && (
-            <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span>{navLabel('交通費')}</> : '🏠 交通費'}
-            </button>
-          )}
-          {canTripReport && isPub('trip_report') && (
-            <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>📍</span>{navLabel('出張報告')}</> : '📍 出張報告'}
-            </button>
-          )}
-          {canLeave && isPub('leave_request') && (
-            <div data-nav-badge={leaveBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-              <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span>{navLabel('休暇申請')}</> : '🌿 休暇申請'}
-              </button>
-              {leaveBadge > 0 && (
-                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {leavePending > 99 ? '99+' : leavePending}
-                </span>
-              )}
-            </div>
-          )}
-          {(isAdmin || canCalendar) && isPub('leave_calendar') && (
-            <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>📅</span>{navLabel('カレンダー')}</> : '📅 カレンダー'}
-            </button>
-          )}
-          {canShiftReport && isPub('shift_report') && (
-            <div data-nav-badge={shiftPending} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-              <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span>{navLabel('勤務変更')}</> : '⏰ 勤務変更'}
-              </button>
-              {shiftPending > 0 && (
-                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {shiftPending > 99 ? '99+' : shiftPending}
-                </span>
-              )}
-            </div>
-          )}
-          {canOvertime && isPub('overtime') && (
-            <div data-nav-badge={overtimeBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-              <button onClick={() => navTo('/overtime')} style={btnStyle(location.pathname === '/overtime', '#1565c0')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>🕐</span>{navLabel('残業')}</> : '🕐 残業・時間'}
-              </button>
-              {overtimeBadge > 0 && (
-                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {overtimeBadge > 99 ? '99+' : overtimeBadge}
-                </span>
-              )}
-            </div>
-          )}
-          {/* 備品精算。ナビの数字＝「✅ 承認」タブの件数＋「📋 履歴」タブの未確認件数。
-              開けばどちらの用事か分かるよう、タブ側にも内訳を出している */}
-          {canPurchaseRequest && isPub('purchase_request') && (
-            <div data-nav-badge={purchaseNavBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-              <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>📦</span>{navLabel('備品精算')}</> : '📦 備品精算'}
-              </button>
-              {purchaseNavBadge > 0 && (
-                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {purchaseNavBadge > 99 ? '99+' : purchaseNavBadge}
-                </span>
-              )}
-            </div>
-          )}
-          {/* 場所の予約。毎日開くものなので連絡板の前に置く。
-              🚨 2026-08-31 にマネージャー以上へ絞った（ユーザー確定）。
-                 フロア責任者は**含めない**（案A）。「マネージャー以上」に
-                 フロア責任者を入れるかは毎回割れるので、役職ごとのONで持つ。
-                 出し分けは管理画面の「役職・機能権限」で変えられる */}
-          {canRoomBooking && isPub('room_booking') && (
-            <button onClick={() => navTo('/rooms')} style={btnStyle(location.pathname === '/rooms', '#2f6f4f')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>🚪</span>{navLabel('場所予約')}</> : '🚪 場所予約'}
-            </button>
-          )}
-          {canBoard && isPub('board') && (
-          <div data-nav-badge={location.pathname !== '/board' ? boardUnread : 0} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-            <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>💬</span>{navLabel('連絡板')}</> : '💬 連絡板'}
-            </button>
-            {boardUnread > 0 && location.pathname !== '/board' && (
-              <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                {boardUnread > 99 ? '99+' : boardUnread}
-              </span>
-            )}
-          </div>
-          )}
-          {canProcedures && (
-            <button onClick={() => navTo('/retire')} style={btnStyle(location.pathname === '/retire', '#6c757d')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>📋</span>{navLabel('手続き')}</> : '📋 手続き'}
-            </button>
-          )}
-          {/* FAQ（よくある質問）。表示は管理画面「権限管理」の FAQ：ナビにも出す で切り替える。
-              毎日使うものではないので並びは最後にする */}
-          {canFaqNav && (
-            <button onClick={() => navTo('/faq')} style={btnStyle(location.pathname === '/faq', '#0891b2')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>💡</span>{navLabel('FAQ')}</> : '💡 FAQ'}
-            </button>
-          )}
+            );
+            if (item.badge === undefined) return button;
+            return (
+              <div key={item.key} data-nav-badge={item.badge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+                {button}
+                {item.badge > 0 && (
+                  <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
         {isMobile && canScrollLeft && (
           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to right, #1a1a2e, transparent)', pointerEvents: 'none' }} />
