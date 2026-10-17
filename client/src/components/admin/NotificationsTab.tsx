@@ -78,6 +78,9 @@ const EVENT_GROUPS = [
       { key: 'staff:hired',         label: '入社日の朝（今日入社・残っている確認も添える）' },
       { key: 'staff:invite_failed', label: '招待メールを送れなかったとき（入社日の朝などの予約）' },
       { key: 'staff:first_login',   label: '入社した人が初めてログインしたとき' },
+      // 2026-10-17：手続きの必須がすべて済んだとき（1つの手続きに1回だけ・ベルだけ）
+      { key: 'hire:checklist_done',   label: '入社の手続きがすべて済んだとき（ベルだけ）', to: '→ 最後に済みにした人には届きません' },
+      { key: 'retire:checklist_done', label: '退職の手続きがすべて済んだとき（ベルだけ）', to: '→ 最後に済みにした人には届きません' },
     ],
   },
   {
@@ -218,6 +221,8 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'hire:registered':          '設定した役職',
   'hire:remind':              '設定した役職',
   'staff:hired':              '設定した役職',
+  'hire:checklist_done':      '設定した役職',
+  'retire:checklist_done':    '設定した役職',
   'staff:invite_failed':      '設定した役職',
   'staff:first_login':        '設定した役職',
   'attendance:cancelled':     '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
@@ -321,7 +326,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_adjust:comment', 'shift_roster:saved', 'hire:registered', 'hire:remind', 'staff:hired', 'staff:invite_failed', 'staff:first_login'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_adjust:comment', 'shift_roster:saved', 'hire:registered', 'hire:remind', 'staff:hired', 'staff:invite_failed', 'staff:first_login', 'hire:checklist_done', 'retire:checklist_done'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
 const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 

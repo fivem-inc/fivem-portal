@@ -14,13 +14,17 @@ import { loadPendingPeople, type ChecklistKind } from '../lib/staffChecklist';
 interface Props {
   isDark: boolean;
   isAdmin: boolean;
+  /** 項目を編集できるか（2026-10-17：マネージャー以上と管理者。省略＝isAdmin） */
+  canEditItems?: boolean;
   /** /retire のときだけ true（URL の ?kind= と合わせる） */
   syncUrl?: boolean;
 }
 
-const StaffChecklistTabs: React.FC<Props> = ({ isDark, isAdmin, syncUrl = false }) => {
+const StaffChecklistTabs: React.FC<Props> = ({ isDark, isAdmin, canEditItems, syncUrl = false }) => {
   const [params, setParams] = useSearchParams();
   const fromUrl = params.get('kind');
+  // 完了のお知らせから来たとき、その方を光らせる（?person=）。/retire のときだけ
+  const focusPerson = syncUrl ? params.get('person') : null;
   const [kind, setKind] = useState<ChecklistKind>(
     syncUrl && (fromUrl === 'hire' || fromUrl === 'retire') ? fromUrl : 'hire');
   const [counts, setCounts] = useState<Record<ChecklistKind, number | null>>({ hire: null, retire: null });
@@ -64,7 +68,8 @@ const StaffChecklistTabs: React.FC<Props> = ({ isDark, isAdmin, syncUrl = false 
           }
         }}
       />
-      <RetireChecklistPanel key={kind} kind={kind} isDark={isDark} isAdmin={isAdmin} />
+      <RetireChecklistPanel key={kind} kind={kind} isDark={isDark} isAdmin={isAdmin} canEditItems={canEditItems ?? isAdmin}
+        focusPersonId={focusPerson && fromUrl === kind ? focusPerson : null} />
     </div>
   );
 };

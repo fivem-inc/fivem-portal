@@ -3,7 +3,10 @@
 //    退職だけのもの（付け替えた申請・購入申請の承認者・切り替えの失敗）は kind='retire' のときだけ出す
 //
 // 🚨 この部品1つを「管理画面のタブ」と「/retire（マネージャー以上・スマホ可）」の両方が使う（2か所に書かない）
-// 🚨 見る・済みにする＝マネージャー以上＋管理者（RLS も is_manager_plus()）。項目の編集は管理者だけ
+// 🚨 見る・済みにする＝マネージャー以上＋管理者（RLS も is_manager_plus()）。
+//    項目の編集＝マネージャー以上＋管理者（2026-10-17・削除は管理者だけ・入社の自動の項目の仕組みは管理者だけ。RLS とトリガーも同じ）
+// 🚨 必須の項目が増える・減る操作（必須の切り替え・隠す／戻す・追加）は、押す前に「誰の残りがどう変わるか」を出して確かめる。
+//    全部済むと DB のトリガー（staff_checklist_done_check）が「完了しました」のベルを出すため
 // 🚨 行がある＝済み。退職日を取り消すと DB（retire_cancel）が消す／アカウントを削除すると一緒に消える
 // 🚨 更新・削除は 0件でもエラーにならないので、件数を見る
 // 🚨 メモは**別の表**（retire_notes・2026-09-22）。チェックの記録に混ぜると
@@ -21,6 +24,8 @@ interface Item {
   id: string; label: string; required: boolean; sort_order: number; active: boolean;
   /** 入社だけ：自動で済みになる項目（first_login＝初めてのログイン）。退職の項目には無い */
   auto_key?: string | null;
+  /** 最終変更（2026-10-17・DB のトリガーが入れる） */
+  updated_by?: string | null; updated_at?: string | null;
 }
 interface Person {
   id: string; name: string | null; is_active: boolean | null; approval_status: string | null;
@@ -52,13 +57,18 @@ interface Note {
 
 interface Props {
   isDark: boolean;
-  /** 管理者なら項目の編集ができる */
+  /** 管理者なら項目の削除ができる */
   isAdmin: boolean;
+  /** 項目の編集ができる（マネージャー以上と管理者・2026-10-17）。省略＝isAdmin */
+  canEditItems?: boolean;
+  /** 完了のお知らせから来たとき、その方を出して光らせる */
+  focusPersonId?: string | null;
   /** 入社か退職か（既定は退職＝今までどおり） */
   kind?: ChecklistKind;
 }
 
-const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire' }) => {
+const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, canEditItems, focusPersonId = null, kind = 'retire' }) => {
+  const canEdit = canEditItems ?? isAdmin;
   const isHire = kind === 'hire';
   const T = CHECKLIST[kind];
   const text = isDark ? '#f8f9fa' : '#212529';
@@ -95,7 +105,12 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
   const [loadErr, setLoadErr] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [rowErr, setRowErr] = useState<Record<string, string>>({});
-  const [showDone, setShowDone] = useState(false);
+  // 完了のお知らせから来たときは、済んだ方も出す（その方が隠れないように）
+  const [showDone, setShowDone] = useState(!!focusPersonId);
+  const [flashId, setFlashId] = useState<string | null>(focusPersonId);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // 必須が増える・減る操作の確かめ（itemId＝'new' は追加）
+  const [pending, setPending] = useState<{ itemId: string; patch: Partial<Item>; message: string } | null>(null);
   // 項目の編集（管理者）
   const [editItems, setEditItems] = useState(false);
   const [newLabel, setNewLabel] = useState('');
@@ -111,7 +126,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
     const [it, pp] = await Promise.all([
-      supabase.from(T.items).select(isHire ? 'id, label, required, sort_order, active, choices, auto_key' : 'id, label, required, sort_order, active, choices').order('sort_order'),
+      supabase.from(T.items).select(isHire ? 'id, label, required, sort_order, active, choices, auto_key, updated_by, updated_at' : 'id, label, required, sort_order, active, choices, updated_by, updated_at').order('sort_order'),
       peopleQuery(kind, isHire
         ? 'id, name, is_active, approval_status, retire_date, retiree_access_until, hire_date'
         : 'id, name, is_active, approval_status, retire_date, retiree_access_until'),
@@ -200,20 +215,47 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
     await load();
   };
 
-  // ── 項目の編集（管理者）──
-  const addItem = async () => {
-    const label = newLabel.trim();
-    if (!label) { setItemErr('項目の名前を入れてください'); return; }
+  // ── 項目の編集（マネージャー以上と管理者）──
+  // 必須として効いている（使っていて必須）かが変わると、手続き中の方の残りが変わる。その影響の文（変わらなければ null）
+  const impactMessage = (it: Item | null, after: { required: boolean; active: boolean }): string | null => {
+    const before = it ? it.active && it.required : false;
+    const aft = after.active && after.required;
+    if (before === aft) return null;
+    const lacking = people.filter(p => !it || !checkOf(p.id, it.id));
+    if (lacking.length === 0) return null;
+    if (aft) {
+      const doneNow = lacking.filter(p => remainingOf(p.id) === 0).length;
+      return `必須にすると、${lacking.length}人の残りが1件ずつ増えます${doneNow > 0 ? `（すべて済んでいた${doneNow}人も、残りに戻ります）` : ''}。`;
+    }
+    const completers = lacking.filter(p => remainingOf(p.id) === 1);
+    return completers.length > 0
+      ? `${completers.map(p => `${p.name ?? ''}さん`).join('・')}の手続きがすべて完了になり、お知らせが届きます。`
+      : `${lacking.length}人の残りが1件ずつ減ります。`;
+  };
+  const doAddItem = async (label: string) => {
     const maxOrder = items.reduce((m, i) => Math.max(m, i.sort_order), 0);
     const { error } = await supabase.from(T.items).insert({ label, required: true, sort_order: maxOrder + 10 });
     if (error) { setItemErr('追加できませんでした：' + error.message); return; }
-    setNewLabel(''); setItemErr('');
+    setNewLabel(''); setItemErr(''); setPending(null);
     await load();
+  };
+  const addItem = () => {
+    const label = newLabel.trim();
+    if (!label) { setItemErr('項目の名前を入れてください'); return; }
+    const msg = impactMessage(null, { required: true, active: true });
+    if (msg) { setPending({ itemId: 'new', patch: { label }, message: msg }); return; }
+    void doAddItem(label);
+  };
+  // 必須の切り替え・隠す／戻す。影響があるときだけ、その場で確かめてから保存する
+  const requestChange = (it: Item, patch: Partial<Item>) => {
+    const msg = impactMessage(it, { required: patch.required ?? it.required, active: patch.active ?? it.active });
+    if (msg) { setItemErr(''); setPending({ itemId: it.id, patch, message: msg }); return; }
+    void updateItem(it.id, patch);
   };
   const updateItem = async (id: string, patch: Partial<Item>) => {
     const { data, error } = await supabase.from(T.items).update(patch).eq('id', id).select('id');
     if (error || !data || data.length === 0) { setItemErr('保存できませんでした' + (error ? '：' + error.message : '')); return; }
-    setItemErr('');
+    setItemErr(''); setPending(null);
     await load();
   };
   // ── メモ ──
@@ -323,6 +365,20 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
     );
   };
 
+  // 完了のお知らせから来たとき：その方の枠まで動かして、しばらく光らせる
+  useEffect(() => {
+    if (!focusPersonId || loading) return;
+    cardRefs.current[focusPersonId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => setFlashId(null), 6000);
+    return () => clearTimeout(t);
+  }, [focusPersonId, loading]);
+
+  // 最終変更（いちばん新しく直された項目）
+  const lastEdit = items.reduce<Item | null>((m, i) => (i.updated_at && (!m || (m.updated_at ?? '') < i.updated_at) ? i : m), null);
+  const lastEditText = lastEdit?.updated_at
+    ? `最終変更：${lastEdit.updated_by ? (names[lastEdit.updated_by] || '（不明）') : '（不明）'} ${mdLabel(toJstDateStr(new Date(lastEdit.updated_at)))} ${new Date(lastEdit.updated_at).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' })}`
+    : '';
+
   if (loading && people.length === 0 && items.length === 0) {
     return <p style={{ color: subText, fontSize: 13 }}>読み込み中…</p>;
   }
@@ -348,16 +404,17 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />
           すべて済んだ方も表示（{doneCount}人）
         </label>
-        {isAdmin && (
+        {canEdit && (
           <button style={{ ...btn(false), marginLeft: 'auto' }} onClick={() => setEditItems(v => !v)}>
             {editItems ? '項目の編集を閉じる' : '項目を編集する'}
           </button>
         )}
       </div>
 
-      {isAdmin && editItems && (
+      {canEdit && editItems && (
         <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: 12, marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 8 }}>チェック項目（管理者のみ編集できます）</div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 2 }}>チェック項目（マネージャー以上と管理者が編集できます）</div>
+          {lastEditText && <div style={{ fontSize: 11.5, color: subText, marginBottom: 8 }}>{lastEditText}</div>}
           {items.map((it, idx) => (
             <div key={it.id} style={{ borderBottom: `1px solid ${border}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0', opacity: it.active ? 1 : 0.5, flexWrap: 'wrap' }}>
@@ -379,16 +436,26 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
                   <span style={{ flex: 1, minWidth: 160, fontSize: 13 }}>{it.label}</span>
                   <button style={btn(false)} onClick={() => { setItemErr(''); setEditingLabelId(it.id); setEditingLabelText(it.label); }}>修正</button>
                   <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <input type="checkbox" checked={it.required} onChange={e => updateItem(it.id, { required: e.target.checked })} />必須
+                    <input type="checkbox" checked={it.required} onChange={e => requestChange(it, { required: e.target.checked })} />必須
                   </label>
                   <button style={btn(false)} disabled={idx === 0} onClick={() => moveItem(idx, -1)}>↑</button>
                   <button style={btn(false)} disabled={idx === items.length - 1} onClick={() => moveItem(idx, 1)}>↓</button>
-                  <button style={btn(false)} onClick={() => updateItem(it.id, { active: !it.active })}>{it.active ? '隠す' : '戻す'}</button>
-                  <button style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }}
-                    onClick={() => { setItemErr(''); setEditingLabelId(null); setDeleteItemId(it.id); }}>削除</button>
+                  <button style={btn(false)} onClick={() => requestChange(it, { active: !it.active })}>{it.active ? '隠す' : '戻す'}</button>
+                  {/* 削除は管理者だけ（RLS も is_admin()）。押し間違えないよう離して右端に */}
+                  {isAdmin && (
+                    <button style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545', marginLeft: 'auto' }}
+                      onClick={() => { setItemErr(''); setEditingLabelId(null); setDeleteItemId(it.id); }}>削除</button>
+                  )}
                 </>
               )}
             </div>
+            {pending && pending.itemId === it.id && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 0 8px', fontSize: 12.5 }}>
+                <span>{pending.message}よろしいですか？</span>
+                <button type="button" style={btn(false)} onClick={() => setPending(null)}>やめる</button>
+                <button type="button" style={btn(true)} onClick={() => updateItem(it.id, pending.patch)}>変更する</button>
+              </div>
+            )}
             {/* 削除の確認。🚨 記録が何件あるかを先に出す（消えないことも書く） */}
             {deleteItemId === it.id && (() => {
               const used = checks.filter(c => c.item_id === it.id).length;
@@ -413,6 +480,13 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
               style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 13 }} />
             <button style={btn(true)} onClick={addItem}>追加</button>
           </div>
+          {pending && pending.itemId === 'new' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6, fontSize: 12.5 }}>
+              <span>「{pending.patch.label}」を必須で追加します。{pending.message}よろしいですか？</span>
+              <button type="button" style={btn(false)} onClick={() => setPending(null)}>やめる</button>
+              <button type="button" style={btn(true)} onClick={() => doAddItem(pending.patch.label ?? '')}>追加する</button>
+            </div>
+          )}
           {itemErr && <div style={{ color: '#dc3545', fontSize: 12, marginTop: 6 }}>{itemErr}</div>}
           <div style={{ fontSize: 11.5, color: subText, marginTop: 6 }}>※［隠す］は一覧に出さないだけです。もう使わない項目は［削除］してください</div>
         </div>
@@ -434,7 +508,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin, kind = 'retire
         const hd = dateOf(p);
         const daysLeft = isHire && hd ? Math.round((Date.parse(hd) - Date.parse(today)) / 86400000) : null;
         return (
-          <div key={p.id} style={{ background: cardBg, border: `1px solid ${remaining > 0 ? '#f59e0b' : border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
+          <div key={p.id} ref={el => { cardRefs.current[p.id] = el; }}
+            style={{ background: flashId === p.id ? (isDark ? '#1e3a5f' : '#e3f2fd') : cardBg, border: flashId === p.id ? '2px solid #1976d2' : `1px solid ${remaining > 0 ? '#f59e0b' : border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 12, transition: 'background 0.6s' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
               <span style={{ fontSize: 15, fontWeight: 'bold' }}>{p.name}さん</span>
               <span style={{ fontSize: 12, color: subText }}>

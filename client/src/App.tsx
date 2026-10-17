@@ -962,6 +962,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   // 「⚙️ 管理」を出すか：管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき（hooks/useAdminAccess.ts）
   const navRoles = useRoles();
   const adminAccess = useAdminAccess({ isAdmin, isManagerPlus: isAdmin || attrsFor(navRoles, roleTitle).is_manager_plus });
+  // 「📋 手続き」（入社・退職の手続き /retire）を出すか（2026-10-17）。マネージャー以上と管理者。
+  // 🚨 全部済むとホームの案内もベルも出ないので、いつでも開ける入口として置く。赤い数字は付けない（押して消せない赤は付けない決まり）
+  const canProcedures = !isRetiree && (isAdmin || attrsFor(navRoles, roleTitle).is_manager_plus);
   const { count: overtimeUnreported } = useOvertimeUnreportedCount(userId, canOvertime);
   // 🚨 自分あての「申請の依頼」も数に入れる（2026-09-20）。
   //    ベルとプッシュしか無く、9日間気づかれなかった実例があるため。
@@ -1039,7 +1042,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する。
     // 各バッジの件数が増減したときも隠れている合計を数え直す
   }, [updateScrollFade, isMobile, featurePublishState, isAdmin, canLeave, canShiftReport, canCalendar,
-      leavePending, shiftPending, overtimeBadge, purchaseNavBadge, boardUnread]);
+      leavePending, shiftPending, overtimeBadge, purchaseNavBadge, boardUnread, canProcedures]);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -1178,6 +1181,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               </span>
             )}
           </div>
+          )}
+          {canProcedures && (
+            <button onClick={() => navTo('/retire')} style={btnStyle(location.pathname === '/retire', '#6c757d')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>📋</span>{navLabel('手続き')}</> : '📋 手続き'}
+            </button>
           )}
           {/* FAQ（よくある質問）。表示は管理画面「権限管理」の FAQ：ナビにも出す で切り替える。
               毎日使うものではないので並びは最後にする */}
@@ -1369,6 +1377,11 @@ const classifyNotif = (n: NotifLike) => {
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
     // 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19）。済むまで残す
     if (n.source_type === 'retire:checklist') return { path: '/retire?kind=retire', closeOnTap: false };
+    // 手続きがすべて済んだ（2026-10-17・ベルだけ）。その方を（済んだ方が隠れていても）出して光らせる
+    if (n.source_type === 'hire:checklist_done' || n.source_type === 'retire:checklist_done') {
+      const k = n.source_type.startsWith('hire') ? 'hire' : 'retire';
+      return { path: n.reference_id ? `/retire?kind=${k}&person=${n.reference_id}` : `/retire?kind=${k}`, closeOnTap: true };
+    }
     // 入社の準備（2026-10-06）：登録したとき・◯日前・今日入社。入社のチェック表へ。済むまで残す
     if (n.source_type === 'hire:registered' || n.source_type === 'hire:remind' || n.source_type === 'staff:hired') return { path: '/retire?kind=hire', closeOnTap: false };
     // シフト・入社予定のスタッフ（2026-10-05）。勤務表はシフト管理、入社予定はユーザー管理へ
@@ -2630,7 +2643,7 @@ const RetirePage: React.FC = () => {
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <h2 style={{ fontSize: 18, margin: '0 0 12px', color: isDarkMode ? '#fff' : '#212529' }}>📋 入社・退職の手続き</h2>
       <Suspense fallback={<PageLoader />}>
-        <StaffChecklistTabs isDark={isDarkMode} isAdmin={isAdmin} syncUrl />
+        <StaffChecklistTabs isDark={isDarkMode} isAdmin={isAdmin} canEditItems={isAdmin || isManagerPlus} syncUrl />
       </Suspense>
     </div>
   );
