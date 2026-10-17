@@ -7,6 +7,7 @@ import PushQuietHoursSection from '../components/PushQuietHoursSection';
 export default function NotificationSettings() {
   const navigate = useNavigate();
   const isDark = useDarkMode();
+  const [quietOpen, setQuietOpen] = useState(true);
 
   const bg   = isDark ? '#1e1e2e' : '#f8f9fa';
   const card = isDark ? '#2c2c3e' : '#ffffff';
@@ -86,7 +87,12 @@ export default function NotificationSettings() {
         )}
 
         {/* プッシュ通知の受信時間（許可済みの人にだけ表示される） */}
-        <PushQuietHoursSection />
+        {/* 2026-10-17：行の形（components/SettingsRow）になったので、このページでは枠に入れて初めから開いておく */}
+        {pushStatus === 'granted' && (
+        <div style={{ background: card, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginTop: 12 }}>
+          <PushQuietHoursSection colors={{ text, sub, border, card }} open={quietOpen} onToggle={() => setQuietOpen(v => !v)} />
+        </div>
+        )}
 
         <button
           onClick={() => navigate(-1)}

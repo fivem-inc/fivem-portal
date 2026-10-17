@@ -4,6 +4,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { supabase } from '../lib/supabaseClient';
 import { getPushPermissionStatus } from '../utils/pushNotification';
 import { normalizeTime } from '../lib/timeInput';
+import { SettingsRow, type SettingsColors } from './SettingsRow';
 import TimeInput from './TimeInput';
 
 // プッシュ通知の受信時間帯・休暇日ミュートの本人設定カード。
@@ -12,11 +13,11 @@ import TimeInput from './TimeInput';
 // 🚨 権限判定・表示条件はこの部品の中で完結させる（propsで配ると渡し忘れ事故になる前例あり）。
 //    プッシュを許可している人（granted）にだけ表示する＝許可した瞬間、プッシュ通知カードの
 //    真下にこのカードが現れる（未購読の人に「効かない設定」を見せない）。
-export default function PushQuietHoursSection() {
+// 2026-10-17：「設定」の行の形（components/SettingsRow）にした。ふだんは1行（今の設定を右に）・押すと開く
+export default function PushQuietHoursSection({ colors, open, onToggle }: { colors: SettingsColors; open: boolean; onToggle: () => void }) {
   const { user } = useAuth();
   const isDark = useDarkMode();
 
-  const card = isDark ? '#2c2c3e' : '#ffffff';
   const text = isDark ? '#fff' : '#1a1a2e';
   const sub = isDark ? '#adb5bd' : '#6c757d';
 
@@ -100,15 +101,11 @@ export default function PushQuietHoursSection() {
       : '';
 
 
+  // 行の右に出す今の設定（保存済みの値ではなく、いま画面に入っている値）
+  const summary = loading ? '' : quietEnabled && !timeInvalid ? `${disp(receiveStart)}〜${disp(receiveEnd)}` : muteOnLeave ? '休暇日は止める' : '決めていない';
+
   return (
-    <div style={{ background: card, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginTop: 12, padding: '16px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
-        <span style={{ fontSize: 22, width: 32, textAlign: 'center' }}>🕐</span>
-        <div style={{ flex: 1 }}>
-          <p style={{ margin: '0 0 2px', fontSize: 15, fontWeight: 600, color: text }}>通知の受信時間</p>
-          <p style={{ margin: 0, fontSize: 12, color: sub }}>夜間や休みの日にプッシュ通知を鳴らさない設定です</p>
-        </div>
-      </div>
+    <SettingsRow icon="🕐" title="通知の受信時間" sub="夜間や休みの日は鳴らさない" value={summary} colors={colors} open={open} onToggle={onToggle}>
 
       {loading ? (
         <p style={{ margin: 0, fontSize: 13, color: sub }}>読み込み中...</p>
@@ -185,6 +182,6 @@ export default function PushQuietHoursSection() {
           )}
         </>
       )}
-    </div>
+    </SettingsRow>
   );
 }

@@ -58,6 +58,7 @@ import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePubli
 import { useRoles } from './hooks/useRoles';
 import { buildNavItems, navItemsSignature, applyNavOrder, navRolloutOn } from './lib/navItems';
 import { useMyNavOrder } from './hooks/useMyNavOrder';
+import { NAV_ROW2_HEIGHT, setNavExtraTop, useNavExtraTop } from './lib/navLayout';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
 import { TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
@@ -933,8 +934,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     navigate(path);
   };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  const [navW, setNavW] = useState(window.innerWidth);
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 640);
+    const check = () => { setIsMobile(window.innerWidth < 640); setNavW(window.innerWidth); };
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
@@ -997,6 +999,70 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const reorderOn = !isRetiree && navRolloutOn(featurePublishState.navRollout.reorder, userId, myRoleId, !!previewRole);
   const shownNavItems = reorderOn ? applyNavOrder(navItems, (!previewRole && myNavOrder) || featurePublishState.navOrder) : navItems;
   const navSig = navItemsSignature(shownNavItems);
+
+  // ── スマホの2段（2026-10-17・2c）────────────────────────
+  // 🚨 管理画面の切り替え（nav_rollout.two_row）が効いている人・スマホ・連絡板以外のページだけ。オフの人は今までどおり1段
+  //    連絡板は画面の中の箱だけが動く作りなので、初めから1段（ユーザー確定）
+  // 🚨 ページの上では2段（全部見える）・下へスクロールしたら1段に縮む・上へ少し戻すか上に着いたら2段。
+  //    ボタンは1つ 44px・間 4px と決まっているので、1段目（右のベル・丸の左）に入る数は幅から計算する。入りきらない分は2段目を横に流す（3段にはしない）
+  const rightRef = useRef<HTMLDivElement>(null);
+  const [rightW, setRightW] = useState(90);
+  // 右のベル・丸（と管理者の「確認」）の幅。変わったら測り直す
+  useEffect(() => {
+    const el = rightRef.current;
+    if (!el) return;
+    setRightW(el.offsetWidth || 90);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setRightW(el.offsetWidth || 90));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const twoRowRule = navRolloutOn(featurePublishState.navRollout.two_row, userId, myRoleId, !!previewRole);
+  const row1Count = Math.max(1, Math.floor((navW - 24 - rightW - 8 + 4) / 48));
+  const twoRowActive = isMobile && !isRetiree && twoRowRule && location.pathname !== '/board' && shownNavItems.length > row1Count;
+  const [collapsed, setCollapsed] = useState(() => window.scrollY > 48);
+  useEffect(() => {
+    if (!twoRowActive) return;
+    let lastY = window.scrollY; let acc = 0; let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const y = window.scrollY;
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        // iPhone の引っぱり（上の端より上・下の端より下）は数えない
+        if (y < 0 || y > max) { lastY = Math.min(Math.max(y, 0), Math.max(max, 0)); return; }
+        const dy = y - lastY; lastY = y;
+        // 入力中は動かさない（キーボードが出ると勝手にスクロールするため）
+        const ae = document.activeElement;
+        if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
+        if (y < 8) { acc = 0; setCollapsed(false); return; }
+        if (dy > 0) { acc = acc > 0 ? acc + dy : dy; if (y > 48 && acc >= 8) setCollapsed(true); }
+        else if (dy < 0) { acc = acc < 0 ? acc + dy : dy; if (acc <= -24) setCollapsed(false); }
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [twoRowActive]);
+  const twoRowExpanded = twoRowActive && !collapsed;
+  // 2段の人は、縮んでいても2段目の高さぶんの余白を取ったまま（中身が動かない）。書くのは PreviewBodyOffset
+  useEffect(() => {
+    setNavExtraTop(twoRowActive ? NAV_ROW2_HEIGHT : 0);
+    return () => setNavExtraTop(0);
+  }, [twoRowActive]);
+  const row1Items = twoRowExpanded ? shownNavItems.slice(0, row1Count) : [];
+  const scrollItems = twoRowExpanded ? shownNavItems.slice(row1Count) : shownNavItems;
+  // 1段のとき（縮んだとき・ページを開いたとき）、今いるページのボタンを見える位置に出す
+  const activeNavKey = shownNavItems.find(i => i.path === location.pathname)?.key ?? '';
+  useEffect(() => {
+    if (!isMobile || !activeNavKey) return;
+    const el = navScrollRef.current;
+    const btn = el?.querySelector<HTMLElement>(`[data-nav-key="${activeNavKey}"]`);
+    if (!el || !btn) return;
+    const c = el.getBoundingClientRect(); const r = btn.getBoundingClientRect();
+    if (r.left < c.left) el.scrollLeft -= c.left - r.left + 8;
+    else if (r.right > c.right) el.scrollLeft += r.right - c.right + 8;
+  }, [isMobile, twoRowExpanded, activeNavKey, navSig]);
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -1062,7 +1128,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     return () => window.removeEventListener('resize', updateScrollFade);
     // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する。
     // 各バッジの件数が増減したときも隠れている合計を数え直す
-  }, [updateScrollFade, isMobile, navSig]);
+  }, [updateScrollFade, isMobile, navSig, twoRowExpanded, row1Count]);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -1079,6 +1145,65 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     <span style={{ fontSize: t.length >= 5 ? 8 : 9, whiteSpace: 'nowrap' as const, lineHeight: 1 }}>{t}</span>
   );
 
+  // ボタン1つ（数字のあるボタンだけ、数字の枠 data-nav-badge で包む）。🚨 2段でも1段でも同じボタンを1回だけ描く
+  const renderNavItem = (item: typeof shownNavItems[number]) => {
+    const button = (
+      <button key={item.key} data-nav-key={item.key} onClick={() => navTo(item.path)} style={btnStyle(location.pathname === item.path, item.activeColor)}>
+        {isMobile ? <><span style={{ fontSize: 20 }}>{item.icon}</span>{navLabel(item.mobileLabel)}</> : `${item.icon} ${item.label}`}
+      </button>
+    );
+    if (item.badge === undefined) return button;
+    return (
+      <div key={item.key} data-nav-badge={item.badge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+        {button}
+        {item.badge > 0 && (
+          <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+            {item.badge > 99 ? '99+' : item.badge}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  // 横に流す箱（ふだんの1段・2段のときの2段目）。🚨 箱は1つ（ref・端の印・隠れた数字はこの箱だけを見る）
+  const scrollBox = (
+          <div style={{ position: 'relative', flex: 1, minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>
+          <div
+            ref={navScrollRef}
+            onScroll={updateScrollFade}
+            className={isMobile ? 'navbar-scroll' : undefined}
+            style={{
+              display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center',
+              flex: 1, minWidth: 0, overflowX: isMobile ? 'auto' : 'visible',
+              scrollbarWidth: 'none', padding: isMobile ? '6px 4px' : 0, boxSizing: 'border-box',
+            }}
+          >
+            {/* ボタンは lib/navItems.ts の表の順に描く（2026-10-17）。2段のときは1段目に入らなかった分だけ */}
+            {scrollItems.map(renderNavItem)}
+          </div>
+          {isMobile && canScrollLeft && (
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to right, #1a1a2e, transparent)', pointerEvents: 'none' }} />
+          )}
+          {isMobile && canScrollRight && (
+            <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to left, #1a1a2e, transparent)', pointerEvents: 'none' }} />
+          )}
+          {/* 画面の外に隠れている未対応の件数。押すとその手前のボタンまで動く。
+              0件のときは出さない（普段の見た目は今までと変わらない） */}
+          {isMobile && hiddenLeftBadge > 0 && (
+            <button type="button" onClick={() => scrollToHiddenBadge('left')} title="左に未対応があります"
+              style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 2, background: '#dc3545', color: '#fff', border: '2px solid #1a1a2e', borderRadius: 12, fontSize: 11, fontWeight: 'bold', padding: '2px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, lineHeight: 1.4 }}>
+              <span style={{ fontSize: 13 }}>‹</span>{hiddenLeftBadge > 99 ? '99+' : hiddenLeftBadge}
+            </button>
+          )}
+          {isMobile && hiddenRightBadge > 0 && (
+            <button type="button" onClick={() => scrollToHiddenBadge('right')} title="右に未対応があります"
+              style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 2, background: '#dc3545', color: '#fff', border: '2px solid #1a1a2e', borderRadius: 12, fontSize: 11, fontWeight: 'bold', padding: '2px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, lineHeight: 1.4 }}>
+              {hiddenRightBadge > 99 ? '99+' : hiddenRightBadge}<span style={{ fontSize: 13 }}>›</span>
+            </button>
+          )}
+          </div>
+  );
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 300,
@@ -1091,59 +1216,10 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         justifyContent: 'space-between', alignItems: 'center',
         overflow: 'hidden', boxSizing: 'border-box',
       }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>
-        <div
-          ref={navScrollRef}
-          onScroll={updateScrollFade}
-          className={isMobile ? 'navbar-scroll' : undefined}
-          style={{
-            display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center',
-            flex: 1, minWidth: 0, overflowX: isMobile ? 'auto' : 'visible',
-            scrollbarWidth: 'none', padding: isMobile ? '6px 4px' : 0, boxSizing: 'border-box',
-          }}
-        >
-          {/* ボタンは lib/navItems.ts の表の順に描く（2026-10-17）。数字のあるボタンだけ、数字の枠（data-nav-badge）で包む */}
-          {shownNavItems.map(item => {
-            const button = (
-              <button key={item.key} onClick={() => navTo(item.path)} style={btnStyle(location.pathname === item.path, item.activeColor)}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>{item.icon}</span>{navLabel(item.mobileLabel)}</> : `${item.icon} ${item.label}`}
-              </button>
-            );
-            if (item.badge === undefined) return button;
-            return (
-              <div key={item.key} data-nav-badge={item.badge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-                {button}
-                {item.badge > 0 && (
-                  <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                    {item.badge > 99 ? '99+' : item.badge}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        {isMobile && canScrollLeft && (
-          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to right, #1a1a2e, transparent)', pointerEvents: 'none' }} />
-        )}
-        {isMobile && canScrollRight && (
-          <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to left, #1a1a2e, transparent)', pointerEvents: 'none' }} />
-        )}
-        {/* 画面の外に隠れている未対応の件数。押すとその手前のボタンまで動く。
-            0件のときは出さない（普段の見た目は今までと変わらない） */}
-        {isMobile && hiddenLeftBadge > 0 && (
-          <button type="button" onClick={() => scrollToHiddenBadge('left')} title="左に未対応があります"
-            style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 2, background: '#dc3545', color: '#fff', border: '2px solid #1a1a2e', borderRadius: 12, fontSize: 11, fontWeight: 'bold', padding: '2px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, lineHeight: 1.4 }}>
-            <span style={{ fontSize: 13 }}>‹</span>{hiddenLeftBadge > 99 ? '99+' : hiddenLeftBadge}
-          </button>
-        )}
-        {isMobile && hiddenRightBadge > 0 && (
-          <button type="button" onClick={() => scrollToHiddenBadge('right')} title="右に未対応があります"
-            style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 2, background: '#dc3545', color: '#fff', border: '2px solid #1a1a2e', borderRadius: 12, fontSize: 11, fontWeight: 'bold', padding: '2px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, lineHeight: 1.4 }}>
-            {hiddenRightBadge > 99 ? '99+' : hiddenRightBadge}<span style={{ fontSize: 13 }}>›</span>
-          </button>
-        )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
+        {twoRowExpanded ? (
+          <div style={{ display: 'flex', gap: 4, flex: 1, minWidth: 0, alignItems: 'center', padding: '0 4px' }}>{row1Items.map(renderNavItem)}</div>
+        ) : scrollBox}
+        <div ref={rightRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
           {realIsAdmin && (
             <select
               value={previewRole || ''}
@@ -1176,6 +1252,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {userId && <AvatarMenu userId={userId} profileName={profileName} email={email} onLogout={onLogout} canFaq={canFaq} />}
         </div>
       </div>
+      {/* 2段目（2段のときだけ）。ベル・丸の下も全部使う */}
+      {twoRowExpanded && (
+        <div style={{ height: NAV_ROW2_HEIGHT, padding: '0 12px 4px', boxSizing: 'border-box', display: 'flex', alignItems: 'center' }}>
+          {scrollBox}
+        </div>
+      )}
       {/* プレビューバナー行（NavBar内に統合） */}
       {/* 🚨 退職者のプレビュー中は realIsAdmin が false になり、上の選び直す欄が消える。
           終わる手段はこのバナーの［× 終了］だけなので、必ず退職者のときも出すこと */}
@@ -1202,16 +1284,20 @@ const PreviewBodyOffset: React.FC = () => {
   //    （入れ忘れるとバナーが中身に重なる）
   const { previewRole, previewRetiree } = useContext(AuthContext);
   const showing = !!previewRole || previewRetiree;
+  // 🚨 スマホの2段（2026-10-17・2c）の2段目の分も、ここで足す（余白を書くのはここだけ・lib/navLayout）
+  const navExtra = useNavExtraTop();
   useEffect(() => {
-    const offset = showing ? '32px' : '0px';
-    const topbarHeight = showing ? '92px' : '60px';
-    document.body.style.paddingTop = offset;
-    document.documentElement.style.setProperty('--topbar-height', topbarHeight);
+    const extra = (showing ? 32 : 0) + navExtra;
+    document.body.style.paddingTop = `${extra}px`;
+    document.documentElement.style.setProperty('--topbar-height', `${60 + extra}px`);
+    // 自動で上へ戻す・その行まで動かす（scrollIntoView）ときに、ナビの下に隠れないように
+    document.documentElement.style.scrollPaddingTop = navExtra ? `${60 + extra}px` : '';
     return () => {
       document.body.style.paddingTop = '0px';
       document.documentElement.style.setProperty('--topbar-height', '60px');
+      document.documentElement.style.scrollPaddingTop = '';
     };
-  }, [showing]);
+  }, [showing, navExtra]);
   return null;
 };
 
