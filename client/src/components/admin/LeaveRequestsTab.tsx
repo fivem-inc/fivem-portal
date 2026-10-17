@@ -18,6 +18,7 @@ import { describeUpdate, describePartial } from '../../lib/statusUpdate';
 import CorrectionNotice from '../CorrectionNotice';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
+import { ApprovedByLines, type ApprovedLine } from './ApprovedByLines';
 import { ENC_PURPOSE_MARK, ENC_REASON_MARK, leavePurposeLabel } from '../../lib/encouragementDay';
 
 // 休暇の履歴行（leave_request_history）
@@ -524,6 +525,18 @@ const LeaveRequestsTab: React.FC = () => {
           // 人フィルター用の一覧（重複除去）
           const personOptions = [...new Map(leaveRequests.map(r => [r.user_id, r.profile?.name || r.user_id])).entries()]
             .sort((a,b) => (a[1] > b[1] ? 1 : -1));
+
+          // 誰が受理したか（2026-10-17 ユーザー確定・状況の札の下）。
+          // 🚨 1人目の受理の時刻は記録が無い（approved_at はあとの受理で上書きされる）ので名前だけ。2人目は approved2_at
+          const leaveApprovedLines = (req: AdminLeaveRequest): ApprovedLine[] => {
+            const lines: ApprovedLine[] = [];
+            const past1 = ['step2_pending', 'manager_approved', 'admin_approved', 'approved'].includes(req.status);
+            const past2 = ['manager_approved', 'admin_approved', 'approved'].includes(req.status);
+            const at2 = (req as unknown as { approved2_at?: string | null }).approved2_at ?? null;
+            if (past1 && req.approver?.name) lines.push({ label: '1人目', name: req.approver.name });
+            if (past2 && req.approver2?.name) lines.push({ label: '2人目', name: req.approver2.name, at: at2 });
+            return lines;
+          };
 
           const getStatusDisplay = (req: AdminLeaveRequest): { role: string; name: string; color: string } => {
             if (req.status === 'pending')          return { role: req.approver?.role_title ? `① ${req.approver.role_title}` : '①', name: req.approver?.name || '確認待ち', color: '#e67e22' };
@@ -1508,6 +1521,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 {st.role && <div style={{ fontSize: 9, opacity: 0.9, whiteSpace: 'nowrap' }}>{st.role}</div>}
                                 <div style={{ fontWeight: 'bold', fontSize: 11, whiteSpace: 'nowrap' }}>{st.name}</div>
                               </div>
+                              <ApprovedByLines lines={leaveApprovedLines(req)} color={isDarkMode ? '#adb5bd' : '#6c757d'} />
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
                               <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>

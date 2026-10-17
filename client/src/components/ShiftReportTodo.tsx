@@ -33,13 +33,16 @@ const ShiftReportTodo: React.FC<{
   onTargetChange?: (applicantId: string) => void;
   /** だれの予定を見るか（ページが持つ値・下のフォームの「対象スタッフ」と同じ） */
   targetId?: string;
-}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange, targetId: targetIdProp }) => {
+  /** 自分の予定を見られるか。🚨 正社員は false（自分の勤務変更は出さない・2026-10-17）。そのときは初め空で、パートの方を選ぶ */
+  allowSelf?: boolean;
+}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange, targetId: targetIdProp, allowSelf = true }) => {
   const [entries, setEntries] = useState<CalendarEntry[] | null>(null);
   const [showAll, setShowAll] = useState(false);
   const today = todayJstStr();
   // だれの予定を見るか（承認者だけ）。既定は自分
   const [innerTarget, setTargetId] = useState(userId);
-  const targetId = targetIdProp ?? innerTarget;
+  const rawTarget = targetIdProp ?? innerTarget;
+  const targetId = !allowSelf && rawTarget === userId ? '' : rawTarget;
   const [partList, setPartList] = useState<{ id: string; name: string }[]>([]);
   const [otherReported, setOtherReported] = useState<Set<string> | null>(null);
   useEffect(() => {
@@ -48,7 +51,7 @@ const ShiftReportTodo: React.FC<{
       .then(({ data, error }) => { if (!error) setPartList((data ?? []) as { id: string; name: string }[]); });
   }, [canPickOthers]);
   useEffect(() => {
-    if (targetId === userId) { setOtherReported(null); return; }
+    if (targetId === userId || !targetId) { setOtherReported(null); return; }
     let alive = true;
     supabase.from('shift_reports').select('work_date').eq('applicant_id', targetId).gte('work_date', todoFromDate(today))
       .then(({ data, error }) => {
@@ -60,6 +63,7 @@ const ShiftReportTodo: React.FC<{
   }, [targetId, userId, today, refreshKey]);
 
   useEffect(() => {
+    if (!targetId) { setEntries([]); return; }
     let alive = true;
     supabase.from('attendance_exceptions').select('date, type, location, work_segments, notes, planned_break_minutes')
       .eq('user_id', targetId).gte('date', todoFromDate(today)).lte('date', today)
@@ -80,7 +84,7 @@ const ShiftReportTodo: React.FC<{
       だれの予定を見るか{' '}
       <select value={targetId} onChange={e => { setTargetId(e.target.value); setShowAll(false); onTargetChange?.(e.target.value); }}
         style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#000' }}>
-        <option value={userId}>自分</option>
+        {allowSelf ? <option value={userId}>自分</option> : <option value="">選択してください</option>}
         {partList.filter(p => p.id !== userId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
     </div>
@@ -92,7 +96,8 @@ const ShiftReportTodo: React.FC<{
       <div style={{ border: `1px dashed ${isDark ? '#6b5a2a' : '#f5c26b'}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16, textAlign: 'left', fontSize: 13, color: isDark ? '#adb5bd' : '#666' }}>
         <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 4 }}>📋 未報告の勤務変更</div>
         {picker}
-        {targetId === userId ? '自分の予定はありません。パートの方を選ぶと、その人の画面と同じ一覧が見られます。' : 'この方の未報告の勤務変更はありません。'}
+        {!targetId ? 'パートの方を選ぶと、その人の画面と同じ一覧が見られます。'
+          : targetId === userId ? '自分の予定はありません。パートの方を選ぶと、その人の画面と同じ一覧が見られます。' : 'この方の未報告の勤務変更はありません。'}
       </div>
     );
   }

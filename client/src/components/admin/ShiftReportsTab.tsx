@@ -7,6 +7,7 @@ import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDif
 import { logFail } from '../../lib/logFail';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import CorrectionNotice from '../CorrectionNotice';
+import { ApprovedByLines } from './ApprovedByLines';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
@@ -698,6 +699,10 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 9, opacity: 0.9 }}>{r.reviewerName}</div>
                           <div style={{ fontWeight: 'bold', fontSize: 11, whiteSpace: 'nowrap' }}>{STATUS_INFO[r.status]?.label ?? r.status}</div>
                         </div>
+                        {/* 誰がいつ受理したか（2026-10-17・残業・休暇の一覧と同じ形） */}
+                        <ApprovedByLines color={sub} lines={r.status === 'confirmed' && r.confirmed_by
+                          ? [{ label: '受理', name: r.confirmed_by === r.applicant_id ? '自己受理（自分で確認）' : (r.confirmerName ?? '—'), at: r.confirmed_at }]
+                          : []} />
                       </td>
                       {/* 操作 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center' }}>

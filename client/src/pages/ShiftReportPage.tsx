@@ -24,7 +24,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
-import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import type { TodoItem } from '../lib/shiftReportTodo';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
@@ -80,6 +80,9 @@ interface ShiftReport {
   reviewer?: { name: string | null } | null;
 }
 interface Reviewer { id: string; name: string; role_title: string; }
+/** 正社員の上長に出す案内（2026-10-17 ユーザー確定 案1）。選択の下の枠と、送る前のチェックで同じ文 */
+const SELF_FULLTIME_MSG = '正社員の方の残業・早退・遅刻・欠勤は「🕐 残業申請」から申請してください。';
+
 interface Staff    { id: string; name: string; role_title: string; employment_type: string; }
 
 interface Props {
@@ -370,8 +373,11 @@ const ShiftReportForm: React.FC<{
   initialApplicantId?: string;
   /** 下の「対象スタッフ」を変えたとき（上の「だれの予定を見るか」も合わせるため） */
   onApplicantChange?: (id: string) => void;
+  /** 自分の分を出せるか。🚨 正社員は false（正社員の残業・早退などは残業申請・2026-10-17 ユーザー確定）。パートの方の代わりに出すことはできる */
+  allowSelf?: boolean;
   onClose: () => void; onSaved: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, initialApplicantId, onApplicantChange, onClose, onSaved }) => {
+}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, initialApplicantId, onApplicantChange, allowSelf = true, onClose, onSaved }) => {
+  const navigate = useNavigate();
   // 代理報告＝承認者（役職名では判定しない）。🚨 Hook は || の右に置かない（条件付き呼び出しになる）
   const rolesForProxy = useRoles();
   const canProxy = isAdmin || attrsFor(rolesForProxy, roleTitle).is_approver;
@@ -572,6 +578,11 @@ const ShiftReportForm: React.FC<{
     }
   }, [absencePrompt]);
 
+  // 🚨 正社員は自分を選べない。初めに入っていた「自分」（既定・下書き・上の「だれの予定を見るか」）は空に戻す。直すとき（editTarget）はそのまま
+  useEffect(() => {
+    if (!allowSelf && !editTarget && applicantId === user.id) setApplicantId('');
+  }, [allowSelf, editTarget, applicantId, user.id]);
+
   useEffect(() => {
     if (!canProxy) return;
     // 代行対象はパート・アルバイトのみ（employment_type='パート'）
@@ -586,6 +597,8 @@ const ShiftReportForm: React.FC<{
   const validate = (): { msg: string; field?: string } => {
     // 予定を持つ状態のときだけ、予定の入力を必須にする（noPlan と必ず対で判断する）
     const noShift = !noPlan;
+    if (!applicantId)   return { msg: '対象スタッフを選択してください', field: 'applicant' };
+    if (!allowSelf && !editTarget && applicantId === user.id) return { msg: SELF_FULLTIME_MSG, field: 'applicant' };
     if (!date)          return { msg: '日付を選択してください', field: 'date' };
     // 🚨 先の日付の上限（2026-09-09 ユーザー確定）。日付選びでも押せなくしているが、
     //    下書きの復元や作り直しで上限を越えた日が残ることがあるので送信前にも必ず弾く
@@ -771,15 +784,25 @@ const ShiftReportForm: React.FC<{
             )}
             {/* 代行選択 */}
             {canProxy && (
-              <div style={{ marginBottom: 14 }}>
-                <label style={L}>対象スタッフ</label>
+              <div style={{ marginBottom: 14 }} data-err-field="applicant">
+                <label style={{ ...L, color: errorLabelColor(errFields.has('applicant'), subColor) }}>対象スタッフ{!allowSelf && <> {Req}</>}</label>
                 {/* 🚨 カレンダーの予定から入れているあいだは変えられない（上の「だれの予定を見るか」と食い違わないように・2026-10-05） */}
-                <select value={applicantId} onChange={e => { setApplicantId(e.target.value); onApplicantChange?.(e.target.value); }} disabled={!!prefill} style={{ ...f, ...(prefill ? { opacity: 0.75, cursor: 'not-allowed' } : {}) }}>
-                  <option value={user.id}>{profileName}（自分）</option>
+                <select value={applicantId} onChange={e => { setApplicantId(e.target.value); clearErr('applicant'); onApplicantChange?.(e.target.value); }} disabled={!!prefill} style={{ ...ef('applicant'), ...(prefill ? { opacity: 0.75, cursor: 'not-allowed' } : {}) }}>
+                  {allowSelf || (editTarget && editTarget.applicant_id === user.id)
+                    ? <option value={user.id}>{profileName}（自分）</option>
+                    : <option value="">選択してください</option>}
                   {staffList.filter(s => s.id !== user.id).map(s => (
                     <option key={s.id} value={s.id}>{s.name}（パート）</option>
                   ))}
                 </select>
+                {!allowSelf && !editTarget && (
+                  <div style={{ marginTop: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '9px 12px', color: '#1e40af', fontSize: 12, lineHeight: 1.7 }}>
+                    {SELF_FULLTIME_MSG}
+                    <div style={{ marginTop: 6 }}>
+                      <button type="button" onClick={() => navigate('/overtime')} style={{ ...tintBtn(false), padding: '4px 12px', fontSize: 12 }}>残業申請を開く →</button>
+                    </div>
+                  </div>
+                )}
                 {prefill && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{prefill.trip ? '出張報告から入れているため変えられません。' : 'カレンダーの予定から入れているため変えられません。別の人にするときは、上の「だれの予定を見るか」で選び直してください。'}</div>}
               </div>
             )}
@@ -1193,6 +1216,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const roles = useRoles();
   const isApprover = isAdmin || attrsFor(roles, roleTitle).is_approver;
+  // 🚨 正社員は自分の勤務変更を出せない（残業申請で出す・2026-10-17 ユーザー確定）。パートの方の代わりに出すことはできる。
+  //    DB のトリガー enforce_shift_report_part_only でも止めている。読めないうちは今までどおり（DB が止める）
+  const [selfFullTime, setSelfFullTime] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    supabase.from('profiles').select('employment_type').eq('id', user.id).maybeSingle()
+      .then(({ data, error }) => { if (alive && !error) setSelfFullTime(data?.employment_type === '正社員'); });
+    return () => { alive = false; };
+  }, [user.id]);
   // RLS（approver_select＝is_approver）で全件閲覧可の役職と揃える。社長・フロア責任者はレビュー担当にならないため、
   // ここに含めないと通知バナーのタップ先（履歴）で何も表示されない
   const canSeeAll  = isApprover;
@@ -1689,6 +1721,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         <ShiftReportForm
           user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
           editTarget={editTarget}
+          allowSelf={!selfFullTime}
           reviewers={reviewers}
           workplaces={workplaces}
           leaderAssignments={leaderAssignments}
@@ -1884,7 +1917,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             )}
             {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
             {canShiftReportTodo && (
-              <ShiftReportTodo userId={user.id} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount}
+              <ShiftReportTodo userId={user.id} allowSelf={!selfFullTime} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount}
                 targetId={isApprover ? todoTarget : undefined}
                 onTargetChange={id => { setTodoTarget(id); setPrefill(null); setFormKey(k => k + 1); }} />
             )}
@@ -1893,9 +1926,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               <p style={{ fontSize: 13, fontWeight: 'bold', color: noteTitleColor, marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
               <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: noteText, lineHeight: 1.8 }}>
                 <li>残業・早退・遅刻・欠勤が発生した場合に報告してください。</li>
-                <li>報告先は、出勤する校の担当のリーダー・マネージャー（フロア責任者）を選択してください。</li>
+                <li>報告先は、出勤する校の担当のリーダー・マネージャー（またはフロア責任者）を選択してください。</li>
                 <li>受理されると「受理済み」に変わります。</li>
-                <li>間違えた場合は、担当のリーダー・マネージャーにお知らせください。</li>
+                <li>間違えた場合、受理前はご自身で修正・取消ができます。受理後は「📩 修正依頼」から依頼してください。</li>
                 {tripNotesOn && <li>出張報告（到着か終了）を送った日は、上の「📋 出張の申請がまだの日」から、日付と勤務地が入った下書きを開けます。実際の時刻と理由を入れて報告してください。</li>}
                 {/* 🚨 報告できる期間の上限（2026-09-09）。休暇と同じ上限にそろえている。
                     判定は lib/breakCalc の leaveRequestMaxDate 1か所 */}
@@ -1989,6 +2022,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               onApplicantChange={canShiftReportTodo && isApprover ? setTodoTarget : undefined}
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               editTarget={null}
+              allowSelf={!selfFullTime}
               reviewers={reviewers}
               workplaces={workplaces}
               leaderAssignments={leaderAssignments}

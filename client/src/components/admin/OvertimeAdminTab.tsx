@@ -24,6 +24,7 @@ import { logFail } from '../../lib/logFail';
 import { DAY_MARK_STYLE } from '../../lib/overtimeDayMark';
 import { STATUS_INFO } from '../../lib/overtimeStatus';
 import CorrectionNotice from '../CorrectionNotice';
+import { ApprovedByLines, type ApprovedLine } from './ApprovedByLines';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 
 // 言葉はスタッフの画面（lib/overtimeStatus の STATUS_INFO）と同じものを使う（2026-10-13 ユーザー確定）。
@@ -306,6 +307,7 @@ const OvertimeAdminTab: React.FC = () => {
   const [otProxyTarget, setOtProxyTarget] = useState<OvertimeRecord | null>(null);
   const [otProxyShift, setOtProxyShift] = useState<'needed' | 'not_needed' | null>(null);
   const [otProxyErr, setOtProxyErr] = useState('');
+  const [otApprovedMap, setOtApprovedMap] = useState<Record<string, ApprovedLine[]>>({});
   const [otReviewerMap, setOtReviewerMap] = useState<Record<string, { id: string; name: string } | null>>({});
   const [otActing, setOtActing] = useState(false);
   // 絞り込み・並べ替え（休暇申請タブと同じ操作感）
@@ -341,12 +343,13 @@ const OvertimeAdminTab: React.FC = () => {
     const from = otLoadFrom(otLoadRange);
     type Row = { id: string; applicant_id: string; reviewer_id: string | null; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null; is_post_hoc: boolean; show_on_calendar: boolean | null; late_situation: string | null; early_situation: string | null;
       from_trip_date: string | null; trip_review_reason: string | null;
+      confirmed_by: string | null; request_confirmed_at: string | null;
       segments: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[] | null;
       hist: { change_kind: string | null; change_summary: string | null }[] | null };
     const rows: Row[] = [];
     for (let off = 0; ; off += 1000) {
       let q = supabase.from('overtime_reports')
-        .select('id, applicant_id, reviewer_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, from_trip_date, trip_review_reason, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
+        .select('id, applicant_id, reviewer_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, confirmed_by, request_confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, from_trip_date, trip_review_reason, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
         .eq('entry_type', 'manual');
       if (from) q = q.gte('work_date', from);
       const { data, error } = await q.order('work_date', { ascending: false }).order('id').range(off, off + 999);
@@ -364,7 +367,7 @@ const OvertimeAdminTab: React.FC = () => {
       dcRows.push(...((dcData ?? []) as typeof dcRows));
       if ((dcData ?? []).length < 1000) break;
     }
-    const applicantIds = [...new Set([...rows.map(r => r.applicant_id), ...rows.map(r => r.reviewer_id).filter((x): x is string => !!x), ...dcRows.map(c => c.user_id)])];
+    const applicantIds = [...new Set([...rows.map(r => r.applicant_id), ...rows.map(r => r.reviewer_id).filter((x): x is string => !!x), ...rows.map(r => r.confirmed_by).filter((x): x is string => !!x), ...dcRows.map(c => c.user_id)])];
     const { data: profs } = applicantIds.length ? await supabase.from('profiles').select('id, name').in('id', applicantIds) : { data: [] };
     // 実績報告の履歴は行に直接出すので「▶履歴」は出さない。
     // 管理者修正・差し戻し・取消など、開いて確認する価値がある例外だけボタンを出す
@@ -386,6 +389,20 @@ const OvertimeAdminTab: React.FC = () => {
     setOtStatusMap(statusMap);
     setOtCalMap(calMap);
     setOtReviewerMap(Object.fromEntries(rows.map(r => [r.id, r.reviewer_id ? { id: r.reviewer_id, name: nameMap[r.reviewer_id] || '不明' } : null])));
+    // 誰がいつ受理したか（2026-10-17 ユーザー確定・状況の札の下に出す）。
+    // 🚨 事前申請の受理は「誰が」を記録していない（request_confirmed_at だけ）ので申請先（reviewer_id）を出す。
+    //    経理が代わりに受理したもの（履歴 change_kind='approved'）はそう書く。本人＝自己受理
+    setOtApprovedMap(Object.fromEntries(rows.map(r => {
+      const proxy = (r.hist ?? []).some(h => h.change_kind === 'approved');
+      const who = (id: string) => id === r.applicant_id ? '自己受理（自分で確認）' : (nameMap[id] || '不明');
+      const lines: ApprovedLine[] = [];
+      if (r.status === 'confirmed' && r.confirmed_by) {
+        lines.push({ label: '受理', name: who(r.confirmed_by) + (proxy && r.confirmed_by !== r.applicant_id ? '（経理が代わりに）' : ''), at: r.confirmed_at });
+      } else if ((r.status === 'request_confirmed' || r.status === 'reported') && r.request_confirmed_at) {
+        lines.push({ label: '受理', name: proxy ? '経理が代わりに' : (r.reviewer_id ? who(r.reviewer_id) : '—'), at: r.request_confirmed_at });
+      }
+      return [r.id, lines];
+    })));
     setOtLoading(false);
   }, [supabase, otLoadRange]);
 
@@ -1445,6 +1462,7 @@ const OvertimeAdminTab: React.FC = () => {
                           <td style={{ ...cell, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{formatSignedMin(r.diff_minutes ?? 0)}</td>
                           <td style={cell}>
                             <span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span>
+                            <ApprovedByLines lines={otApprovedMap[r.id] ?? []} color={subText} />
                             {/* 事前申請どおりに報告されたか、予定から変わったか。
                                 この列は高さに余裕があるので、ここに出せば行が縦に伸びない */}
                             {hasActualSegs && (
