@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { fyiNameFromMessage, sameName, takePushNotifIds } from '../lib/notifFocus';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, embeddedRole } from '../lib/roleAttrs';
 import type { EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -1936,6 +1937,30 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   const [year, setYear] = useState(focusDate ? Number(focusDate.slice(0, 4)) : today.getFullYear());
   const [month, setMonth] = useState(focusDate ? Number(focusDate.slice(5, 7)) - 1 : today.getMonth());
   const [highlightDate, setHighlightDate] = useState<string | null>(focusDate);
+  // 光らせる人（2026-10-17）。受理のお知らせから来たら、その文の名前の行だけを光らせる（その日の全員を光らせない）。
+  // undefined＝読んでいる途中（まだどの行も光らせない）／null＝人で絞らない（今までどおりその日の行）
+  const fnParam = searchParams.get('fn');
+  const [focusNames, setFocusNames] = useState<string[] | null | undefined>(null);
+  useEffect(() => {
+    if (!focusDate) return;
+    const ids = fnParam && /^[0-9a-f-]{36}$/i.test(fnParam) ? [fnParam] : takePushNotifIds();
+    if (ids.length === 0) { setFocusNames(null); return; }
+    setFocusNames(undefined);
+    let alive = true;
+    void (async () => {
+      const { data, error } = await supabase.from('notifications').select('message, reference_id').in('id', ids);
+      if (!alive) return;
+      // 読めない・名前が引けないときは、今までどおりその日の行を光らせる
+      if (error || !data) { setFocusNames(null); return; }
+      const names = (data as { message: string | null; reference_id: string | null }[])
+        .filter(r => r.reference_id === focusDate).map(r => fyiNameFromMessage(r.message)).filter((x): x is string => !!x);
+      setFocusNames(names.length > 0 ? names : null);
+    })();
+    return () => { alive = false; };
+  }, [focusDate, fnParam]);
+  /** この行を光らせるか（日付が同じ・人で絞るときは名前も同じ） */
+  const isFocusRow = (date: string, name: string | null | undefined) =>
+    highlightDate === date && focusNames !== undefined && (focusNames === null || focusNames.some(n => sameName(n, name)));
   // 同じページにいるまま通知をタップされたときも、その月を開き直して該当行を強調する
   useEffect(() => {
     if (!focusDate) return;
@@ -2215,17 +2240,18 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     const t1 = setTimeout(() => focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
     const t2 = setTimeout(() => {
       setHighlightDate(null);
+      setFocusNames(null);
       // 🚨 光らせ終わったら URL から focus を外す。
       //    付いたままだと、同じ日付の通知をもう一度タップしたとき URL が変わらず、
       //    「画面は開いているのに光らない」（更新すると光る）という出方になる。
       const sp = new URLSearchParams(window.location.search);
-      if (sp.get('focus')) {
-        sp.delete('focus');
+      if (sp.get('focus') || sp.get('fn')) {
+        sp.delete('focus'); sp.delete('fn');
         setSearchParams(sp, { replace: true });
       }
     }, 6000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [highlightDate, loading, absences, events, overtimes, setSearchParams]);
+  }, [highlightDate, loading, absences, events, overtimes, focusNames, setSearchParams]);
 
   // 入力シートの対象者の一覧（在籍者）。
   // 🚨 読めなかったとき・0人だったときは黙って空にしない（理由を出してシートから読み直せるようにする）。
@@ -2714,7 +2740,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                 // 🚨 2026-09-28：印は**その日**の状態（leaveDayMark）。見るだけで、押すとその日の場が開く
                 const dayMark = shiftTarget ? leaveDayMark(ev, row.date) : null;
                 const shiftChip = dayMark ? shiftMarkChip(dayMark.key, dayMark.slotId) : null;
-                const isFocused = highlightDate === row.date;
+                const isFocused = isFocusRow(row.date, ev.name);
                 return (
                   <div key={`l-${ev.id}-${row.date}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
@@ -2763,7 +2789,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                 const locLabel = segs.length > 1
                   ? `${new Set(segs.map(s => s.location).filter(Boolean)).size}校`
                   : (ab.location ?? '—');
-                const isFocused = highlightDate === row.date;
+                const isFocused = isFocusRow(row.date, ab.name);
                 return (
                   <div key={`a-${ab.id}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
@@ -2820,7 +2846,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                 //    （残業の取消は残業ページ・管理画面から行う）ので取消ボタンも置かない。
                 const { ot } = row;
                 const time = otEventTime(ot);
-                const isFocused = highlightDate === row.date;
+                const isFocused = isFocusRow(row.date, ot.name);
                 return (
                   <div key={`o-${ot.id}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>

@@ -11,18 +11,30 @@ import { supabase } from '../../lib/supabaseClient';
 import { useAdminPanel } from './AdminPanelContext';
 import { AuthContext } from '../../contexts/AuthContext.tsx';
 import { useRoles } from '../../hooks/useRoles';
+import { rankOf, rolesByRank } from '../../lib/roleAttrs';
 import { invalidatePublishedCache } from '../../hooks/useFeaturePublished';
-import { NAV_REORDERABLE, NAV_KEY_NAME, parseNavRollout, type NavKey, type NavRollout, type NavRolloutRule } from '../../lib/navItems';
-import { TOGGLE_BLUE, backBtn, primaryBtn } from '../../lib/buttonStyles';
+import { NAV_REORDERABLE, NAV_KEY_NAME, NAV_FIXED_FIRST, NAV_FIXED_LAST, NAV_FRONT_IF_NEW, parseNavRollout, type NavKey, type NavRollout, type NavRolloutRule } from '../../lib/navItems';
+import { TOGGLE_BLUE, backBtn, primaryBtn, tintBtn } from '../../lib/buttonStyles';
 
-interface Staff { id: string; name: string | null; role_title: string | null }
+interface Staff { id: string; name: string | null; role_title: string | null; group_names: string[] | null; sort_order: number | null }
+/**
+ * 部署（こども・大人・管理部など）。🚨 group_names には連絡板のグループ（「パート・アルバイトスタッフ」等）も入っているので、
+ * 残業の「部門のまとめ」と同じ部署の一覧（overtime_settings.banner_group_names）にあるものだけを部署とする
+ */
+const deptOf = (s: Staff, depts: string[]) => (s.group_names ?? []).find(g => depts.includes(g)) ?? '';
 type RuleKind = keyof NavRollout;   // 'reorder' | 'two_row'
 
-/** 管理者の並び（キーの配列）を、並べ替えできるボタン全部の順に直す（無いキーは今の並びのまま後ろへ） */
+/**
+ * 管理者の並び（キーの配列）を、並べ替えできるボタン全部の順に直す。
+ * 無いキーは今の並びのまま後ろへ。🚨 ただし 🚃 交通費（NAV_FRONT_IF_NEW）は先頭へ＝ナビの applyNavOrder と同じ置き方
+ * （ここが後ろだと、一度保存した時点で交通費がいちばん右に固まった・2026-10-17）
+ */
 function fullOrder(saved: string[]): NavKey[] {
   const known = saved.filter((k): k is NavKey => NAV_REORDERABLE.includes(k as NavKey));
-  return [...known, ...NAV_REORDERABLE.filter(k => !known.includes(k))];
+  const missing = NAV_REORDERABLE.filter(k => !known.includes(k));
+  return [...missing.filter(k => NAV_FRONT_IF_NEW.includes(k)), ...known, ...missing.filter(k => !NAV_FRONT_IF_NEW.includes(k))];
 }
+type MsgArea = 'reorder' | 'two_row' | 'split_home' | 'order';
 
 const NavSettingsSection: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
@@ -36,31 +48,56 @@ const NavSettingsSection: React.FC = () => {
   const [order, setOrder] = useState<NavKey[] | null>(null);
   const [rollout, setRollout] = useState<NavRollout | null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [depts, setDepts] = useState<string[]>([]);
   const [personalCount, setPersonalCount] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [fail, setFail] = useState(false);
   const [confirmOff, setConfirmOff] = useState<RuleKind | null>(null);
+  // 知らせは押した場所のすぐ下に出す（2026-10-17 ユーザー指摘「下に出るけどわかりにくい」）
+  const [msgArea, setMsgArea] = useState<MsgArea | null>(null);
+  // 初めの並びは［並べ替える］→ ▲▼ →［保存］（保存するまでナビは変わらない・本人の「設定」と同じ形・2026-10-17 ユーザー指示）
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<NavKey[]>([]);
+  const [flashKey, setFlashKey] = useState<NavKey | null>(null);
+  useEffect(() => { if (!flashKey) return; const t = setTimeout(() => setFlashKey(null), 1200); return () => clearTimeout(t); }, [flashKey]);
 
   useEffect(() => {
     void (async () => {
-      const [st, pf, pc] = await Promise.all([
+      const [st, pf, pc, os] = await Promise.all([
         supabase.from('app_settings').select('key, value').in('key', ['nav_order', 'nav_rollout']),
-        supabase.from('profiles').select('id, name, role_title').eq('is_active', true).order('name'),
+        supabase.from('profiles').select('id, name, role_title, group_names, sort_order').eq('is_active', true),
         supabase.from('profiles').select('id', { count: 'exact', head: true }).not('nav_order', 'is', null),
+        supabase.from('overtime_settings').select('banner_group_names').eq('id', 1).maybeSingle(),
       ]);
-      if (st.error) { setFail(true); setMsg('読み込めませんでした：' + st.error.message); setOrder([...NAV_REORDERABLE]); setRollout(parseNavRollout(null)); return; }
+      if (st.error) { setFail(true); setMsgArea('order'); setMsg('読み込めませんでした：' + st.error.message); setOrder([...NAV_REORDERABLE]); setRollout(parseNavRollout(null)); return; }
       const m = new Map(((st.data ?? []) as { key: string; value: unknown }[]).map(r => [r.key, r.value]));
       const keys = (m.get('nav_order') as { keys?: unknown } | undefined)?.keys;
       setOrder(fullOrder(Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : []));
       setRollout(parseNavRollout(m.get('nav_rollout')));
       if (!pf.error) setStaff((pf.data ?? []) as Staff[]);
       setPersonalCount(pc.error ? null : (pc.count ?? 0));
+      const bg = (os.data as { banner_group_names?: unknown } | null)?.banner_group_names;
+      if (!os.error && Array.isArray(bg)) setDepts(bg.filter((x): x is string => typeof x === 'string'));
     })();
   }, []);
 
-  const saveSetting = async (key: 'nav_order' | 'nav_rollout', value: unknown, okMsg: string): Promise<boolean> => {
-    setSaving(true); setMsg(''); setFail(false);
+  /** 「＋ 人を足す」の並び：役職ごと（上の役職から）→ その中は部署 → 名簿の並び順 → 名前（2026-10-17 ユーザー指示） */
+  const staffGroups = (list: Staff[]): { role: string; people: Staff[] }[] => {
+    const rank = (t: string | null) => rankOf(roles, t) ?? 99;
+    // 部署は部門のまとめと同じ順（こども → 大人 → 管理部）。部署なしは最後
+    const deptRank = (x: Staff) => { const d = deptOf(x, depts); return d ? depts.indexOf(d) : 99; };
+    const sorted = [...list].sort((a, b) =>
+      rank(a.role_title) - rank(b.role_title)
+      || deptRank(a) - deptRank(b)
+      || (a.sort_order ?? 9999) - (b.sort_order ?? 9999)
+      || (a.name ?? '').localeCompare(b.name ?? '', 'ja'));
+    const names = [...rolesByRank(roles).map(r => r.name), ...new Set(sorted.map(s => s.role_title ?? '役職なし'))];
+    return [...new Set(names)].map(role => ({ role, people: sorted.filter(s => (s.role_title ?? '役職なし') === role) })).filter(g => g.people.length > 0);
+  };
+
+  const saveSetting = async (key: 'nav_order' | 'nav_rollout', value: unknown, okMsg: string, area: MsgArea): Promise<boolean> => {
+    setSaving(true); setMsg(''); setFail(false); setMsgArea(area);
     const { data, error } = await supabase.from('app_settings')
       .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' }).select('key');
     setSaving(false);
@@ -73,17 +110,22 @@ const NavSettingsSection: React.FC = () => {
 
   if (!order || !rollout) return null;
 
-  const move = async (idx: number, dir: -1 | 1) => {
+  const startEdit = () => { setDraft([...order]); setEditing(true); setMsg(''); setMsgArea(null); };
+  const move = (idx: number, dir: -1 | 1) => {
     const j = idx + dir;
-    if (j < 0 || j >= order.length || saving) return;
-    const next = [...order];
+    if (j < 0 || j >= draft.length) return;
+    const next = [...draft];
     [next[idx], next[j]] = [next[j], next[idx]];
-    if (await saveSetting('nav_order', { keys: next }, '初めの並びを保存しました')) setOrder(next);
+    setDraft(next); setFlashKey(next[j]);
+  };
+  const changed = editing && draft.join() !== order.join();
+  const saveOrder = async () => {
+    if (await saveSetting('nav_order', { keys: draft }, '初めの並びを保存しました', 'order')) { setOrder(draft); setEditing(false); }
   };
   // 🚨 片方を変えるときも、もう片方の値は消さずにそのまま保存する
   const saveRule = async (kind: RuleKind, nextRule: NavRolloutRule, okMsg: string) => {
     const next: NavRollout = { ...rollout, [kind]: nextRule };
-    if (await saveSetting('nav_rollout', next, okMsg)) { setRollout(next); setConfirmOff(null); }
+    if (await saveSetting('nav_rollout', next, okMsg, kind)) { setRollout(next); setConfirmOff(null); }
   };
 
   const myRoleId = roles.find(r => r.name === staff.find(s => s.id === user?.id)?.role_title)?.id;
@@ -92,6 +134,14 @@ const NavSettingsSection: React.FC = () => {
     width: 36, height: 32, borderRadius: 6, border: `1px solid ${border}`, background: 'transparent',
     color: disabled ? border : text, cursor: disabled ? 'default' : 'pointer', fontSize: 11,
   });
+
+  // 知らせ（その場所で押したときだけ・成功は薄緑・失敗は赤）
+  const msgBox = (area: MsgArea) => msg && msgArea === area ? (
+    <div role="status" style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 13,
+      ...(fail ? { background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' } : { background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724' }) }}>{fail ? '' : '✓ '}{msg}</div>
+  ) : null;
+  const reorderLabel = rollout.reorder.mode === 'off' ? 'いまはオフなので、誰のナビも変わりません'
+    : rollout.reorder.mode === 'all' ? 'いまは全員に使われます' : 'いまは「選んだ人だけ」の方に使われます';
 
   // 使える人の切り替え（並べ替え・2段の両方がこれを使う）
   const ruleEditor = (kind: RuleKind, title: string, offText: string) => {
@@ -157,13 +207,18 @@ const NavSettingsSection: React.FC = () => {
             <select value="" onChange={e => addUser(e.target.value)} disabled={saving}
               style={{ padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13 }}>
               <option value="">＋ 人を足す</option>
-              {staff.filter(s => !rule.user_ids.includes(s.id)).map(s => <option key={s.id} value={s.id}>{s.name}（{s.role_title ?? '—'}）</option>)}
+              {staffGroups(staff.filter(s => !rule.user_ids.includes(s.id))).map(g => (
+                <optgroup key={g.role} label={g.role}>
+                  {g.people.map(s => <option key={s.id} value={s.id}>{s.name}{deptOf(s, depts) ? `（${deptOf(s, depts)}）` : ''}</option>)}
+                </optgroup>
+              ))}
             </select>
           </div>
         )}
         {rule.mode !== 'off' && !meIncluded && (
           <div style={{ fontSize: 12, color: subText }}>あなたは対象に入っていません（ご自身の画面は変わりません）。</div>
         )}
+        {msgBox(kind)}
       </div>
     );
   };
@@ -182,26 +237,53 @@ const NavSettingsSection: React.FC = () => {
       {ruleEditor('split_home', 'ホームと交通費を分ける（🏠 ホーム と 🚃 交通費 の2つのボタン）人',
         'オフにすると、対象の方は今までどおり「🏠 交通費」の1ページに戻ります（申請の記録は変わりません）。')}
 
-      {/* 全員の初めの並び */}
-      <div style={{ fontSize: 13, fontWeight: 'bold', margin: '4px 0 6px' }}>全員の初めの並び</div>
-      <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
-        ⚙️ 管理・🏠・💡 FAQ はいつも同じ場所です。その間の並びを決めます。上にあるものほど、ナビの左に出ます。押すとすぐ保存します。
-        {personalCount ? `（自分で並べている${personalCount}人には反映されません）` : ''}
-      </div>
-      <div style={{ border: `1px solid ${border}`, borderRadius: 8 }}>
-        {order.map((k, idx) => (
-          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderTop: idx === 0 ? 'none' : `1px solid ${border}`, fontSize: 13 }}>
-            <span style={{ flex: 1 }}>{NAV_KEY_NAME[k]}</span>
-            <button type="button" aria-label={`${NAV_KEY_NAME[k]}を上へ`} disabled={idx === 0 || saving} style={arrow(idx === 0)} onClick={() => move(idx, -1)}>▲</button>
-            <button type="button" aria-label={`${NAV_KEY_NAME[k]}を下へ`} disabled={idx === order.length - 1 || saving} style={arrow(idx === order.length - 1)} onClick={() => move(idx, 1)}>▼</button>
+      {/* 全員の初めの並び（［並べ替える］→ ▲▼ →［保存］） */}
+      <div style={{ borderTop: `1px solid ${border}`, paddingTop: 12, marginTop: 4 }}>
+        <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 4 }}>全員の初めの並び</div>
+        <div style={{ fontSize: 12, color: subText, lineHeight: 1.7, marginBottom: 8 }}>
+          上にあるものほど、ナビの左に出ます。灰色の行はいつも同じ場所です。
+          この並びは、上の「並べ替え」を使える人にだけ効きます（{reorderLabel}）。
+          {personalCount ? `自分で並べている${personalCount}人には効きません。` : ''}
+        </div>
+        <div style={{ border: `1px solid ${border}`, borderRadius: 8, overflow: 'hidden' }}>
+          {[...NAV_FIXED_FIRST, ...(editing ? draft : order), ...NAV_FIXED_LAST].map((k, i) => {
+            const fixed = NAV_FIXED_FIRST.includes(k) || NAV_FIXED_LAST.includes(k);
+            const list = editing ? draft : order;
+            const idx = list.indexOf(k);
+            return (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', minHeight: 36, fontSize: 13,
+                borderTop: i === 0 ? 'none' : `1px solid ${border}`,
+                background: flashKey === k ? (isDarkMode ? '#1e3a5f' : '#e7f1ff') : fixed ? (isDarkMode ? '#2b3035' : '#f8f9fa') : 'transparent',
+                color: fixed ? subText : text, transition: 'background 0.3s' }}>
+                <span style={{ width: 22, textAlign: 'right', color: subText, fontSize: 12 }}>{fixed ? '' : idx + 1}</span>
+                <span style={{ flex: 1 }}>{NAV_KEY_NAME[k]}{fixed ? '（固定）' : ''}</span>
+                {editing && !fixed && <>
+                  <button type="button" aria-label={`${NAV_KEY_NAME[k]}を上へ`} disabled={idx === 0 || saving} style={arrow(idx === 0)} onClick={() => move(idx, -1)}>▲</button>
+                  <button type="button" aria-label={`${NAV_KEY_NAME[k]}を下へ`} disabled={idx === draft.length - 1 || saving} style={arrow(idx === draft.length - 1)} onClick={() => move(idx, 1)}>▼</button>
+                </>}
+              </div>
+            );
+          })}
+        </div>
+        {!editing ? (
+          <div style={{ marginTop: 10 }}>
+            <button type="button" style={tintBtn(isDarkMode)} onClick={startEdit}>並べ替える</button>
           </div>
-        ))}
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: subText, margin: '8px 0 6px' }}>
+              {changed ? '［保存］を押すまで、ナビは変わりません。' : '▲▼ で動かしてください。'}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" style={{ ...backBtn(isDarkMode), flex: 1 }} disabled={saving} onClick={() => setEditing(false)}>やめる</button>
+              <button type="button" style={{ ...primaryBtn({ disabled: saving || !changed }), flex: 2 }} disabled={saving || !changed} onClick={saveOrder}>
+                {saving ? '保存しています…' : '保存'}
+              </button>
+            </div>
+          </>
+        )}
+        {msgBox('order')}
       </div>
-
-      {msg && (
-        <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 13,
-          ...(fail ? { background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' } : { background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724' }) }}>{msg}</div>
-      )}
     </div>
   );
 };

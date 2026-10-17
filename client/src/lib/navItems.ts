@@ -99,7 +99,7 @@ export function navItemsSignature(items: NavItem[]): string {
 export const NAV_FIXED_FIRST: NavKey[] = ['admin', 'home'];
 export const NAV_FIXED_LAST: NavKey[] = ['faq'];
 /** 並びに入っていなかったら、後ろではなく先頭に出すボタン */
-const NAV_FRONT_IF_NEW: NavKey[] = ['expense'];
+export const NAV_FRONT_IF_NEW: NavKey[] = ['expense'];
 /** 並べ替えできるボタン（今の並び＝初めの並び） */
 export const NAV_REORDERABLE: NavKey[] = ['expense', 'trip_report', 'leave', 'calendar', 'shift_report', 'overtime', 'purchase', 'rooms', 'board', 'procedures'];
 /** 管理画面・「設定」の一覧に出す名前（権限に関係なく全部） */

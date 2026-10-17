@@ -12,6 +12,7 @@ import { EXPENSE_FORM_ANCHOR_ID } from './lib/payrollClose';
 import { todayJstStr, payPeriodCloseCutoff, calcPayPeriodStartJst } from './lib/breakCalc';
 import { accessUntilLabel } from './lib/retire';
 import { BELL_REFRESH_EVENT, markBellReadByIds } from './lib/notifications';
+import { stashPushNotifIds } from './lib/notifFocus';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
 const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
@@ -551,6 +552,8 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     const ids = nidsParam.split(',').filter(s => /^[0-9a-f-]{36}$/i.test(s)).slice(0, 20);
     // プッシュを押して開いた＝その通知は見た。どの種類のプッシュでも、ベルの同じ通知を既読にする（2026-10-15）
     void markBellReadByIds(userId, ids);
+    // 開いたページが「どの人の行か」を絞れるように控える（カレンダーの受理のお知らせ・lib/notifFocus）
+    stashPushNotifIds(ids);
     if (bellParam === '1' && ids.length > 0) {
       if (btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
       setOpen(true);
@@ -1455,7 +1458,9 @@ const classifyNotif = (n: NotifLike) => {
     // 受理FYI（上長向け・誰がいつ休むか）はカレンダーの該当日へ。view=fyi のときだけ全チーム表示に切替（一般スタッフの欠勤動線には影響しない）
     if (isLeaveFyi) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
-      return { path: `/calendar?${focus}view=fyi`, closeOnTap: true };
+      // 🚨 fn＝押したお知らせの ID。カレンダーがその文から名前を引き、その日のその人の行だけを光らせる（2026-10-17・lib/notifFocus）
+      const fn = focus && /^[0-9a-f-]{36}$/i.test(n.id) ? `fn=${n.id}&` : '';
+      return { path: `/calendar?${focus}${fn}view=fyi`, closeOnTap: true };
     }
     // シフト調整がまだの休暇（上長向け）。
     // 🚨 この通知は「その人が受け持つぶんをまとめた1本」なので、1日だけ光らせても

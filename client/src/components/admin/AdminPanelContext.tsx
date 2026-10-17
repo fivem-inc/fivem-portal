@@ -980,9 +980,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (activeTab === 'reports') { fetchUsers(); }
   }, [activeTab, isAdmin, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
 
-  useEffect(() => {
-    if (activeTab === 'reports' && users.length > 0 && submissions.length > 0 && !reportStats) fetchReportStats();
-  }, [activeTab, users, submissions, fetchReportStats]);
+  // 2026-10-17：レポートは作り直した（ReportsTab が DB の report_* 関数で自分で読む）。古い集計（fetchReportStats）は自動では読まない
 
   const handleApproval = useCallback(async (id: string, newStatus: 'pending' | 'approved' | 'rejected', reason?: string) => {
     const updateData: { status: 'pending' | 'approved' | 'rejected'; approved_at?: string | null; rejected_at?: string | null; rejected_reason?: string | null } = { status: newStatus };

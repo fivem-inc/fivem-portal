@@ -26,6 +26,7 @@ export interface BalanceSummary {
   awaitingActual: number; // plannedDelta のうち「実績待ち」（事前申請が受理済み・実際の時刻の報告がまだ＝request_confirmed）
   awaitingReview: number; // plannedDelta のうち「確認待ち」（上長の受理がまだ＝requested / reported）
   plus: number;          // 残業（確定・プラス分）
+  plannedPlus: number;   // 残業（確定＋未確定・プラス分）。レポートの「見込み」で使う（2026-10-17）。🚨 plus と同じく1件ずつの差し引きのプラス分
   choseiMinus: number;   // 調整休（確定・マイナス分）
   otherMinus: number;    // 早退・調整（確定・マイナス分）
   holidayPlus: number;   // うち休日出勤（確定）。🚨 残業（plus）の内訳であって、別に足す数字ではない
@@ -71,13 +72,14 @@ export function computeBalance(allRows: BalanceRow[], period: string): BalanceSu
   const plannedRows = inPeriod.filter(r => PLANNED_STATUSES.includes(r.status) && !isDupChosei(r));
   const awaitingActual = plannedRows.filter(r => r.status === 'request_confirmed').reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
   const awaitingReview = plannedDelta - awaitingActual;
+  const plannedPlus = plus + plannedRows.filter(r => (r.diff_minutes ?? 0) > 0).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
 
   // 欠勤は時間に入れず日数で別枠カウント
   const absenceDays = counted.filter(r => (r.application_types ?? []).includes('absence')).length;
   const absencePending = inPeriod.filter(r => r.status === 'requested' && (r.application_types ?? []).includes('absence')).length;
   const pendingCount = inPeriod.filter(r => r.status === 'requested' || r.status === 'reported').length;
 
-  return { total, plannedDelta, plannedTotal, awaitingActual, awaitingReview, plus, choseiMinus, otherMinus, holidayPlus, minus, absenceDays, absencePending, pendingCount };
+  return { total, plannedDelta, plannedTotal, awaitingActual, awaitingReview, plus, plannedPlus, choseiMinus, otherMinus, holidayPlus, minus, absenceDays, absencePending, pendingCount };
 }
 
 /** 見込みの内訳の文字（2026-10-15 ユーザー確定 A）。「実績報告待ち ＋8:00」「実績報告待ち ＋6:00・確認待ち ＋2:00」。無ければ ''
