@@ -112,6 +112,8 @@ interface AuthCache {
   name: string; roleTitle: string; employmentType: string;
   leaveRequestEnabled: boolean; perms: Record<string, boolean>;
   isFaqEditor?: boolean;
+  /** 上のナビの本人の並び（2026-10-17・任意の項目。🚨 AUTH_CACHE_VERSION は上げない＝上げると全員の控えが消えて一度ボタンが減って見える） */
+  navOrder?: string[] | null;
 }
 function readAuthCache(userId: string): AuthCache | null {
   try {
@@ -180,11 +182,28 @@ interface ProfileLoad {
   employmentType: string;
   leaveRequestEnabled: boolean;
   isFaqEditor: boolean;
+  /** 上のナビの本人の並び（null＝管理者の並び） */
+  navOrder: string[] | null;
   /** 🚨 null は「取れなかった」。空の権限で上書きしないため、呼び出し側で既存を保持する */
   perms: Record<string, boolean> | null;
 }
 
 const FRESH_MS = 30000;
+
+// ── 上のナビの本人の並び（2026-10-17・2b）────────────────
+// 🚨 読み込みを増やさないため、プロフィールを読むとき（loadProfileOnce）に一緒に読み、端末の控え（authCache）にも入れる。
+//    ナビは hooks/useMyNavOrder がここを見る。「設定」で並べ替えたら setMyNavOrderLocal で控えを直して知らせる
+export const MY_NAV_ORDER_EVENT = 'fivem-my-nav-order';
+export function readMyNavOrder(userId: string): string[] | null {
+  if (sharedResult && sharedResult.userId === userId && sharedResult.value) return sharedResult.value.navOrder;
+  return readAuthCache(userId)?.navOrder ?? null;
+}
+export function setMyNavOrderLocal(userId: string, navOrder: string[] | null): void {
+  if (sharedResult && sharedResult.userId === userId && sharedResult.value) sharedResult = { ...sharedResult, value: { ...sharedResult.value, navOrder } };
+  const c = readAuthCache(userId);
+  if (c) { const { v: _v, ...rest } = c; void _v; writeAuthCache(userId, { ...rest, navOrder }); }
+  try { window.dispatchEvent(new CustomEvent(MY_NAV_ORDER_EVENT, { detail: { userId, navOrder } })); } catch { /* 古いブラウザ */ }
+}
 let sharedInflight: { userId: string; promise: Promise<ProfileLoad | null> } | null = null;
 let sharedResult: { userId: string; at: number; value: ProfileLoad | null } | null = null;
 
@@ -197,10 +216,11 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
   const promise = (async (): Promise<ProfileLoad | null> => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor')
+      .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor, nav_order')
       .eq('id', userId)
       .single();
     if (error || !data) return null;
+    const navOrder = Array.isArray(data.nav_order) ? (data.nav_order as string[]) : null;
 
     const role = data.role_title || '一般';
     const perms = await fetchPermsForRole(role);
@@ -216,7 +236,10 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
       leaveRequestEnabled: !!data.leave_request_enabled,
       perms: perms ?? readAuthCache(userId)?.perms ?? {},
       isFaqEditor: !!data.is_faq_editor,
+      navOrder,
     });
+    // ナビ（hooks/useMyNavOrder）へ、読み直した本人の並びを知らせる
+    try { window.dispatchEvent(new CustomEvent(MY_NAV_ORDER_EVENT, { detail: { userId, navOrder } })); } catch { /* 古いブラウザ */ }
 
     // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
     //    本人の最終アクセス記録は RPC 経由にする（2026-08-10）
@@ -230,6 +253,7 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
       employmentType: data.employment_type || '正社員',
       leaveRequestEnabled: !!data.leave_request_enabled,
       isFaqEditor: !!data.is_faq_editor,
+      navOrder,
       perms,
     };
   })();

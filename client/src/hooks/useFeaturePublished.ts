@@ -3,11 +3,16 @@ import { supabase } from '../lib/supabaseClient';
 import { attrsFor } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
+import { parseNavRollout, NAV_ROLLOUT_OFF, type NavRollout } from '../lib/navItems';
 
 export interface FeaturePublishState {
   published: Record<string, boolean>;          // 全公開（値が無いキーは公開扱い）
   publishedLeader: Record<string, boolean>;    // リーダー以上公開（値が無いキーは false）
   publishedPresident: Record<string, boolean>; // 社長のみ公開（値が無いキーは false）新機能の先行テスト用
+  /** 上のナビの、管理者が決めた全員の初めの並び（app_settings 'nav_order'・空＝今の並び・2026-10-17） */
+  navOrder: string[];
+  /** 上のナビの「試してから広げる」切り替え（app_settings 'nav_rollout'・読めないときは全部オフ） */
+  navRollout: NavRollout;
   /** 役職の一覧（属性つき）。「リーダー以上」「社長のみ」の判定に使う（2026-09-09 属性化） */
   roles: RoleRow[];
 }
@@ -40,29 +45,51 @@ type PublishedValues = Omit<FeaturePublishState, 'roles'>;
 const PUBLISHED_TTL_MS = 30 * 1000;
 let publishedCache: { at: number; value: PublishedValues } | null = null;
 let publishedInflight: Promise<PublishedValues> | null = null;
+// 🚨 2026-10-17：5つの設定を1本で読む（前は3本を別々に読んでいた）。退職者は RLS で読めるキーが限られるので、
+//    来なかったキーは今までどおりの既定値（公開扱い・ナビは今の並び・切り替えはオフ）になる
+const PUBLISHED_KEYS = ['feature_published', 'feature_published_leader', 'feature_published_president', 'nav_order', 'nav_rollout'];
+// ナビの並びと切り替えは端末にも覚えておく（開くたびに一瞬「今の並び」に戻って見えないように）。権限ではなく見た目だけ
+const NAV_LOCAL_KEY = 'fivem_nav_settings';
+function readNavLocal(): { navOrder: string[]; navRollout: NavRollout } {
+  try {
+    const o = JSON.parse(localStorage.getItem(NAV_LOCAL_KEY) || 'null') as { navOrder?: unknown; navRollout?: unknown } | null;
+    return {
+      navOrder: Array.isArray(o?.navOrder) ? (o!.navOrder as unknown[]).filter((k): k is string => typeof k === 'string') : [],
+      navRollout: parseNavRollout(o?.navRollout),
+    };
+  } catch { return { navOrder: [], navRollout: NAV_ROLLOUT_OFF }; }
+}
 function loadPublished(): Promise<PublishedValues> {
   if (publishedCache && Date.now() - publishedCache.at < PUBLISHED_TTL_MS) return Promise.resolve(publishedCache.value);
   if (publishedInflight) return publishedInflight;
-  publishedInflight = Promise.all([
-      supabase.from('app_settings').select('value').eq('key', 'feature_published').maybeSingle(),
-      supabase.from('app_settings').select('value').eq('key', 'feature_published_leader').maybeSingle(),
-      supabase.from('app_settings').select('value').eq('key', 'feature_published_president').maybeSingle(),
-    ]).then(([allRes, leaderRes, presRes]) => {
+  publishedInflight = Promise.resolve(supabase.from('app_settings').select('key, value').in('key', PUBLISHED_KEYS))
+    .then(({ data, error }) => {
+      if (error) throw error;
+      const m = new Map(((data ?? []) as { key: string; value: unknown }[]).map(r => [r.key, r.value]));
+      const navKeys = (m.get('nav_order') as { keys?: unknown } | undefined)?.keys;
       const value: PublishedValues = {
-        published: (allRes?.data?.value as Record<string, boolean>) || {},
-        publishedLeader: (leaderRes?.data?.value as Record<string, boolean>) || {},
-        publishedPresident: (presRes?.data?.value as Record<string, boolean>) || {},
+        published: (m.get('feature_published') as Record<string, boolean>) || {},
+        publishedLeader: (m.get('feature_published_leader') as Record<string, boolean>) || {},
+        publishedPresident: (m.get('feature_published_president') as Record<string, boolean>) || {},
+        navOrder: Array.isArray(navKeys) ? navKeys.filter((k): k is string => typeof k === 'string') : [],
+        navRollout: parseNavRollout(m.get('nav_rollout')),
       };
       publishedCache = { at: Date.now(), value };
+      try { localStorage.setItem(NAV_LOCAL_KEY, JSON.stringify({ navOrder: value.navOrder, navRollout: value.navRollout })); } catch { /* 容量超過などは無視 */ }
       return value;
     }).finally(() => { publishedInflight = null; });
   return publishedInflight;
 }
 
+/** 管理画面でナビの設定を変えたあと、すぐ読み直す（30秒の使い回しを捨てる） */
+export function invalidatePublishedCache(): void {
+  publishedCache = null;
+}
+
 // 機能の公開状態（app_settings の feature_published / feature_published_leader / feature_published_president）
 export function useFeaturePublished(): FeaturePublishState {
   const roles = useRoles();
-  const [state, setState] = useState<PublishedValues>(() => publishedCache?.value ?? { published: {}, publishedLeader: {}, publishedPresident: {} });
+  const [state, setState] = useState<PublishedValues>(() => publishedCache?.value ?? { published: {}, publishedLeader: {}, publishedPresident: {}, ...readNavLocal() });
 
   useEffect(() => {
     let alive = true;

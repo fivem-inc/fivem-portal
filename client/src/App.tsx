@@ -56,7 +56,8 @@ import { fetchActiveAnnouncements, type Announcement } from './lib/announcements
 import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
-import { buildNavItems, navItemsSignature } from './lib/navItems';
+import { buildNavItems, navItemsSignature, applyNavOrder, navRolloutOn } from './lib/navItems';
+import { useMyNavOrder } from './hooks/useMyNavOrder';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
 import { TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
@@ -989,7 +990,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     badges: { admin: adminSetupBadge, leave: leaveBadge, shift: shiftPending, overtime: overtimeBadge, purchase: purchaseNavBadge,
       board: location.pathname !== '/board' ? boardUnread : 0 },
   });
-  const navSig = navItemsSignature(navItems);
+  // 並べ替え（2026-10-17・2b）。🚨 管理画面の切り替え（nav_rollout.reorder）が効いている人だけ。オフの人は今の並びのまま（すぐ元に戻せるように）
+  //    並び：本人の並び → 無ければ管理者の初めの並び。役職プレビュー中は本人の並びは使わない（役職の見え方を確かめるため）
+  const myNavOrder = useMyNavOrder(userId);
+  const myRoleId = featurePublishState.roles.find(r => r.name === roleTitle)?.id ?? null;
+  const reorderOn = !isRetiree && navRolloutOn(featurePublishState.navRollout.reorder, userId, myRoleId, !!previewRole);
+  const shownNavItems = reorderOn ? applyNavOrder(navItems, (!previewRole && myNavOrder) || featurePublishState.navOrder) : navItems;
+  const navSig = navItemsSignature(shownNavItems);
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -1096,7 +1103,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           }}
         >
           {/* ボタンは lib/navItems.ts の表の順に描く（2026-10-17）。数字のあるボタンだけ、数字の枠（data-nav-badge）で包む */}
-          {navItems.map(item => {
+          {shownNavItems.map(item => {
             const button = (
               <button key={item.key} onClick={() => navTo(item.path)} style={btnStyle(location.pathname === item.path, item.activeColor)}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>{item.icon}</span>{navLabel(item.mobileLabel)}</> : `${item.icon} ${item.label}`}

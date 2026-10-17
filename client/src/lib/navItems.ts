@@ -85,3 +85,73 @@ export function buildNavItems(c: NavContext): NavItem[] {
 export function navItemsSignature(items: NavItem[]): string {
   return items.map(i => `${i.key}:${i.badge ?? '-'}`).join(',');
 }
+
+// ───────────────────────────────────────────────
+// 並べ替え（2026-10-17・2b）
+// ───────────────────────────────────────────────
+
+/** いつも左の2つ（⚙️ 管理・🏠）と、いつも端の1つ（💡 FAQ）。並べ替えの対象はその間だけ */
+export const NAV_FIXED_FIRST: NavKey[] = ['admin', 'home'];
+export const NAV_FIXED_LAST: NavKey[] = ['faq'];
+/** 並べ替えできるボタン（今の並び＝初めの並び） */
+export const NAV_REORDERABLE: NavKey[] = ['trip_report', 'leave', 'calendar', 'shift_report', 'overtime', 'purchase', 'rooms', 'board', 'procedures'];
+/** 管理画面・「設定」の一覧に出す名前（権限に関係なく全部） */
+export const NAV_KEY_NAME: Record<NavKey, string> = {
+  admin: '⚙️ 管理', home: '🏠 ホーム（交通費）', trip_report: '📍 出張報告', leave: '🌿 休暇申請', calendar: '📅 カレンダー',
+  shift_report: '⏰ 勤務変更', overtime: '🕐 残業・時間', purchase: '📦 備品精算', rooms: '🚪 場所予約', board: '💬 連絡板',
+  procedures: '📋 手続き', faq: '💡 FAQ',
+};
+
+/**
+ * 並びを当てる。固定の3つはそのまま、間のボタンは order の順。
+ * order に無いボタン（あとで増えた機能など）は、今の並びのまま最後に足す。order に有って今出ていないキーは無視する
+ */
+export function applyNavOrder(items: NavItem[], order: readonly string[] | null | undefined): NavItem[] {
+  if (!order || order.length === 0) return items;
+  const first = items.filter(i => NAV_FIXED_FIRST.includes(i.key));
+  const last = items.filter(i => NAV_FIXED_LAST.includes(i.key));
+  const middle = items.filter(i => !NAV_FIXED_FIRST.includes(i.key) && !NAV_FIXED_LAST.includes(i.key));
+  const idx = (k: string) => { const n = order.indexOf(k); return n < 0 ? Number.MAX_SAFE_INTEGER : n; };
+  const sorted = middle.map((it, i) => ({ it, i })).sort((a, b) => idx(a.it.key) - idx(b.it.key) || a.i - b.i).map(x => x.it);
+  return [...first, ...sorted, ...last];
+}
+
+/**
+ * 本人が並べ替えた「見えているボタンの順」を、保存する並びにする。
+ * 🚨 今は権限が無くて見えていないボタンの順番も消さない（権限が戻ったときに元の位置に近く出るように）。前の並びにだけあるキーは後ろに足す
+ */
+export function mergeSavedNavOrder(visibleOrder: readonly string[], prevSaved: readonly string[] | null | undefined): string[] {
+  const rest = (prevSaved ?? []).filter(k => !visibleOrder.includes(k));
+  return [...visibleOrder, ...rest];
+}
+
+/** 試してから広げる切り替え（app_settings 'nav_rollout' の reorder／two_row） */
+export interface NavRolloutRule { mode: 'off' | 'selected' | 'all'; user_ids: string[]; role_ids: string[] }
+export interface NavRollout { reorder: NavRolloutRule; two_row: NavRolloutRule }
+export const NAV_ROLLOUT_OFF: NavRollout = {
+  reorder: { mode: 'off', user_ids: [], role_ids: [] },
+  two_row: { mode: 'off', user_ids: [], role_ids: [] },
+};
+
+/** 読んだ値を形を確かめて取り込む（壊れていたら「オフ」） */
+export function parseNavRollout(v: unknown): NavRollout {
+  const rule = (x: unknown): NavRolloutRule => {
+    const o = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
+    const mode = o.mode === 'selected' || o.mode === 'all' ? o.mode : 'off';
+    const ids = (a: unknown) => (Array.isArray(a) ? a.filter((s): s is string => typeof s === 'string') : []);
+    return { mode, user_ids: ids(o.user_ids), role_ids: ids(o.role_ids) };
+  };
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  return { reorder: rule(o.reorder), two_row: rule(o.two_row) };
+}
+
+/**
+ * この人に効いているか。🚨 役職プレビュー中は「その役職」で判定し、選んだ人（user_ids）は見ない
+ * （プレビューは役職の見え方を確かめるものなので、管理者本人が選ばれていても役職の結果にそろえる）
+ */
+export function navRolloutOn(rule: NavRolloutRule, userId: string | null | undefined, roleId: string | null | undefined, previewing: boolean): boolean {
+  if (rule.mode === 'all') return true;
+  if (rule.mode !== 'selected') return false;
+  if (!previewing && userId && rule.user_ids.includes(userId)) return true;
+  return !!roleId && rule.role_ids.includes(roleId);
+}

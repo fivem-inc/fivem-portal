@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabaseClient';
 import { requestPushPermission, unsubscribePush, getPushPermissionStatus } from '../utils/pushNotification';
 import PushQuietHoursSection from '../components/PushQuietHoursSection';
 import TextScaleChoice from '../components/TextScaleChoice';
+import NavOrderSettings from '../components/NavOrderSettings';
 
 export default function AccountSettings() {
   const navigate = useNavigate();
@@ -194,6 +195,9 @@ export default function AccountSettings() {
           </div>
           <TextScaleChoice hintColor={sub} />
         </div>
+
+        {/* 上のナビの並び（2026-10-17・管理画面で「並べ替え」がオンの人だけに出る） */}
+        <NavOrderSettings isDark={isDark} card={card} text={text} sub={sub} />
 
         {/* プッシュ通知設定 */}
         {pushStatus !== 'unsupported' && (
