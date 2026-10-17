@@ -167,8 +167,6 @@ export default function AccountSettings() {
             value={scaleLabel} colors={colors} open={openKey === 'text'} onToggle={toggle('text')}>
             <TextScaleChoice hintColor={sub} onChange={setScale} />
           </SettingsRow>
-          {/* 上のナビの並び（2026-10-17・管理画面で「並べ替え」がオンの人だけに出る） */}
-          {navReorderOn && <NavOrderSettings isDark={isDark} colors={colors} open={openKey === 'nav'} onToggle={toggle('nav')} />}
         </SettingsGroup>
 
         <SettingsGroup label="通知" colors={colors}>
@@ -202,6 +200,12 @@ export default function AccountSettings() {
           )}
           {/* プッシュ通知の受信時間（許可済みの人にだけ出る） */}
           {pushStatus === 'granted' && <PushQuietHoursSection colors={colors} open={openKey === 'quiet'} onToggle={toggle('quiet')} />}
+        </SettingsGroup>
+
+        {/* 並び：表示 → 通知 → ナビ（2026-10-17 ユーザー確定「文字の大きさの下に通知」）。ナビの並びは試している人だけなので最後 */}
+        <SettingsGroup label="ナビ" colors={colors}>
+          {/* 上のナビの並び（2026-10-17・管理画面で「並べ替え」がオンの人だけに出る） */}
+          {navReorderOn && <NavOrderSettings isDark={isDark} colors={colors} open={openKey === 'nav'} onToggle={toggle('nav')} />}
         </SettingsGroup>
 
         <button

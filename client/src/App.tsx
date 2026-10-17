@@ -58,6 +58,7 @@ import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePubli
 import { useRoles } from './hooks/useRoles';
 import { buildNavItems, navItemsSignature, applyNavOrder, navRolloutOn } from './lib/navItems';
 import { useMyNavOrder } from './hooks/useMyNavOrder';
+import { useNavRolloutOn } from './hooks/useNavRolloutOn';
 import { NAV_ROW2_HEIGHT, setNavExtraTop, useNavExtraTop } from './lib/navLayout';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
@@ -494,7 +495,7 @@ const ProtectedLayout: React.FC = () => {
   // 🚨 退職して申請期間中の人が開ける画面は、ここ1か所で決める（2026-09-20・3段目）。
   //    ページごとに門を書くと、画面を1つ足したときに塞ぎ忘れる（30近い箇所に同じ判定を書くことになる）。
   //    許したもの以外はホームへ。ホームは交通費の画面なので、申請の入口としても機能する
-  const RETIREE_ALLOWED = ['/', '/overtime', '/shift-report', '/account', '/change-password', '/change-email', '/notification-settings'];
+  const RETIREE_ALLOWED = ['/', '/expense', '/overtime', '/shift-report', '/account', '/change-password', '/change-email', '/notification-settings'];
   if (isRetiree && !RETIREE_ALLOWED.includes(pathname)) {
     return <Navigate to="/" replace />;
   }
@@ -981,8 +982,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const overtimeBadge = overtimePending + overtimeUnreported + appRequestCountOvertime + clockInquiryOpen; // 確認依頼＋自分の実績未報告＋申請の依頼（残業）＋経理からの打刻の確認
   const leaveBadge = leavePending + appRequestCountLeave; // 承認待ち＋自分あての休暇の申請依頼
   // ナビのボタンの表（2026-10-17・lib/navItems.ts）。🚨 出す条件・並び・数字はここで表にしてから描く（ボタンを1つずつ書かない）
+  // ホームと交通費を分けるか（2026-10-17・管理画面の nav_rollout.split_home）。🚨 判定は hooks/useNavRolloutOn と同じ navRolloutOn
+  const splitHome = !isRetiree && navRolloutOn(featurePublishState.navRollout.split_home, userId,
+    featurePublishState.roles.find(r => r.name === roleTitle)?.id ?? null, !!previewRole);
   const navItems = buildNavItems({
-    canAdminOpen: adminAccess.canOpen, isAdmin,
+    canAdminOpen: adminAccess.canOpen, isAdmin, splitHome,
     canExpense: !!canExpense, canTripReport: !!canTripReport, canLeave: !!canLeave, canCalendar: !!canCalendar,
     canShiftReport: !!canShiftReport, canOvertime: !!canOvertime, canPurchaseRequest: !!canPurchaseRequest,
     canRoomBooking: !!canRoomBooking, canBoard: !!canBoard, canProcedures, canFaqNav: !!canFaqNav,
@@ -2254,7 +2258,9 @@ const PasswordChangeBanner: React.FC<{ userId: string }> = ({ userId }) => {
 };
 
 // メインのDashboardコンポーネント
-const Dashboard: React.FC = () => {
+// 🚨 2026-10-17：ホームと交通費を分けた人（管理画面の nav_rollout.split_home）は、/ でお知らせなど（上半分）だけ、/expense で交通費（下半分）だけを描く。
+//    同じ部品の出し分けにして、交通費の画面を2か所に書き写さない。分けていない人は今までどおり / に両方
+const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
 
   const {
@@ -2287,6 +2293,22 @@ const Dashboard: React.FC = () => {
   // 🚨 Hookは必ず早期return（下の「読み込んでいます...」）より前に置く。後ろに置くと画面が真っ黒になる
   const isDarkMode = useDarkMode();
   const featurePublishState = useFeaturePublished();
+  const splitHome = useNavRolloutOn('split_home');
+  const mode: 'all' | 'home' | 'expense' = view === 'expense' ? 'expense' : splitHome ? 'home' : 'all';
+  // 分けた人のホームで、出すものが何も無いときは「新しいお知らせはありません」（2026-10-17 ユーザー確定）。
+  // 🚨 帯やカードは部品ごとに自分で読んで出し分けるので、描いた結果（文字があるか）で判断する
+  const homeTopRef = useRef<HTMLDivElement>(null);
+  const [homeEmpty, setHomeEmpty] = useState(false);
+  useEffect(() => {
+    if (mode !== 'home') return;
+    const el = homeTopRef.current;
+    if (!el) return;
+    const check = () => setHomeEmpty(el.textContent?.trim() === '');
+    check();
+    const mo = new MutationObserver(check);
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => mo.disconnect();
+  }, [mode]);
   const { submissions, isLoading, fetchExpenses, rejectionNotice, clearRejectionNotice } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
@@ -2326,6 +2348,9 @@ const Dashboard: React.FC = () => {
 
   if (!user) {
     return <div>読み込んでいます...</div>;
+  }
+  if (view === 'expense' && !((isAdmin || canExpense) && isFeaturePublished('expense', featurePublishState, isAdmin, roleTitle))) {
+    return <Navigate to="/" replace />;
   }
 
   const encAnswerModal = encAnsweringDay ? (
@@ -2437,9 +2462,11 @@ const Dashboard: React.FC = () => {
           交通費申請の見出しは ExpenseForm 側にセクション見出しとして置いている */}
       <div style={{ textAlign: 'center', paddingTop: 12, marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
         <p style={{ margin: '0 0 3px', fontSize: 10, letterSpacing: '0.22em', color: isDarkMode ? '#6c757d' : '#adb5bd', fontWeight: 700 }}>ファイブMスタッフサイト</p>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>🏠 ホーム</h1>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>{mode === 'expense' ? '🚃 交通費' : '🏠 ホーム'}</h1>
       </div>
 
+      {/* ── 上半分（お知らせ・帯）。交通費のページでは出さない ── */}
+      {mode !== 'expense' && (<div ref={homeTopRef}>
       {/* 退職して申請期間中の人への案内（3段目・2026-09-20）。ここだけは退職者にも出す */}
       {isRetiree && (
         <RetireeHomeNotice
@@ -2548,6 +2575,13 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
+      </div>)}
+      {mode === 'home' && homeEmpty && (
+        <p style={{ textAlign: 'center', fontSize: 14, color: isDarkMode ? '#adb5bd' : '#6c757d', margin: '24px 0' }}>新しいお知らせはありません</p>
+      )}
+
+      {/* ── 下半分（交通費）。分けた人のホームでは出さない ── */}
+      {mode !== 'home' && (<>
       {/* 交通費申請フォーム。
           ここはホーム（/）なのでページごとリダイレクトはできない。
           管理画面の公開設定・役職トグルがOFFの人にはフォームだけ出さない */}
@@ -2586,6 +2620,8 @@ const Dashboard: React.FC = () => {
           onApplyTemplate={handleApplyTemplate}
         />
       </Suspense>
+
+      </>)}
 
       {/* 起動の内訳（管理者だけ）。🚨 ブラウザが持っている記録を読むだけで、保存はしない */}
       {isAdmin && (
@@ -2933,6 +2969,8 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/" element={<ProtectedLayout />}>
             <Route index element={<Dashboard />} />
+            {/* 交通費（ホームと分けた人のボタン・2026-10-17）。分けていない人が開いても使える（中身はホームの下半分と同じ） */}
+            <Route path="/expense" element={<Dashboard view="expense" />} />
             <Route path="/trip-report" element={<TripReportPage />} />
             <Route path="/leave" element={<LeaveRequestPage />} />
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />

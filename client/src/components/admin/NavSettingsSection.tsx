@@ -179,6 +179,8 @@ const NavSettingsSection: React.FC = () => {
         `オフにすると、対象の方のナビは元の並びに戻ります。${personalCount ? `自分で並べた並び（${personalCount}人分）は消えず、オンに戻すと元に戻ります。` : ''}`)}
       {ruleEditor('two_row', 'スマホの2段（ページの上では2段・下へ動かすと1段）を使う人',
         'オフにすると、対象の方のスマホのナビは今までの1段に戻ります。')}
+      {ruleEditor('split_home', 'ホームと交通費を分ける（🏠 ホーム と 🚃 交通費 の2つのボタン）人',
+        'オフにすると、対象の方は今までどおり「🏠 交通費」の1ページに戻ります（申請の記録は変わりません）。')}
 
       {/* 全員の初めの並び */}
       <div style={{ fontSize: 13, fontWeight: 'bold', margin: '4px 0 6px' }}>全員の初めの並び</div>

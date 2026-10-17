@@ -17,6 +17,7 @@ import { useMyNavOrder } from '../hooks/useMyNavOrder';
 import { buildNavItems, applyNavOrder, mergeSavedNavOrder, NAV_FIXED_FIRST, NAV_FIXED_LAST, type NavItem } from '../lib/navItems';
 import { backBtn, primaryBtn, tintBtn } from '../lib/buttonStyles';
 import { SettingsRow, type SettingsColors } from './SettingsRow';
+import { useNavRolloutOn } from '../hooks/useNavRolloutOn';
 
 interface Props { isDark: boolean; colors: SettingsColors; open: boolean; onToggle: () => void }
 
@@ -26,6 +27,7 @@ const NavOrderSettings: React.FC<Props> = ({ isDark, colors, open, onToggle }) =
   const fp = useFeaturePublished();
   const userId = auth.user?.id ?? null;
   const myOrder = useMyNavOrder(userId);
+  const splitHome = useNavRolloutOn('split_home');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -45,10 +47,11 @@ const NavOrderSettings: React.FC<Props> = ({ isDark, colors, open, onToggle }) =
     canExpense: auth.canExpense, canTripReport: auth.canTripReport, canLeave: auth.canLeave, canCalendar: auth.canCalendar,
     canShiftReport: auth.canShiftReport, canOvertime: auth.canOvertime, canPurchaseRequest: auth.canPurchaseRequest,
     canRoomBooking: auth.canRoomBooking, canBoard: auth.canBoard, canProcedures: auth.isAdmin || auth.isManagerPlus, canFaqNav: auth.canFaqNav,
+    splitHome,
     isPub: (k: string) => isFeaturePublished(k, fp, auth.isAdmin, auth.roleTitle),
     badges: { admin: 0, leave: 0, shift: 0, overtime: 0, purchase: 0, board: 0 },
   }), [auth.isAdmin, auth.isManagerPlus, auth.canExpense, auth.canTripReport, auth.canLeave, auth.canCalendar, auth.canShiftReport,
-    auth.canOvertime, auth.canPurchaseRequest, auth.canRoomBooking, auth.canBoard, auth.canFaqNav, auth.roleTitle, fp]);
+    auth.canOvertime, auth.canPurchaseRequest, auth.canRoomBooking, auth.canBoard, auth.canFaqNav, auth.roleTitle, fp, splitHome]);
 
   const ordered = applyNavOrder(items, (!previewRole && myOrder) || fp.navOrder);
   const isFixed = (k: string) => NAV_FIXED_FIRST.includes(k as NavItem['key']) || NAV_FIXED_LAST.includes(k as NavItem['key']);

@@ -126,7 +126,12 @@ const PayrollCloseBanner: React.FC = () => {
   const onAction = (kind: 'overtime' | 'shift' | 'expense') => {
     if (kind === 'overtime') navigate('/overtime');
     else if (kind === 'shift') navigate('/shift-report');
-    else document.getElementById(EXPENSE_FORM_ANCHOR_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else {
+      // 🚨 ホームと交通費を分けた人（2026-10-17）は、このページに交通費のフォームが無い→交通費のページへ
+      const el = document.getElementById(EXPENSE_FORM_ANCHOR_ID);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      else navigate('/expense');
+    }
   };
 
   if (closedNote) {

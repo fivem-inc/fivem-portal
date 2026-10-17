@@ -6,7 +6,7 @@
 // 🚨 固定：⚙️ 管理（管理者・いちばん左）→ 🏠（全員・その次）／💡 FAQ（いつも端）。並べ替えの対象はその間だけ
 
 export type NavKey =
-  | 'admin' | 'home' | 'trip_report' | 'leave' | 'calendar' | 'shift_report'
+  | 'admin' | 'home' | 'expense' | 'trip_report' | 'leave' | 'calendar' | 'shift_report'
   | 'overtime' | 'purchase' | 'rooms' | 'board' | 'procedures' | 'faq';
 
 export interface NavItem {
@@ -38,6 +38,8 @@ export interface NavContext {
   canBoard: boolean;
   canProcedures: boolean;
   canFaqNav: boolean;
+  /** ホームと交通費を分けるか（管理画面の切り替え nav_rollout.split_home・2026-10-17）。分けた人は 🏠 ホーム と 🚃 交通費 の2つ */
+  splitHome?: boolean;
   /** 機能の公開（管理画面の公開設定）。lib/featurePublished の isFeaturePublished を渡す */
   isPub: (key: string) => boolean;
   badges: { admin: number; leave: number; shift: number; overtime: number; purchase: number; board: number };
@@ -50,9 +52,12 @@ export function buildNavItems(c: NavContext): NavItem[] {
       show: c.canAdminOpen, badge: c.badges.admin },
     // 🏠 は誰にでも出す（2026-10-17 ユーザー確定）。交通費を使う人は「交通費」、使わない人は「ホーム」。
     // ホームの中の交通費のフォームは今までどおり使う人にだけ出る（App.tsx のホーム）
-    { key: 'home', path: '/', icon: '🏠', ...(c.canExpense && c.isPub('expense')
+    { key: 'home', path: '/', icon: '🏠', ...(!c.splitHome && c.canExpense && c.isPub('expense')
         ? { label: '交通費', mobileLabel: '交通費' } : { label: 'ホーム', mobileLabel: 'ホーム' }),
       activeColor: '#007bff', show: true },
+    // ホームと交通費を分けた人だけ（2026-10-17 ユーザー確定：🚃・🏠 のすぐ右・並べ替えできる）。中身は /expense
+    { key: 'expense', path: '/expense', icon: '🚃', label: '交通費', mobileLabel: '交通費', activeColor: '#007bff',
+      show: !!c.splitHome && c.canExpense && c.isPub('expense') },
     { key: 'trip_report', path: '/trip-report', icon: '📍', label: '出張報告', mobileLabel: '出張報告', activeColor: '#007bff',
       show: c.canTripReport && c.isPub('trip_report') },
     { key: 'leave', path: '/leave', icon: '🌿', label: '休暇申請', mobileLabel: '休暇申請', activeColor: '#28a745',
@@ -93,11 +98,13 @@ export function navItemsSignature(items: NavItem[]): string {
 /** いつも左の2つ（⚙️ 管理・🏠）と、いつも端の1つ（💡 FAQ）。並べ替えの対象はその間だけ */
 export const NAV_FIXED_FIRST: NavKey[] = ['admin', 'home'];
 export const NAV_FIXED_LAST: NavKey[] = ['faq'];
+/** 並びに入っていなかったら、後ろではなく先頭に出すボタン */
+const NAV_FRONT_IF_NEW: NavKey[] = ['expense'];
 /** 並べ替えできるボタン（今の並び＝初めの並び） */
-export const NAV_REORDERABLE: NavKey[] = ['trip_report', 'leave', 'calendar', 'shift_report', 'overtime', 'purchase', 'rooms', 'board', 'procedures'];
+export const NAV_REORDERABLE: NavKey[] = ['expense', 'trip_report', 'leave', 'calendar', 'shift_report', 'overtime', 'purchase', 'rooms', 'board', 'procedures'];
 /** 管理画面・「設定」の一覧に出す名前（権限に関係なく全部） */
 export const NAV_KEY_NAME: Record<NavKey, string> = {
-  admin: '⚙️ 管理', home: '🏠 ホーム（交通費）', trip_report: '📍 出張報告', leave: '🌿 休暇申請', calendar: '📅 カレンダー',
+  admin: '⚙️ 管理', home: '🏠 ホーム（交通費）', expense: '🚃 交通費（ホームと分けた人だけ）', trip_report: '📍 出張報告', leave: '🌿 休暇申請', calendar: '📅 カレンダー',
   shift_report: '⏰ 勤務変更', overtime: '🕐 残業・時間', purchase: '📦 備品精算', rooms: '🚪 場所予約', board: '💬 連絡板',
   procedures: '📋 手続き', faq: '💡 FAQ',
 };
@@ -111,7 +118,8 @@ export function applyNavOrder(items: NavItem[], order: readonly string[] | null 
   const first = items.filter(i => NAV_FIXED_FIRST.includes(i.key));
   const last = items.filter(i => NAV_FIXED_LAST.includes(i.key));
   const middle = items.filter(i => !NAV_FIXED_FIRST.includes(i.key) && !NAV_FIXED_LAST.includes(i.key));
-  const idx = (k: string) => { const n = order.indexOf(k); return n < 0 ? Number.MAX_SAFE_INTEGER : n; };
+  // 並びに無いボタンは最後へ（あとで増えた機能）。ただし 🚃 交通費だけは先頭へ（分けたときは 🏠 のすぐ右が初めの位置・ユーザー確定）
+  const idx = (k: string) => { const n = order.indexOf(k); return n >= 0 ? n : NAV_FRONT_IF_NEW.includes(k as NavKey) ? -1 : Number.MAX_SAFE_INTEGER; };
   const sorted = middle.map((it, i) => ({ it, i })).sort((a, b) => idx(a.it.key) - idx(b.it.key) || a.i - b.i).map(x => x.it);
   return [...first, ...sorted, ...last];
 }
@@ -127,10 +135,11 @@ export function mergeSavedNavOrder(visibleOrder: readonly string[], prevSaved: r
 
 /** 試してから広げる切り替え（app_settings 'nav_rollout' の reorder／two_row） */
 export interface NavRolloutRule { mode: 'off' | 'selected' | 'all'; user_ids: string[]; role_ids: string[] }
-export interface NavRollout { reorder: NavRolloutRule; two_row: NavRolloutRule }
+export interface NavRollout { reorder: NavRolloutRule; two_row: NavRolloutRule; split_home: NavRolloutRule }
 export const NAV_ROLLOUT_OFF: NavRollout = {
   reorder: { mode: 'off', user_ids: [], role_ids: [] },
   two_row: { mode: 'off', user_ids: [], role_ids: [] },
+  split_home: { mode: 'off', user_ids: [], role_ids: [] },
 };
 
 /** 読んだ値を形を確かめて取り込む（壊れていたら「オフ」） */
@@ -142,7 +151,7 @@ export function parseNavRollout(v: unknown): NavRollout {
     return { mode, user_ids: ids(o.user_ids), role_ids: ids(o.role_ids) };
   };
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
-  return { reorder: rule(o.reorder), two_row: rule(o.two_row) };
+  return { reorder: rule(o.reorder), two_row: rule(o.two_row), split_home: rule(o.split_home) };
 }
 
 /**
