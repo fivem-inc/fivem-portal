@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useRefreshOn } from './useRefreshOn';
+import { useStickyState } from './useStickyState';
 import { TOPICS_PURCHASE_REQUEST } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 
@@ -16,7 +17,8 @@ import { supabase } from '../lib/supabaseClient';
 //
 // 承認・差し戻し・意見送信の直後は 'purchase-pending-changed' イベントで即時に数え直す
 export const usePurchasePendingCount = (userId: string | undefined, canPurchaseRequest: boolean | undefined) => {
-  const [pendingCount, setPendingCount] = useState(0);
+  const key = `purpend:${userId}:${canPurchaseRequest}`;
+  const [pendingCount, setPendingCount] = useStickyState(key, 0);
 
   const fetchPending = useCallback(async () => {
     if (!userId || !canPurchaseRequest) { setPendingCount(0); return; }
@@ -42,11 +44,12 @@ export const usePurchasePendingCount = (userId: string | undefined, canPurchaseR
     }
 
     setPendingCount((leaderRes.data?.length ?? 0) + opinionTargets.length - answeredCount);
-  }, [userId, canPurchaseRequest]);
+  }, [userId, canPurchaseRequest, setPendingCount]);
 
   // 備品購入の通知が来たとき・備品のページを出入りしたときに数え直す（2026-09-27 までは 30 秒ごと。休暇・勤務変更のバッジと同じ。他の人が先に処理したときも減る）
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
-  useRefreshOn(fetchPending, TOPICS_PURCHASE_REQUEST);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchPending, TOPICS_PURCHASE_REQUEST, key);
   useEffect(() => {
     window.addEventListener('purchase-pending-changed', fetchPending);
     return () => window.removeEventListener('purchase-pending-changed', fetchPending);

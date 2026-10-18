@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useRefreshOn } from './useRefreshOn';
+import { useStickyState } from './useStickyState';
 import { TOPICS_PURCHASE_REQUEST } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 
@@ -25,7 +26,8 @@ export const usePurchaseUnconfirmedCount = (
   userId: string | undefined,
   canPurchaseRequest: boolean | undefined,
 ) => {
-  const [unconfirmedCount, setUnconfirmedCount] = useState(0);
+  const key = `purunc:${userId}:${canPurchaseRequest}`;
+  const [unconfirmedCount, setUnconfirmedCount] = useStickyState(key, 0);
 
   const fetchUnconfirmed = useCallback(async () => {
     if (!userId || !canPurchaseRequest) { setUnconfirmedCount(0); return; }
@@ -34,11 +36,12 @@ export const usePurchaseUnconfirmedCount = (
     //    「対応したつもり」になってしまう。前の値のまま次の数え直しを待つ
     if (error) return;
     setUnconfirmedCount(typeof data === 'number' ? data : 0);
-  }, [userId, canPurchaseRequest]);
+  }, [userId, canPurchaseRequest, setUnconfirmedCount]);
 
   // 備品購入の通知が来たとき・備品のページを出入りしたときに数え直す（2026-09-27 までは 30 秒ごと）
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
-  useRefreshOn(fetchUnconfirmed, TOPICS_PURCHASE_REQUEST);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchUnconfirmed, TOPICS_PURCHASE_REQUEST, key);
 
   // 「✓ 確認した」を押した直後・投稿した直後に数え直す。
   // これが無いと、押したのに次の数え直しまでバッジが残り「押しても効かない」と受け取られる

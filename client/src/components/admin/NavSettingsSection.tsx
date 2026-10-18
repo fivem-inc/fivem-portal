@@ -35,7 +35,7 @@ function fullOrder(saved: string[]): NavKey[] {
   const missing = NAV_REORDERABLE.filter(k => !known.includes(k));
   return [...missing.filter(k => NAV_FRONT_IF_NEW.includes(k)), ...known, ...missing.filter(k => !NAV_FRONT_IF_NEW.includes(k))];
 }
-type MsgArea = 'reorder' | 'two_row' | 'split_home' | 'order';
+type MsgArea = 'reorder' | 'two_row' | 'split_home' | 'two_row_choice' | 'order';
 
 const NavSettingsSection: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
@@ -246,6 +246,8 @@ const NavSettingsSection: React.FC = () => {
         `オフにすると、対象の方のナビは元の並びに戻ります。${personalCount ? `自分で並べた並び（${personalCount}人分）は消えず、オンに戻すと元に戻ります。` : ''}`)}
       {ruleEditor('two_row', 'スマホの2段（ページの上では2段・下へ動かすと1段）を使う人',
         'オフにすると、対象の方のスマホのナビは今までの1段に戻ります。')}
+      {ruleEditor('two_row_choice', '2段を自分で選べる人（「設定」で 2段／1段 を選ぶ・選んでいない人は上の「2段を使う人」に従う）',
+        'オフにすると、選ぶ欄が消え、上の「2段を使う人」の設定に戻ります（選んだ形は消えず、オンに戻すと元に戻ります）。')}
       {ruleEditor('split_home', 'ホームと交通費を分ける（🏠 ホーム と 🚃 交通費 の2つのボタン）人',
         'オフにすると、対象の方は今までどおり「🏠 交通費」の1ページに戻ります（申請の記録は変わりません）。')}
 

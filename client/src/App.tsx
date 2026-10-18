@@ -59,9 +59,11 @@ import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePubli
 import { useRoles } from './hooks/useRoles';
 import { buildNavItems, navItemsSignature, applyNavOrder, navRolloutOn } from './lib/navItems';
 import { useMyNavOrder } from './hooks/useMyNavOrder';
+import { useMyNavTwoRow } from './hooks/useMyNavTwoRow';
 import { useNavRolloutOn } from './hooks/useNavRolloutOn';
 import { NAV_ROW2_HEIGHT, setNavExtraTop, useNavExtraTop } from './lib/navLayout';
 import { useRefreshOn } from './hooks/useRefreshOn';
+import { useStickyState } from './hooks/useStickyState';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
 import { TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
@@ -510,7 +512,7 @@ const ProtectedLayout: React.FC = () => {
 interface NotificationRow { id: string; message: string; sub_message: string | null; read: boolean; created_at: string; source_type: string | null; reference_id: string | null; event_key: string | null; }
 
 const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
-  const [notifs, setNotifs] = useState<NotificationRow[]>([]);
+  const [notifs, setNotifs] = useStickyState<NotificationRow[]>('bell:' + userId, []);
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -525,12 +527,13 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const fetchNotifs = useCallback(async () => {
     const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id, event_key').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
     if (data) setNotifs(data);
-  }, [userId]);
+  }, [userId, setNotifs]);
 
   // 🚨 30 秒ごとをやめ、新しい通知が来たとき（通知の表の新着は必ず 'bell' を立てる）・前面復帰の全件・ベルを開いたときだけ読む
   //    （2026-09-27・通信量の見直し 段3。ここだけで月 11 万回・本文つき約 7 KB）。
   //    🚨 数字は今までどおり「読んだ最新 30 件の中の未読」。一覧はいつも読み込み済みなので、開いた瞬間に空にならず、bell=1 の着地もそのまま光る
-  useRefreshOn(fetchNotifs, TOPICS_BELL);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchNotifs, TOPICS_BELL, 'bell:' + userId);
   // 連絡板でメッセージを読んだ直後にベルを読み直す（2026-09-10 ユーザー依頼）。
   // 🚨 これが無いと、読んだのに次の数え直しまで数字が減らず「効いていない」ように見える。
   useEffect(() => {
@@ -738,8 +741,8 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
 
 // 🚨 enabled=false のときは1本も問い合わせない（退職者は連絡板の表を読めないため。2026-09-20）
 const useBoardUnread =(userId: string | undefined, pathname: string, enabled = true) => {
-  const [channelCount, setChannelCount] = useState(0);
-  const [inboxCount,   setInboxCount]   = useState(0);
+  const [channelCount, setChannelCount] = useStickyState('board:ch:' + userId, 0);
+  const [inboxCount,   setInboxCount]   = useStickyState('board:in:' + userId, 0);
   const prevPath = useRef(pathname);
 
   const fetchCount = useCallback(async () => {
@@ -808,7 +811,7 @@ const useBoardUnread =(userId: string | undefined, pathname: string, enabled = t
 
     setChannelCount(channelUnread);
     setInboxCount(inboxUnread);
-  }, [userId, enabled]);
+  }, [userId, enabled, setChannelCount, setInboxCount]);
 
   useEffect(() => {
     if (prevPath.current === '/board' && pathname !== '/board') {
@@ -819,13 +822,14 @@ const useBoardUnread =(userId: string | undefined, pathname: string, enabled = t
 
   // 🚨 30 秒ごとの数え直しをやめ、通知の表に連絡板の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段1）。
   //    ここだけで月 66 万回（全体の約 4 割）あった。仕組みは hooks/useRefreshOn.ts・lib/refreshBus.ts
-  useRefreshOn(fetchCount, TOPICS_BOARD);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchCount, TOPICS_BOARD, `board:${userId}:${enabled}`);
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
 // 勤務変更申請：自分の番の確認待ち件数（ShiftReportApprovalBannerと同じ判定ロジック）
 const useShiftPendingCount = (userId: string | undefined, roleTitle: string | undefined, isAdmin: boolean, canShiftReport: boolean | undefined) => {
-  const [pendingCount, setPendingCount] = useState(0);
+  const [pendingCount, setPendingCount] = useStickyState(`shift:${userId}:${roleTitle}:${isAdmin}:${canShiftReport}`, 0);
   // 🚨 役職名では判定しない（2026-09-09 属性化）。確認者＝承認者（フロア責任者を含む）
   const roles = useRoles();
   const isApprover = attrsFor(roles, roleTitle).is_approver;
@@ -836,10 +840,11 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
 
     const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted']);
     setPendingCount(data?.length ?? 0);
-  }, [userId, isApprover, isAdmin, canShiftReport]);
+  }, [userId, isApprover, isAdmin, canShiftReport, setPendingCount]);
 
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
-  useRefreshOn(fetchPending, TOPICS_SHIFT_REPORT);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchPending, TOPICS_SHIFT_REPORT, `shift:${userId}:${roleTitle}:${isAdmin}:${canShiftReport}`);
   useEffect(() => {
     window.addEventListener('shift-pending-changed', fetchPending);
     return () => window.removeEventListener('shift-pending-changed', fetchPending);
@@ -848,21 +853,26 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
 };
 
 // 残業・時間管理：自分宛の確認待ち件数
-const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
-  const [pendingCount, setPendingCount] = useState(0);
+// 🚨 2026-10-18：受理する役職（is_approver・リーダーも含む）と管理者だけが数える。ほかの人は申請先にならないので問い合わせない（通信量の見直し）
+const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolean | undefined, roleTitle: string | undefined, isAdmin: boolean) => {
+  const roles = useRoles();
+  const isApprover = isAdmin || attrsFor(roles, roleTitle).is_approver;
+  const key = `otpend:${userId}:${canOvertime}:${isApprover}`;
+  const [pendingCount, setPendingCount] = useStickyState(key, 0);
 
   const fetchPending = useCallback(async () => {
-    if (!userId || !canOvertime) { setPendingCount(0); return; }
+    if (!userId || !canOvertime || !isApprover) { setPendingCount(0); return; }
     const { data } = await supabase.from('overtime_reports')
       .select('id')
       .eq('reviewer_id', userId)
       .eq('entry_type', 'manual')
       .in('status', ['requested', 'reported']);
     setPendingCount(data?.length ?? 0);
-  }, [userId, canOvertime]);
+  }, [userId, canOvertime, isApprover, setPendingCount]);
 
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
-  useRefreshOn(fetchPending, TOPICS_OVERTIME);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchPending, TOPICS_OVERTIME, key);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchPending);
     return () => window.removeEventListener('overtime-pending-changed', fetchPending);
@@ -873,13 +883,14 @@ const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolea
 // 自分あての、まだ答えていない「打刻の確認」の件数（2026-10-15 ユーザー確定・残業のナビの数字に足す）。
 // 🚨 数え方は lib/clockInquiry の countMyOpenClockInquiries（user_id で絞る。経理は全員の確認が読めるため）
 const useClockInquiryOpenCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
-  const [count, setCount] = useState(0);
+  const [count, setCount] = useStickyState(`clockinq:${userId}:${canOvertime}`, 0);
   const fetchCount = useCallback(async () => {
     if (!userId || !canOvertime) { setCount(0); return; }
     setCount(await countMyOpenClockInquiries(userId));
-  }, [userId, canOvertime]);
+  }, [userId, canOvertime, setCount]);
   // 確認が届くとベル（overtime:clock_inquiry）が入るので、残業の話題の数え直しに乗る
-  useRefreshOn(fetchCount, TOPICS_OVERTIME);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchCount, TOPICS_OVERTIME, `clockinq:${userId}:${canOvertime}`);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchCount);
     return () => window.removeEventListener('overtime-pending-changed', fetchCount);
@@ -890,8 +901,8 @@ const useClockInquiryOpenCount = (userId: string | undefined, canOvertime: boole
 // 自分の「実績が未報告の事前申請」（受理済み request_confirmed で勤務日を過ぎた・終日除く）件数。
 // 本人へのリマインド（ホームバナー＋タブバッジ）に使う。
 const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
-  const [count, setCount] = useState(0);
-  const [dates, setDates] = useState<string[]>([]);
+  const [count, setCount] = useStickyState(`unrep:${userId}:${canOvertime}`, 0);
+  const [dates, setDates] = useStickyState<string[]>(`unrepd:${userId}:${canOvertime}`, []);
   const fetchUnreported = useCallback(async () => {
     if (!userId || !canOvertime) { setCount(0); setDates([]); return; }
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD(JST)
@@ -906,9 +917,10 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
       .filter(r => r.work_date < today && !isFullDayReport(r.application_types))
       .map(r => r.work_date).sort();
     setCount(list.length); setDates(list);
-  }, [userId, canOvertime]);
+  }, [userId, canOvertime, setCount, setDates]);
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
-  useRefreshOn(fetchUnreported, TOPICS_OVERTIME);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchUnreported, TOPICS_OVERTIME, `unrep:${userId}:${canOvertime}`);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchUnreported);
     return () => window.removeEventListener('overtime-pending-changed', fetchUnreported);
@@ -964,7 +976,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const purchaseNavBadge = purchasePending + purchaseUnconfirmed;
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
-  const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime);
+  const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime, roleTitle, isAdmin);
   // 管理者の設定もれ（次年度の会社カレンダー未登録など）。管理者にだけ数える
   const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(isAdmin);
   // 「⚙️ 管理」を出すか：管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき（hooks/useAdminAccess.ts）
@@ -1024,7 +1036,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const twoRowRule = navRolloutOn(featurePublishState.navRollout.two_row, userId, myRoleId, !!previewRole);
+  // 2段：本人が「設定」で選べる人（two_row_choice）で、選んでいればその選択。選んでいなければ管理画面の「2段を使う人」（2026-10-17）
+  // 🚨 役職プレビュー中は本人の選択を使わない（管理者本人の選択が混ざるため）
+  const twoRowChoiceOn = navRolloutOn(featurePublishState.navRollout.two_row_choice, userId, myRoleId, !!previewRole);
+  const myTwoRow = useMyNavTwoRow(userId);
+  const twoRowRule = twoRowChoiceOn && !previewRole && myTwoRow !== null
+    ? myTwoRow
+    : navRolloutOn(featurePublishState.navRollout.two_row, userId, myRoleId, !!previewRole);
   const row1Count = Math.max(1, Math.floor((navW - 24 - rightW - 8 + 4) / 48));
   const twoRowActive = isMobile && !isRetiree && twoRowRule && location.pathname !== '/board' && shownNavItems.length > row1Count;
   const [collapsed, setCollapsed] = useState(() => window.scrollY > 48);
@@ -2033,9 +2051,9 @@ const PurchaseApprovalBanner: React.FC<{ userId: string; canPurchaseRequest: boo
 };
 
 // 残業・時間調整の確認待ち集計バナー（確認者のみ・対応すると自動で消える）
-const OvertimeApprovalBanner: React.FC<{ userId: string; canOvertime: boolean }> = ({ userId, canOvertime }) => {
+const OvertimeApprovalBanner: React.FC<{ userId: string; canOvertime: boolean; roleTitle: string; isAdmin: boolean }> = ({ userId, canOvertime, roleTitle, isAdmin }) => {
   const navigate = useNavigate();
-  const { pendingCount } = useOvertimePendingCount(userId, canOvertime);
+  const { pendingCount } = useOvertimePendingCount(userId, canOvertime, roleTitle, isAdmin);
 
   if (pendingCount === 0) return null;
 
@@ -2091,7 +2109,7 @@ const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean 
 const APP_REQUEST_KIND_LABEL: Record<string, string> = { overtime: '残業・時間管理', leave: '休暇' };
 interface MyOpenRequest { id: string; kind: string; target_dates: string[] | null; due_date: string | null }
 const useAppRequestCount = (userId: string | undefined) => {
-  const [rows, setRows] = useState<MyOpenRequest[]>([]);
+  const [rows, setRows] = useStickyState<MyOpenRequest[]>('appreq:' + userId, []);
   const fetchReq = useCallback(async () => {
     if (!userId) { setRows([]); return; }
     const { data, error } = await supabase.from('application_requests')
@@ -2101,9 +2119,10 @@ const useAppRequestCount = (userId: string | undefined) => {
       .order('due_date', { ascending: true });
     if (error) return;
     setRows((data ?? []) as MyOpenRequest[]);
-  }, [userId]);
+  }, [userId, setRows]);
   // 30 秒ごとをやめ、依頼が届いたとき・残業／休暇のページを出入りしたときだけ数え直す（2026-09-27・段2）
-  useRefreshOn(fetchReq, TOPICS_APPLICATION_REQUEST);
+  // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
+  useRefreshOn(fetchReq, TOPICS_APPLICATION_REQUEST, 'appreq:' + userId);
   return { count: rows.length, rows };
 };
 
@@ -2534,7 +2553,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       <RetireChecklistBanner show={isAdmin || isManagerPlus} isDark={isDarkMode} />
 
       {/* ④-4 残業・時間調整の確認待ちバナー（確認者のみ） */}
-      <OvertimeApprovalBanner userId={user.id} canOvertime={canOvertime} />
+      <OvertimeApprovalBanner userId={user.id} canOvertime={canOvertime} roleTitle={roleTitle} isAdmin={isAdmin} />
       <OvertimeUnreportedBanner userId={user.id} canOvertime={canOvertime} />
 
       {/* ④-5 残業超過FYIバナー（本人・リーダー自チーム・マネージャー以上。閉じられる） */}

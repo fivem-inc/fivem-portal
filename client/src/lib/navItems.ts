@@ -135,11 +135,13 @@ export function mergeSavedNavOrder(visibleOrder: readonly string[], prevSaved: r
 
 /** 試してから広げる切り替え（app_settings 'nav_rollout' の reorder／two_row） */
 export interface NavRolloutRule { mode: 'off' | 'selected' | 'all'; user_ids: string[]; role_ids: string[] }
-export interface NavRollout { reorder: NavRolloutRule; two_row: NavRolloutRule; split_home: NavRolloutRule }
+/** two_row_choice＝「設定」で本人が 2段／1段 を選べる人（2026-10-17・選んでいない人は two_row に従う） */
+export interface NavRollout { reorder: NavRolloutRule; two_row: NavRolloutRule; split_home: NavRolloutRule; two_row_choice: NavRolloutRule }
 export const NAV_ROLLOUT_OFF: NavRollout = {
   reorder: { mode: 'off', user_ids: [], role_ids: [] },
   two_row: { mode: 'off', user_ids: [], role_ids: [] },
   split_home: { mode: 'off', user_ids: [], role_ids: [] },
+  two_row_choice: { mode: 'off', user_ids: [], role_ids: [] },
 };
 
 /** 読んだ値を形を確かめて取り込む（壊れていたら「オフ」） */
@@ -151,7 +153,7 @@ export function parseNavRollout(v: unknown): NavRollout {
     return { mode, user_ids: ids(o.user_ids), role_ids: ids(o.role_ids) };
   };
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
-  return { reorder: rule(o.reorder), two_row: rule(o.two_row), split_home: rule(o.split_home) };
+  return { reorder: rule(o.reorder), two_row: rule(o.two_row), split_home: rule(o.split_home), two_row_choice: rule(o.two_row_choice) };
 }
 
 /**

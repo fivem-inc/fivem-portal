@@ -7,8 +7,10 @@ import { requestPushPermission, unsubscribePush, getPushPermissionStatus } from 
 import PushQuietHoursSection from '../components/PushQuietHoursSection';
 import TextScaleChoice from '../components/TextScaleChoice';
 import NavOrderSettings from '../components/NavOrderSettings';
+import NavTwoRowSettings from '../components/NavTwoRowSettings';
 import { SettingsGroup, SettingsRow } from '../components/SettingsRow';
 import { useNavReorderOn } from '../hooks/useNavReorderOn';
+import { useNavRolloutOn } from '../hooks/useNavRolloutOn';
 import { TEXT_SCALES, getTextScale, textScaleSupported } from '../lib/textScale';
 import { backBtn } from '../lib/buttonStyles';
 
@@ -28,6 +30,7 @@ export default function AccountSettings() {
   const [openKey, setOpenKey] = useState<string | null>(null);
   const toggle = (k: string) => () => setOpenKey(cur => (cur === k ? null : k));
   const navReorderOn = useNavReorderOn();
+  const navTwoRowChoiceOn = useNavRolloutOn('two_row_choice');   // 2段を自分で選べる人だけ「スマホのナビ」を出す（2026-10-17）
   const [scale, setScale] = useState(getTextScale);
   const scaleLabel = textScaleSupported() ? (TEXT_SCALES.find(t => t.value === scale)?.label ?? '標準') : '';
 
@@ -206,6 +209,7 @@ export default function AccountSettings() {
         <SettingsGroup label="ナビ" colors={colors}>
           {/* 上のナビの並び（2026-10-17・管理画面で「並べ替え」がオンの人だけに出る） */}
           {navReorderOn && <NavOrderSettings isDark={isDark} colors={colors} open={openKey === 'nav'} onToggle={toggle('nav')} />}
+          {navTwoRowChoiceOn && <NavTwoRowSettings isDark={isDark} colors={colors} open={openKey === 'navTwoRow'} onToggle={toggle('navTwoRow')} />}
         </SettingsGroup>
 
         <button

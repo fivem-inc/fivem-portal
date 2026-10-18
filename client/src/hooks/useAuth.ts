@@ -114,6 +114,8 @@ interface AuthCache {
   isFaqEditor?: boolean;
   /** 上のナビの本人の並び（2026-10-17・任意の項目。🚨 AUTH_CACHE_VERSION は上げない＝上げると全員の控えが消えて一度ボタンが減って見える） */
   navOrder?: string[] | null;
+  /** スマホのナビの2段の本人の選択（2026-10-17・任意の項目・null＝管理者の設定に従う） */
+  navTwoRow?: boolean | null;
 }
 function readAuthCache(userId: string): AuthCache | null {
   try {
@@ -184,6 +186,8 @@ interface ProfileLoad {
   isFaqEditor: boolean;
   /** 上のナビの本人の並び（null＝管理者の並び） */
   navOrder: string[] | null;
+  /** スマホのナビの2段の本人の選択（null＝管理者の設定に従う） */
+  navTwoRow: boolean | null;
   /** 🚨 null は「取れなかった」。空の権限で上書きしないため、呼び出し側で既存を保持する */
   perms: Record<string, boolean> | null;
 }
@@ -204,6 +208,18 @@ export function setMyNavOrderLocal(userId: string, navOrder: string[] | null): v
   if (c) { const { v: _v, ...rest } = c; void _v; writeAuthCache(userId, { ...rest, navOrder }); }
   try { window.dispatchEvent(new CustomEvent(MY_NAV_ORDER_EVENT, { detail: { userId, navOrder } })); } catch { /* 古いブラウザ */ }
 }
+// ── スマホのナビの2段の本人の選択（2026-10-17）。並びと同じく、プロフィールを読むときに一緒に読む（読み込みは増やさない）
+export const MY_NAV_TWO_ROW_EVENT = 'fivem-my-nav-two-row';
+export function readMyNavTwoRow(userId: string): boolean | null {
+  if (sharedResult && sharedResult.userId === userId && sharedResult.value) return sharedResult.value.navTwoRow;
+  return readAuthCache(userId)?.navTwoRow ?? null;
+}
+export function setMyNavTwoRowLocal(userId: string, navTwoRow: boolean | null): void {
+  if (sharedResult && sharedResult.userId === userId && sharedResult.value) sharedResult = { ...sharedResult, value: { ...sharedResult.value, navTwoRow } };
+  const c = readAuthCache(userId);
+  if (c) { const { v: _v, ...rest } = c; void _v; writeAuthCache(userId, { ...rest, navTwoRow }); }
+  try { window.dispatchEvent(new CustomEvent(MY_NAV_TWO_ROW_EVENT, { detail: { userId, navTwoRow } })); } catch { /* 古いブラウザ */ }
+}
 let sharedInflight: { userId: string; promise: Promise<ProfileLoad | null> } | null = null;
 let sharedResult: { userId: string; at: number; value: ProfileLoad | null } | null = null;
 
@@ -216,11 +232,12 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
   const promise = (async (): Promise<ProfileLoad | null> => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor, nav_order')
+      .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor, nav_order, nav_two_row')
       .eq('id', userId)
       .single();
     if (error || !data) return null;
     const navOrder = Array.isArray(data.nav_order) ? (data.nav_order as string[]) : null;
+    const navTwoRow = typeof data.nav_two_row === 'boolean' ? data.nav_two_row : null;
 
     const role = data.role_title || '一般';
     const perms = await fetchPermsForRole(role);
@@ -237,9 +254,11 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
       perms: perms ?? readAuthCache(userId)?.perms ?? {},
       isFaqEditor: !!data.is_faq_editor,
       navOrder,
+      navTwoRow,
     });
     // ナビ（hooks/useMyNavOrder）へ、読み直した本人の並びを知らせる
     try { window.dispatchEvent(new CustomEvent(MY_NAV_ORDER_EVENT, { detail: { userId, navOrder } })); } catch { /* 古いブラウザ */ }
+    try { window.dispatchEvent(new CustomEvent(MY_NAV_TWO_ROW_EVENT, { detail: { userId, navTwoRow } })); } catch { /* 古いブラウザ */ }
 
     // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
     //    本人の最終アクセス記録は RPC 経由にする（2026-08-10）
@@ -254,6 +273,7 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
       leaveRequestEnabled: !!data.leave_request_enabled,
       isFaqEditor: !!data.is_faq_editor,
       navOrder,
+      navTwoRow,
       perms,
     };
   })();

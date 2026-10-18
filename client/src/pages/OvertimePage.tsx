@@ -4221,7 +4221,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ このページでできること</p>
                 <ol style={{ margin: '0 0 10px', paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
                   <li>申請・報告した内容と、今期の合計時間数を確認できます。</li>
-                  <li>事前申請した日は、その日の勤務が終わるころに「実績を報告する」ボタンが出ます（<b>受理を待たずに報告できます</b>／<b>残業が無かった日も「残業なし」で報告できます</b>）。</li>
+                  <li>事前申請した日は、その日の勤務が終わるころに「実績を報告する」ボタンが出ます（<b>受理を待たずに報告できます</b>／<b>残業しなかった日も「残業なし」で報告してください</b>）。</li>
                   <li>差し戻された申請は、内容を直して再提出できます。</li>
                 </ol>
                 <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ 変更・取消のルール</p>
@@ -4552,7 +4552,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                   実績を報告する
                                 </button>
                                 <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
-                                  {isReportableUnapproved && '受理を待たずに報告して大丈夫です。'}残業が無かった日も、こちらから「残業なし」で報告できます
+                                  {isReportableUnapproved && '受理を待たずに報告して大丈夫です。'}
+                                  {(r.application_types ?? []).some(t => t === 'overtime' || t === 'early_start' || t === 'holiday_work')
+                                    ? '残業しなかった日も「残業なし」で報告してください'
+                                    : '予定と違った日も報告してください'}
                                 </p>
                               </>
                             )}
@@ -4627,7 +4630,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 // 取消は常に控えめ（中央・小さめ・同じ文言）。主役は実績報告・内容の確認。
                                 <div style={{ textAlign: 'center', marginTop: 10 }}>
                                   <button onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
-                                    style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
+                                    style={{ ...backBtn(isDark), padding: '6px 16px', fontSize: 12 }}>
                                     この申請を取消する
                                   </button>
                                 </div>
