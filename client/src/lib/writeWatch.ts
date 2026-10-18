@@ -20,7 +20,7 @@ import type { RefreshKey, RefreshTopic } from './refreshBus';
 /** 数字に関係ない書き込み（表・RPC・Edge Function の名前） */
 const IGNORE = new Set([
   'touch_last_sign_in', 'record_session_device', 'record_logout', 'set_my_nav_order', 'set_my_nav_two_row',
-  'set_payroll_close_notice_dismissed', 'faq_public_event_log', 'faq_query_log', 'faq_public_log', 'push_subscriptions',
+  'faq_public_event_log', 'faq_query_log', 'faq_public_log', 'push_subscriptions',
   'login_events', 'session_devices', 'gcal-sync', 'send-push', 'send-email', 'slack-notify', 'push-dispatch',
   'record-signup-ip', 'receipt-signed-url', 'storage-usage-check', 'password-setup-mail',
   'overtime_banner_dismissals',   // 目安超えの帯を閉じた記録（ナビの数字には出ない）
@@ -28,6 +28,8 @@ const IGNORE = new Set([
 
 /** 表・RPC・Edge Function の名前 → 話題 */
 const TOPIC_RULES: [RegExp, RefreshTopic[]][] = [
+  // ホームの新着（2026-10-18）：［確認した］・ホームを開いた・締め日を閉じる・催促／有休奨励日／出勤のお願いへの回答
+  [/^home_|^set_payroll_close_notice|^respond_scheduled_reminder|^answer_encouragement_day|^shift_adjust_answer_part_request/, ['home']],
   [/^board_|^board-/, ['board']],
   [/^notifications$|^mark_.*read/, ['bell']],
   [/^overtime|clock_inquiry|^overtime-/, ['overtime', 'application_request']],

@@ -19,6 +19,7 @@ const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
 const StaffChecklistTabs = React.lazy(() => import('./components/StaffChecklistTabs'));
 const ChangePassword = React.lazy(() => import('./pages/ChangePassword'));
 const AccountSettings = React.lazy(() => import('./pages/AccountSettings'));
+const AnnouncementsHistory = React.lazy(() => import('./pages/AnnouncementsHistory'));
 const NotificationSettings = React.lazy(() => import('./pages/NotificationSettings'));
 const SupabaseSettingsCheck = React.lazy(() => import('./pages/SupabaseSettingsCheck'));
 
@@ -64,6 +65,10 @@ import { useNavRolloutOn } from './hooks/useNavRolloutOn';
 import { NAV_ROW2_HEIGHT, setNavExtraTop, useNavExtraTop } from './lib/navLayout';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { useStickyState } from './hooks/useStickyState';
+import { useHomeFeed } from './hooks/useHomeFeed';
+import { newHomeItems, homeKindsText } from './lib/homeFeed';
+import { HomeNewContext, useHomeNew, isNewKey, isAckedKey } from './lib/homeNewContext';
+import { NewTag, AckButton } from './components/HomeNew';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
 import { TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
@@ -396,6 +401,10 @@ const AnnouncementBanner: React.FC = () => {
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_DISMISS_KEY));
   const [remindDismissed, setRemindDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_REMIND_DISMISS_KEY));
   const [expanded, setExpanded] = useState<string[]>([]); // 初期は全て閉じた状態
+  // ［確認した］（2026-10-18）：記録はアカウント（DB の home_acks・my_home_feed の acked）。押した直後はここでも隠す
+  const { newKeys: homeNewKeys, feed: homeFeedCtx } = useHomeNew();
+  const [ackedLocal, setAckedLocal] = useState<string[]>([]);
+  const annKey = (a: Announcement) => `ann:${a.id}:${isInRemindWindow(a) ? 'r' : 'n'}`;
   const toggle = (id: string) => setExpanded(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   useEffect(() => {
@@ -416,27 +425,13 @@ const AnnouncementBanner: React.FC = () => {
     });
   }, []);
 
-  const dismiss = (a: Announcement) => {
-    // リマインド期間中に閉じたらリマインド用キーへ、それ以外は通常キーへ
-    if (isInRemindWindow(a)) {
-      setRemindDismissed(prev => {
-        const next = prev.includes(a.id) ? prev : [...prev, a.id];
-        writeDismissedIds(ANNOUNCEMENT_REMIND_DISMISS_KEY, next);
-        return next;
-      });
-    } else {
-      setDismissed(prev => {
-        const next = prev.includes(a.id) ? prev : [...prev, a.id];
-        writeDismissedIds(ANNOUNCEMENT_DISMISS_KEY, next);
-        return next;
-      });
-    }
-  };
+  // 🚨 2026-10-18：✕（端末に閉じた記録）はやめ、［確認した］（アカウントに記録）にした。前に端末で閉じた記録（dismissed・remindDismissed）は読み続ける＝もう一度は出さない
 
   const visible = items.filter(a => {
     const remindPhase = isInRemindWindow(a);
     // リマインド期間中は通常フェーズで閉じたかどうかを無視し、リマインド用キーだけで判定
     // （＝一度閉じた人にも再表示する）。それ以外は通常キーで判定。
+    if (ackedLocal.includes(annKey(a)) || isAckedKey(homeFeedCtx, annKey(a))) return false;
     return remindPhase ? !remindDismissed.includes(a.id) : !dismissed.includes(a.id);
   });
   if (visible.length === 0) return null;
@@ -454,6 +449,7 @@ const AnnouncementBanner: React.FC = () => {
             <div onClick={() => toggle(a.id)} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
               <div style={{ fontSize: 14, fontWeight: 'bold', color: '#0d47a1', marginBottom: isOpen ? 4 : 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ flex: 1, overflow: isOpen ? 'visible' : 'hidden', textOverflow: 'ellipsis', whiteSpace: isOpen ? 'normal' : 'nowrap' }}>
+                  {isNewKey(homeNewKeys, annKey(a)) && <NewTag />}
                   {remindPhase && <span style={{ fontSize: 11, fontWeight: 700, color: '#c62828', marginRight: 6 }}>【再掲・もうすぐ期限】</span>}
                   {a.title}
                 </span>
@@ -463,8 +459,7 @@ const AnnouncementBanner: React.FC = () => {
                 <div style={{ fontSize: 12.5, color: '#1565c0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{a.body}</div>
               )}
             </div>
-            <button onClick={() => dismiss(a)} aria-label="閉じる"
-              style={{ background: 'none', border: 'none', fontSize: 16, color: '#5a8bc0', cursor: 'pointer', flexShrink: 0, lineHeight: 1, padding: 0 }}>✕</button>
+            <AckButton keys={[annKey(a)]} onDone={() => setAckedLocal(prev => [...prev, annKey(a)])} />
           </div>
         </div>
         );
@@ -977,6 +972,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
   const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime, roleTitle, isAdmin);
+  // 🏠 の赤い数字＝ホームを最後に見たあとに届いた、まだ確認していないお知らせ（2026-10-18・hooks/useHomeFeed・DB の my_home_feed 1本）
+  const { newCount: homeNewCount } = useHomeFeed(userId);
+  const homeNavBadge = location.pathname === '/' ? 0 : homeNewCount;
   // 管理者の設定もれ（次年度の会社カレンダー未登録など）。管理者にだけ数える
   const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(isAdmin);
   // 「⚙️ 管理」を出すか：管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき（hooks/useAdminAccess.ts）
@@ -1008,7 +1006,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     isPub,
     // 🚨 休暇の数字は leaveBadge（承認待ち＋申請の依頼）。前は出す条件が leaveBadge なのに数字が leavePending で、依頼だけのとき「0」と出ていた
     // 🚨 連絡板を開いている間は数字を出さない（前と同じ）
-    badges: { admin: adminSetupBadge, leave: leaveBadge, shift: shiftPending, overtime: overtimeBadge, purchase: purchaseNavBadge,
+    badges: { admin: adminSetupBadge, leave: leaveBadge, shift: shiftPending, overtime: overtimeBadge, purchase: purchaseNavBadge, home: homeNavBadge,
       board: location.pathname !== '/board' ? boardUnread : 0 },
   });
   // 並べ替え（2026-10-17・2b）。🚨 管理画面の切り替え（nav_rollout.reorder）が効いている人だけ。オフの人は今の並びのまま（すぐ元に戻せるように）
@@ -2323,6 +2321,23 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
   // 🚨 帯やカードは部品ごとに自分で読んで出し分けるので、描いた結果（文字があるか）で判断する
   const homeTopRef = useRef<HTMLDivElement>(null);
   const [homeEmpty, setHomeEmpty] = useState(false);
+  // ホームの新着（2026-10-18）：開いた時点で DB の「最後に見た時刻」を今にし、その前の時刻より後に届いたものを「新しいお知らせ」として1行で出す
+  const { feed: homeFeed, markSeenLocal } = useHomeFeed(user?.id);
+  const [homePrevSeen, setHomePrevSeen] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (mode === 'expense' || !user?.id) return;
+    let alive = true;
+    void (async () => {
+      const { data, error } = await supabase.rpc('home_mark_seen');
+      if (!alive) return;
+      if (error) { setHomePrevSeen(undefined); return; }   // 記録できなかったときは「新しいお知らせ」の1行を出さない
+      setHomePrevSeen((data as string | null) ?? null);
+      markSeenLocal();
+    })();
+    return () => { alive = false; };
+  }, [mode, user?.id, markSeenLocal]);
+  const homeNewItems = homeFeed && homePrevSeen !== undefined ? newHomeItems(homeFeed.items, homePrevSeen) : [];
+  const homeNewCtx = { newKeys: new Set(homeNewItems.map(i => i.k)), feed: homeFeed };
   useEffect(() => {
     if (mode !== 'home') return;
     const el = homeTopRef.current;
@@ -2490,7 +2505,13 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       </div>
 
       {/* ── 上半分（お知らせ・帯）。交通費のページでは出さない ── */}
-      {mode !== 'expense' && (<div ref={homeTopRef}>
+      {mode !== 'expense' && (<div ref={homeTopRef}><HomeNewContext.Provider value={homeNewCtx}>
+      {homeNewItems.length > 0 && (
+        <div role="status" style={{ margin: '0 0 10px', padding: '8px 12px', borderRadius: 10, fontSize: 13.5, lineHeight: 1.6, textAlign: 'left',
+          background: isDarkMode ? '#1e3a5f' : '#e7f1ff', border: `1px solid ${isDarkMode ? '#2f5f9e' : '#b6d4fe'}`, color: isDarkMode ? '#cfe2ff' : '#084298' }}>
+          <b>新しいお知らせ {homeNewItems.length}件</b>：{homeKindsText(homeNewItems)}
+        </div>
+      )}
       {/* 退職して申請期間中の人への案内（3段目・2026-09-20）。ここだけは退職者にも出す */}
       {isRetiree && (
         <RetireeHomeNotice
@@ -2599,7 +2620,14 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
         </div>
       )}
 
-      </div>)}
+      </HomeNewContext.Provider></div>)}
+      {/* 🚨 「新しいお知らせはありません」の判定（homeTopRef の文字）に入らないよう、帯の枠の外に置く。過去のお知らせ（2026-10-18 ユーザー確定 A）：［確認した］で消えたお知らせも、届いた日・確認した日・掲載期限つきで読める */}
+      {mode !== 'expense' && !isRetiree && (
+        <div style={{ textAlign: 'right', margin: '2px 0 10px' }}>
+          <button type="button" onClick={() => navigate('/announcements')}
+            style={{ background: 'none', border: 'none', color: isDarkMode ? '#90caf9' : '#0d6efd', fontSize: 13, cursor: 'pointer', padding: '4px 0' }}>過去のお知らせ ›</button>
+        </div>
+      )}
       {mode === 'home' && homeEmpty && (
         <p style={{ textAlign: 'center', fontSize: 14, color: isDarkMode ? '#adb5bd' : '#6c757d', margin: '24px 0' }}>新しいお知らせはありません</p>
       )}
@@ -3006,6 +3034,8 @@ function App() {
             {/* 旧URL。ブックマークやメール内リンクから来ても迷子にならないよう転送する */}
             <Route path="/help" element={<Navigate to="/faq" replace />} />
             <Route path="/account" element={<Suspense fallback={<PageLoader />}><AccountSettings /></Suspense>} />
+            {/* 過去のお知らせ（2026-10-18・ホームのいちばん下から） */}
+            <Route path="/announcements" element={<Suspense fallback={<PageLoader />}><AnnouncementsHistory /></Suspense>} />
             <Route path="/notification-settings" element={<Suspense fallback={<PageLoader />}><NotificationSettings /></Suspense>} />
             <Route path="/change-email" element={<Suspense fallback={<PageLoader />}><ChangeEmail /></Suspense>} />
             <Route path="/change-password" element={<Suspense fallback={<PageLoader />}><ChangePassword /></Suspense>} />

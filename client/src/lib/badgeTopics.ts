@@ -40,6 +40,8 @@ export function newRowTopics(seen: ReadonlySet<string>, rows: readonly LedgerRow
 
 // 各フックが購読する話題（hooks/useRefreshOn.ts）。毎回作ると購読し直しになるので、ここで1回だけ作る
 export const TOPICS_BOARD = ['board'] as const;
+/** ホームの新着（hooks/useHomeFeed）：新しいベル通知（締め日・お知らせ・目安超え等は必ずベルが立つ）・安否確認・催促（board）・自分の書き込み */
+export const TOPICS_HOME_FEED = ['bell', 'safety', 'board', 'home'] as const;
 export const TOPICS_LEAVE = ['leave'] as const;
 export const TOPICS_SHIFT_REPORT = ['shift_report'] as const;
 export const TOPICS_OVERTIME = ['overtime'] as const;

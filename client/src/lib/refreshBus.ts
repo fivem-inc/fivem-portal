@@ -24,7 +24,8 @@
 
 export type RefreshTopic =
   | 'board' | 'leave' | 'shift_report' | 'overtime' | 'application_request'
-  | 'purchase_request' | 'safety' | 'admin' | 'bell';
+  | 'purchase_request' | 'safety' | 'admin' | 'bell'
+  | 'home';   // ホームの新着（2026-10-18・自分の［確認した］・回答・ホームを開いた の書き込みで立つ＝lib/writeWatch）
 export type RefreshKey = RefreshTopic | 'all';
 export type TickReason = 'start' | 'foreground' | 'heartbeat';
 

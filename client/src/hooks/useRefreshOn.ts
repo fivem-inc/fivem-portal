@@ -25,10 +25,19 @@ setWriteEmitter(keys => emit(keys));
 /** ページを移っても読み直さない長さ（ほかの人の操作で減る数字は、最長これだけ遅れる） */
 export const MOUNT_FRESH_MS = 10 * 60 * 1000;
 const lastRunAt = new Map<string, number>();
+const DEDUPE_MS = 1500;
 
 export function useRefreshOn(fn: () => void, topics: readonly RefreshTopic[], key?: string): void {
   useEffect(() => {
-    const run = () => { if (key) lastRunAt.set(key, Date.now()); fn(); };
+    // 🚨 同じ key（ナビとホームの帯など）の読み直しが同時に来たら1回だけ（1.5秒以内の2回目は読まない・値は useStickyState で共有される）
+    const run = () => {
+      if (key) {
+        const prev = lastRunAt.get(key);
+        if (prev !== undefined && Date.now() - prev < DEDUPE_MS) return;
+        lastRunAt.set(key, Date.now());
+      }
+      fn();
+    };
     const last = key ? lastRunAt.get(key) : undefined;
     const fresh = last !== undefined && Date.now() - last < MOUNT_FRESH_MS && !writtenSince(topics, last);
     if (!fresh) run();

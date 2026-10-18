@@ -42,7 +42,7 @@ export interface NavContext {
   splitHome?: boolean;
   /** 機能の公開（管理画面の公開設定）。lib/featurePublished の isFeaturePublished を渡す */
   isPub: (key: string) => boolean;
-  badges: { admin: number; leave: number; shift: number; overtime: number; purchase: number; board: number };
+  badges: { admin: number; leave: number; shift: number; overtime: number; purchase: number; board: number; home?: number };
 }
 
 /** 今の人に出すボタンを、今の並び（初めの並び）で返す */
@@ -54,7 +54,7 @@ export function buildNavItems(c: NavContext): NavItem[] {
     // ホームの中の交通費のフォームは今までどおり使う人にだけ出る（App.tsx のホーム）
     { key: 'home', path: '/', icon: '🏠', ...(!c.splitHome && c.canExpense && c.isPub('expense')
         ? { label: '交通費', mobileLabel: '交通費' } : { label: 'ホーム', mobileLabel: 'ホーム' }),
-      activeColor: '#007bff', show: true },
+      activeColor: '#007bff', show: true, badge: c.badges.home ?? 0 },
     // ホームと交通費を分けた人だけ（2026-10-17 ユーザー確定：🚃・🏠 のすぐ右・並べ替えできる）。中身は /expense
     { key: 'expense', path: '/expense', icon: '🚃', label: '交通費', mobileLabel: '交通費', activeColor: '#007bff',
       show: !!c.splitHome && c.canExpense && c.isPub('expense') },

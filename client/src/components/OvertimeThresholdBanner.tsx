@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { logFail } from '../lib/logFail';
+import { useHomeNew } from '../lib/homeNewContext';
+import { NewTag, AckedTag, AckButton } from './HomeNew';
 
 // 残業がしきい値を超えたときのホームバナー。
 //
@@ -65,32 +66,14 @@ const OvertimeThresholdBanner: React.FC<{
     load();
   }, [userId, canOvertime, isAdmin, load]);
 
-  /** 閉じる。remindAfter を渡すとその時刻まで、渡さないと次の配信まで出さない */
-  const dismiss = async (targetIds: string[], remindAfter?: Date) => {
-    setData(prev => prev ? {
-      ...prev,
-      self: targetIds.includes(userId) ? null : prev.self,
-      members: prev.members.filter(m => !targetIds.includes(m.user_id)),
-    } : prev);
-    await supabase.from('overtime_banner_dismissals').upsert(
-      targetIds.map(id => ({
-        user_id: userId,
-        target_user_id: id,
-        pay_period_start: periodStart,
-        dismissed_at: new Date().toISOString(),
-        remind_after: remindAfter ? remindAfter.toISOString() : null,
-      })),
-      { onConflict: 'user_id,target_user_id,pay_period_start' }
-    ).then(...logFail('超過バナーを閉じた記録'));
-  };
-
-  /** 翌朝9時（定期リマインドの「後で」と同じ） */
-  const tomorrowMorning = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(9, 0, 0, 0);
-    return d;
-  };
+  // 🚨 2026-10-18：✕ と［後で再通知］はやめた（ユーザー確定）。［確認した］で 🏠 の数字だけ消え、帯は超えている間出し続ける。
+  //    もう一度数字が付くのは、超えた時間が伸びた・毎月の決まった日（送った時刻が変わる＝ DB の my_home_feed の印が変わる）
+  const { newKeys, feed } = useHomeNew();
+  const keysOf = (kind: 'overtime_self' | 'overtime_team') => (feed?.items ?? []).filter(i => i.kind === kind).map(i => i.k);
+  const selfKeys = keysOf('overtime_self');
+  const teamKeys = keysOf('overtime_team');
+  const allAcked = (keys: string[]) => keys.length > 0 && keys.every(k => feed?.items.some(i => i.k === k && i.acked));
+  const isNew = (keys: string[]) => keys.some(k => newKeys.has(k));
 
   if (!data) return null;
 
@@ -107,14 +90,6 @@ const OvertimeThresholdBanner: React.FC<{
   const btnMain: React.CSSProperties = {
     fontSize: 12, padding: '6px 12px', borderRadius: 6,
     background: TEXT, color: '#fff', border: 'none', cursor: 'pointer',
-  };
-  const btnSub: React.CSSProperties = {
-    fontSize: 12, padding: '6px 12px', borderRadius: 6,
-    background: 'transparent', color: TEXT, border: `1px solid ${BORDER}`, cursor: 'pointer',
-  };
-  const closeBtn: React.CSSProperties = {
-    background: 'none', border: 'none', color: SUB, cursor: 'pointer',
-    fontSize: 14, padding: '0 2px', flexShrink: 0, lineHeight: 1,
   };
 
   // 部門ごとにまとめる（マネージャー以上は複数部門を見ることがある）
@@ -156,7 +131,10 @@ const OvertimeThresholdBanner: React.FC<{
                 </p>
               </div>
             </div>
-            <button type="button" onClick={() => dismiss([userId])} title="閉じる" style={closeBtn}>✕</button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+              {isNew(selfKeys) && <NewTag />}
+              {allAcked(selfKeys) ? <AckedTag /> : selfKeys.length > 0 && <AckButton keys={selfKeys} />}
+            </div>
           </div>
           <div style={{
             borderTop: `1px solid ${LINE}`, marginTop: 10, paddingTop: 9,
@@ -168,10 +146,6 @@ const OvertimeThresholdBanner: React.FC<{
             <button type="button" style={btnMain}
               onClick={() => navigate('/overtime?tab=form')}>
               調整の予定を入れる
-            </button>
-            <button type="button" style={btnSub}
-              onClick={() => dismiss([userId], tomorrowMorning())}>
-              後で再通知
             </button>
           </div>
         </div>
@@ -221,8 +195,10 @@ const OvertimeThresholdBanner: React.FC<{
                   </p>
                 </div>
               </div>
-              <button type="button" title="閉じる" style={closeBtn}
-                onClick={() => dismiss(members.map(m => m.user_id))}>✕</button>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                {isNew(teamKeys) && <NewTag />}
+                {allAcked(teamKeys) ? <AckedTag /> : teamKeys.length > 0 && <AckButton keys={teamKeys} />}
+              </div>
             </div>
             <div style={{ marginTop: 10 }}>
               <button type="button" style={btnMain}
