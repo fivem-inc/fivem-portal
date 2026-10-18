@@ -749,6 +749,9 @@ const OvertimeForm: React.FC<{
   const submitBtnRef = useRef<HTMLButtonElement | null>(null);
   const [submitFlash, setSubmitFlash] = useState(false);
   const [asPlannedNote, setAsPlannedNote] = useState('');
+  // 「勤務時間が申請と異なりました」を押したら「実際に勤務した時間」の欄まで動いて光らせる
+  const timeBoxRef = useRef<HTMLDivElement | null>(null);
+  const [timeFlash, setTimeFlash] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で選ぶ・初めは「必要」）
   const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
@@ -1271,6 +1274,11 @@ const OvertimeForm: React.FC<{
     submitBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setSubmitFlash(true); window.setTimeout(() => setSubmitFlash(false), 2500);
   };
+  const goTimeDiffers = () => {
+    setAsPlannedNote('');
+    timeBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeFlash(true); window.setTimeout(() => setTimeFlash(false), 3000);
+  };
   const applyNoOvertime = () => {
     setAsPlannedNote('');
     setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
@@ -1677,13 +1685,17 @@ const OvertimeForm: React.FC<{
           <button type="button" onClick={goAsPlanned} style={{ ...primaryBtn(), width: '100%', marginBottom: 8 }}>
             ✓ 申請どおりに勤務しました
           </button>
+          <button type="button" onClick={goTimeDiffers}
+            style={{ width: '100%', padding: '12px', marginBottom: 8, borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+            勤務時間が申請と異なりました
+          </button>
           <button type="button" onClick={applyNoOvertime}
             style={{ width: '100%', padding: '12px', borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
             {normalWorkLabel}
           </button>
-          {asPlannedNote
-            ? <p style={{ margin: '6px 0 0', fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '6px 10px' }}>{asPlannedNote}</p>
-            : <p style={{ margin: '6px 0 0', fontSize: 12, color: subText, textAlign: 'center' }}>時間が異なる場合は、下の欄で修正してください。</p>}
+          {asPlannedNote && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '6px 10px' }}>{asPlannedNote}</p>
+          )}
         </div>
       )}
       {isReportPhase && !fullDay && isPureZero && (
@@ -2373,7 +2385,11 @@ const OvertimeForm: React.FC<{
         </div>
       )}
       {!fullDay && !clockOnlyMode && (
-      <div style={{ marginBottom: 12 }}>
+      <div ref={timeBoxRef} style={{ marginBottom: 12, borderRadius: 10, transition: 'box-shadow 0.4s, background 0.4s',
+        ...(timeFlash ? { boxShadow: '0 0 0 3px rgba(13,110,253,0.35)', background: isDark ? 'rgba(13,110,253,0.10)' : 'rgba(13,110,253,0.06)' } : {}) }}>
+        {timeFlash && isReportPhase && (
+          <p style={{ margin: '0 0 6px', fontSize: 12.5, fontWeight: 'bold', color: '#1565c0' }}>実際の時間に修正してください。</p>
+        )}
         <span style={labelStyle}>{isReportPhase ? '実際に勤務した時間' : (mode === 'advance' && !(editTarget && isResubmit && (editTarget.segments ?? []).some(s => s.phase === 'actual')) ? '予定の勤務時間' : '実務の勤務時間')}{req}</span>
         {isReportPhase && (
           <p style={{ margin: '2px 0 8px', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>予定が入っています。実際と違う場合は直してください。</p>
