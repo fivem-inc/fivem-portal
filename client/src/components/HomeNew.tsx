@@ -7,9 +7,10 @@ import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { backBtn } from '../lib/buttonStyles';
 
-export const NewTag: React.FC = () => (
+/** inverse＝色のついた帯の上に置くとき（白地に青い字） */
+export const NewTag: React.FC<{ inverse?: boolean }> = ({ inverse = false }) => (
   <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 'bold', padding: '1px 8px', borderRadius: 10, marginRight: 6,
-    background: '#0d6efd', color: '#fff', verticalAlign: 'middle', flexShrink: 0 }}>新着</span>
+    background: inverse ? '#fff' : '#0d6efd', color: inverse ? '#0d6efd' : '#fff', verticalAlign: 'middle', flexShrink: 0 }}>新着</span>
 );
 
 export const AckedTag: React.FC = () => (

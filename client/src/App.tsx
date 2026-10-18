@@ -290,6 +290,7 @@ type ReminderRow = {
 };
 
 const ScheduledReminderBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const { newKeys: homeNewKeys } = useHomeNew();
   const [items, setItems] = useState<ReminderRow[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
@@ -365,7 +366,7 @@ const ScheduledReminderBanner: React.FC<{ userId: string }> = ({ userId }) => {
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
               <span style={{ fontSize: 22 }}>📋</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#856404' }}>{n.reminder?.title}</div>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#856404' }}>{isNewKey(homeNewKeys, `rem:${n.id}:`) && <NewTag />}{n.reminder?.title}</div>
                 {n.reminder?.body && <div style={{ fontSize: 13, color: '#856404', marginTop: 2, whiteSpace: 'pre-wrap' }}>{n.reminder.body}</div>}
               </div>
             </div>
@@ -1813,6 +1814,7 @@ const fmtDow = (dateStr: string) => {
 // 有休奨励日バナー（消せない固定バナー）
 type EncDay = { id: string; target_date: string; deadline: string };
 const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnswer: (day: EncDay) => void }> = ({ userId, refreshKey, onAnswer }) => {
+  const { newKeys: homeNewKeys } = useHomeNew();
   const [pending, setPending] = useState<EncDay[]>([]);
 
   // ベル・プッシュから ?enc=1 で来たら、バナーまで移動して少し光らせる（2026-09-19）
@@ -1865,7 +1867,7 @@ const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnsw
               background: bg, color: '#fff', fontSize: 14, fontWeight: 'bold',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-            <span>{msg}　（対象日: {fmtDow(d.target_date)}）</span>
+            <span>{isNewKey(homeNewKeys, `enc:${d.id}`) && <NewTag inverse />}{msg}　（対象日: {fmtDow(d.target_date)}）</span>
             <span style={{ fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap', marginLeft: 8 }}>タップして回答 →</span>
           </div>
         );
@@ -1948,6 +1950,7 @@ const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle:
   const navigate = useNavigate();
   const { pendingCount, activeChecks, queuedCount, isStale, snapshotAt } = useSafetyPendingCount(userId);
   const featurePublishState = useFeaturePublished();
+  const { newKeys: homeNewKeys } = useHomeNew();
 
   if (!isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle)) return null;
 
@@ -2001,7 +2004,7 @@ const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle:
           {first?.is_test && (
             <span style={{ background: '#fff', border: '1px solid #adb5bd', borderRadius: 5, padding: '1px 6px', fontSize: 12, color: '#495057', marginRight: 6 }}>🧪 訓練</span>
           )}
-          {tone.label} — 回答してください
+          {isNewKey(homeNewKeys, 'safe:') && <NewTag />}{tone.label} — 回答してください
         </div>
         {first && <div style={{ fontSize: 12, color: tone.text, marginTop: 2 }}>{first.body}</div>}
         {/* オフラインでも色は変えない（種類ごとの色分けが崩れるため）。1行だけ添えて古さを伝える */}
@@ -2226,6 +2229,7 @@ const ShiftRequestBanner: React.FC<{ employmentType: string }> = ({ employmentTy
   const navigate = useNavigate();
   const [count, setCount] = useState(0);
   const isPart = employmentType === 'パート';
+  const { newKeys: homeNewKeys } = useHomeNew();
   useEffect(() => {
     if (!isPart) return;
     supabase.rpc('shift_adjust_my_part_requests').then(({ data, error }) => {
@@ -2241,7 +2245,7 @@ const ShiftRequestBanner: React.FC<{ employmentType: string }> = ({ employmentTy
       style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 'bold', color: '#92400e' }}
     >
       <span style={{ fontSize: 22 }}>📅</span>
-      <span>出勤のお願いが {count}件 届いています</span>
+      <span>{isNewKey(homeNewKeys, 'part:') && <NewTag />}出勤のお願いが {count}件 届いています</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal', whiteSpace: 'nowrap' }}>タップして返事 ›</span>
     </div>
   );
