@@ -745,6 +745,10 @@ const OvertimeForm: React.FC<{
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [saving, setSaving] = useState(false);
+  // 「申請どおりに勤務しました」を押したら送るボタンまで画面を動かして光らせる（送るのは本人が押したとき）
+  const submitBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [submitFlash, setSubmitFlash] = useState(false);
+  const [asPlannedNote, setAsPlannedNote] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で選ぶ・初めは「必要」）
   const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
@@ -1255,7 +1259,20 @@ const OvertimeForm: React.FC<{
   // 残業なし（実際は通常どおり）＝労働が通常シフトと同じ・種別なし。差分0は承認者確認をスキップ（自己確定）。
   const isPureZero = isReportPhase && !fullDay && diffMin === 0 && applicationTypes.length === 0;
   // 「残業なし（通常どおり）」ワンタップ：時間帯を通常シフトに、勤務地を通常校に、休憩自動・種別なしにリセット。
+  // 申請の種類に合わせた「通常勤務」のボタンの名前（2026-10-18 ユーザー確定 A）
+  const planTypes = editTarget?.application_types ?? [];
+  const normalWorkLabel = planTypes.some(t => t === 'overtime' || t === 'early_start' || t === 'holiday_work') ? '残業はありませんでした（通常勤務）'
+    : planTypes.some(t => t === 'late_start_adj' || t === 'tardiness') ? '遅出はありませんでした（通常勤務）'
+    : planTypes.some(t => t === 'early_end_adj' || t === 'early_leave') ? '早退はありませんでした（通常勤務）'
+    : '申請の内容はありませんでした（通常勤務）';
+  const goAsPlanned = () => {
+    if (hasChanges) { setAsPlannedNote('内容を変更しています。申請どおりに戻す場合は、この画面を閉じて開き直してください。'); return; }
+    setAsPlannedNote('');
+    submitBtnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setSubmitFlash(true); window.setTimeout(() => setSubmitFlash(false), 2500);
+  };
   const applyNoOvertime = () => {
+    setAsPlannedNote('');
     setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
     setBreakManual(false);
     if (normalShift.location) { setLocation(normalShift.location); setLocMoveStart(''); setLocMoveEnd(''); setLocationCustom(''); }
@@ -1652,12 +1669,22 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 残業なし（通常どおり）ワンタップ。押すと時間帯を通常シフトに戻す＝残業ゼロで報告できる */}
+      {/* 実際の勤務内容を選ぶ（2026-10-18 ユーザー確定 A）。いちばん多い「申請どおり」を先頭に。
+          「通常勤務」は押すと時間帯を通常シフトに戻す＝差し引き0で報告できる（前の「残業なし（通常どおりにする）」と同じ働き・名前は申請の種類で変える） */}
       {isReportPhase && !fullDay && !isPureZero && (
-        <button type="button" onClick={applyNoOvertime}
-          style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
-          残業なし（通常どおりにする）
-        </button>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 'bold', color: isDark ? '#f8f9fa' : '#212529', marginBottom: 6 }}>実際の勤務内容を選択してください</div>
+          <button type="button" onClick={goAsPlanned} style={{ ...primaryBtn(), width: '100%', marginBottom: 8 }}>
+            ✓ 申請どおりに勤務しました
+          </button>
+          <button type="button" onClick={applyNoOvertime}
+            style={{ width: '100%', padding: '12px', borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+            {normalWorkLabel}
+          </button>
+          {asPlannedNote
+            ? <p style={{ margin: '6px 0 0', fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '6px 10px' }}>{asPlannedNote}</p>
+            : <p style={{ margin: '6px 0 0', fontSize: 12, color: subText, textAlign: 'center' }}>時間が異なる場合は、下の欄で修正してください。</p>}
+        </div>
       )}
       {isReportPhase && !fullDay && isPureZero && (
         <div style={{ marginBottom: 12, padding: '9px 12px', borderRadius: 8, background: isDark ? '#1b3a1e' : '#eaf6ec', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, fontSize: 12.5, color: isDark ? '#8fd19e' : '#1e7e34', textAlign: 'center', lineHeight: 1.6 }}>
@@ -2734,8 +2761,8 @@ const OvertimeForm: React.FC<{
 
       {/* 送信（インライン確認） */}
       {!showConfirm ? (
-        <button onClick={handleSubmit} disabled={saving}
-          style={{ ...primaryBtn({ disabled: saving }), width: '100%' }}>
+        <button ref={submitBtnRef} onClick={handleSubmit} disabled={saving}
+          style={{ ...primaryBtn({ disabled: saving }), width: '100%', ...(submitFlash ? { boxShadow: '0 0 0 4px rgba(13,110,253,0.35)' } : {}), transition: 'box-shadow 0.4s' }}>
           {clockOnlyMode ? 'この内容で記録する（確定）' : isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
         </button>
       ) : (
