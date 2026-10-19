@@ -7,6 +7,7 @@
 //    とくに「いまの時刻」は引数（nowMin / nowIso）で渡すこと（送る直前の時刻で判定するため）。
 // 🚨 文言は1件フォームの赤い欄のハイライト（ERR_FIELD_BY_MSG）が完全一致で引いている。1文字も変えないこと。
 
+import { dayOffConflictText } from './dayOffConflictText';
 import {
   timeToMin, minToTime, formatMin,
   payMonthPeriodLabel, payPeriodCloseCutoff, calcPayPeriodStartJst, jpDateLabel,
@@ -521,6 +522,9 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
 
 /** DBトリガー由来のエラーを分かりやすい日本語に変換（締めロック・振替の二重計上防止） */
 export function friendlyOvertimeDbError(msg: string, code?: string): string {
+  // 休暇申請と同じ日に終日の休みを出そうとした（2026-10-19・DB のトリガーが止める・文は DB が作る）
+  const dayOff = dayOffConflictText(msg);
+  if (dayOff) return dayOff;
   if (msg.includes('OVERTIME_CLOSED')) return 'この対象日の給与期間は締め切りを過ぎています。経理に申請の許可を依頼してください。';
   if (msg.includes('FURIKAE_DUP_ORIGIN')) return '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
   if (msg.includes('FURIKAE_DUP_SAME_ORIGIN')) return '振替元の日は、すでに別の振替休日の振替元になっています。同じ日を2回振り替えることはできません。';

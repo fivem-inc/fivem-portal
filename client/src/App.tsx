@@ -91,6 +91,7 @@ import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
+import { dayOffConflictText } from './lib/dayOffConflictText';
 import { countMyOpenClockInquiries } from './lib/clockInquiry';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -2403,7 +2404,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
               // 🚨 rpc は 4xx/5xx でも例外にならない。error と ok の両方を見る（CLAUDE.md）
               const encRow = (Array.isArray(encRes) ? encRes[0] : encRes) as { ok?: boolean; reason?: string } | null;
               if (encErr || !encRow?.ok) {
-                setEncAnswerError(encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。');
+                setEncAnswerError(dayOffConflictText(encErr?.message) ?? (encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。'));
                 setEncAnswerSubmitting(false);
                 return;
               }

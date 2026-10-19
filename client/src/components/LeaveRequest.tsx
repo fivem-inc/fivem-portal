@@ -52,6 +52,7 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 };
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
 import { usualWorkplaceFor } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
 import { useRoles } from '../hooks/useRoles';
@@ -816,7 +817,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
       fetchReceivedReqs(); // 同じ日の依頼は DB のトリガーが「申請済み」にしているので、カードを読み直して消す（2026-09-26）
     } catch (err: unknown) {
-      setSubmitError('送信に失敗しました。' + (err instanceof Error ? err.message : JSON.stringify(err)));
+      const errMsg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err));
+      setSubmitError(dayOffConflictText(errMsg) ?? ('送信に失敗しました。' + errMsg));
     } finally {
       setIsSubmitting(false);
     }
@@ -970,7 +972,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               // 🚨 rpc は 4xx/5xx でも例外にならない。error と ok の両方を見る（CLAUDE.md）
               const encRow = (Array.isArray(encRes) ? encRes[0] : encRes) as { ok?: boolean; reason?: string } | null;
               if (encErr || !encRow?.ok) {
-                setEncAnswerError(encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。');
+                setEncAnswerError(dayOffConflictText(encErr?.message) ?? (encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。'));
                 setEncAnswerSubmitting(false);
                 return;
               }
@@ -1486,7 +1488,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             </div>
           )}
           <button
-            onClick={() => {
+            onClick={async () => {
               // 入力チェックを1回で全部集め、足りない項目をまとめてバナー表示＋該当欄を赤ハイライト（alertは使わない）
               const errs: string[] = [];
               const bad = new Set<string>();
@@ -1508,6 +1510,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               if (selectedDates.some(d => !dateLocations[d])) { errs.push('すべての日付で勤務校を選択してください'); bad.add('locations'); }
               if (isFurikae && choseiOriginDates.some(d => !originLocations[d])) { errs.push('振替元のすべての日付で勤務校を選択してください'); bad.add('originLocations'); }
               if (errs.length > 0) { setLocError(errs.join('\n')); setErrFields(bad); return; }
+              // 残業申請の終日の休み（時間外調整休・振替休日・欠勤）と同じ日に出さない（2026-10-19・最後は DB のトリガーが止める）
+              const dayOffMsg = await checkDayOffConflict(selectedDates, 'leave', leaveType);
+              if (dayOffMsg) { setLocError(dayOffMsg); setErrFields(new Set(['dates'])); return; }
               setLocError(''); setErrFields(new Set());
               setShowConfirm(true);
             }}

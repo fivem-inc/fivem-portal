@@ -25,6 +25,7 @@ import {
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
+import { checkDayOffConflict } from '../lib/dayOffConflict';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
 import { loadMyOpenClockInquiries, type MyOpenClockInquiry } from '../lib/clockInquiry';
@@ -1368,6 +1369,11 @@ const OvertimeForm: React.FC<{
           setError(chk.error ?? 'この日は休暇申請の時間外調整休がすでに計上されています');
           setSaving(false); setShowConfirm(false); return;
         }
+      }
+      // 休暇申請と同じ日に終日の休み（時間外調整休・振替休日・欠勤）を出さない（2026-10-19・最後は DB のトリガーが止める）
+      if (fullDayMode && fullDayType && !isReportPhase) {
+        const dayOffMsg = await checkDayOffConflict([date], 'overtime', fullDayType);
+        if (dayOffMsg) { setError(dayOffMsg); setSaving(false); setShowConfirm(false); return; }
       }
 
       // 🚨 保存する1行の組み立ては lib/overtimeSubmit の buildOvertimeRecord（表の入力と共用）。
