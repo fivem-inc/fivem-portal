@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { writtenSince } from '../lib/writeWatch';
 import { ROLE_COLUMNS } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
 
@@ -33,6 +34,12 @@ function writeRolesCache(roles: RoleRow[]): void {
 
 let cached: RoleRow[] = readRolesCache();
 let inflight: Promise<RoleRow[] | null> | null = null;
+// 🚨 2026-10-19：画面に出るたびに読み直していた（ページを移るたびに roles を1本）。10分以内なら読まない（通信量の見直し②）。
+//    起動して最初の1回は必ず読む（端末の控えは古いかもしれないため）。自分が書き込んだあと（lib/writeWatch の 'admin'）も読み直す。
+//    管理画面で役職を変えたときは、これまでどおり refreshRoles をすぐ呼ぶ
+const ROLES_FRESH_MS = 10 * 60 * 1000;
+const ROLES_REFRESH_TOPICS = ['admin'] as const;
+let lastFetchedAt = 0;
 const listeners = new Set<(r: RoleRow[]) => void>();
 
 async function fetchRoles(): Promise<RoleRow[] | null> {
@@ -45,7 +52,7 @@ async function fetchRoles(): Promise<RoleRow[] | null> {
 export async function refreshRoles(): Promise<RoleRow[]> {
   if (!inflight) {
     inflight = fetchRoles().then(r => {
-      if (r) { cached = r; writeRolesCache(r); listeners.forEach(l => l(r)); }
+      if (r) { cached = r; lastFetchedAt = Date.now(); writeRolesCache(r); listeners.forEach(l => l(r)); }
       return r;
     }).finally(() => { inflight = null; });
   }
@@ -61,7 +68,8 @@ export function useRoles(): RoleRow[] {
   const [roles, setRoles] = useState<RoleRow[]>(cached);
   useEffect(() => {
     listeners.add(setRoles);
-    if (cached.length === 0 || !inflight) void refreshRoles();
+    const stale = Date.now() - lastFetchedAt >= ROLES_FRESH_MS || writtenSince(ROLES_REFRESH_TOPICS, lastFetchedAt);
+    if (cached.length === 0 || (!inflight && stale)) void refreshRoles();
     return () => { listeners.delete(setRoles); };
   }, []);
   return roles;

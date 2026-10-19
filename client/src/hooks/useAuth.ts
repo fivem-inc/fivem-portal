@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { writtenSince } from '../lib/writeWatch';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage';
 import { IDLE_CONFIG_CACHE_KEY, readIdleLogoutSetting, writeIdleLogoutSetting } from '../lib/idleLogout';
@@ -175,7 +176,9 @@ async function fetchPermsForRole(roleName: string): Promise<Record<string, boole
 //   ① いま読みに行っている最中なら、その約束（Promise）に相乗りする
 //   ② 読み終わった直後（FRESH_MS 以内）なら、その結果をそのまま配る
 // 🚨 ずっと覚えておくことはしない。権限を変えたのに反映されない、を避けるため。
-//    30秒はバッジの数え直しと同じ間隔に揃えてある（新しい決まりを増やさない）。
+//    🚨 2026-10-19：30秒 → 10分（通信量の見直し②・ナビの数字の MOUNT_FRESH_MS と同じ長さ）。ページを移るたびに読んでいたため。
+//       自分が書き込んだあと（lib/writeWatch の 'admin'・話題が分からない 'all'）は、10分たっていなくても読み直す。
+//       ほかの人が変えた権限・役職は、最長10分で行き渡る（管理画面の保存の知らせにそう書いてある）
 // 🚨 画面に出る値は1つも変えていない。**同じ値を、何度も読まないようにしただけ**。
 // ───────────────────────────────────────────────────────────────
 interface ProfileLoad {
@@ -192,7 +195,8 @@ interface ProfileLoad {
   perms: Record<string, boolean> | null;
 }
 
-const FRESH_MS = 30000;
+const FRESH_MS = 10 * 60 * 1000;
+const AUTH_REFRESH_TOPICS = ['admin'] as const;
 
 // ── 上のナビの本人の並び（2026-10-17・2b）────────────────
 // 🚨 読み込みを増やさないため、プロフィールを読むとき（loadProfileOnce）に一緒に読み、端末の控え（authCache）にも入れる。
@@ -225,7 +229,7 @@ let sharedResult: { userId: string; at: number; value: ProfileLoad | null } | nu
 
 async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
   if (sharedInflight && sharedInflight.userId === userId) return sharedInflight.promise;
-  if (sharedResult && sharedResult.userId === userId && Date.now() - sharedResult.at < FRESH_MS) {
+  if (sharedResult && sharedResult.userId === userId && Date.now() - sharedResult.at < FRESH_MS && !writtenSince(AUTH_REFRESH_TOPICS, sharedResult.at)) {
     return sharedResult.value;
   }
 

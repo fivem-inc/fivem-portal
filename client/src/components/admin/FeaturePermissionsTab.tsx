@@ -371,7 +371,7 @@ const FeaturePermissionsTab: React.FC = () => {
     setSavedPublishedPresident({ ...publishedPresident });
     setIsDirty(false);
     setIsEditMode(false);
-    setPermMsg({ fail: false, text: `権限を保存しました（${permChanges.length}件）。次に画面を開いたときから反映されます` });
+    setPermMsg({ fail: false, text: `権限を保存しました（${permChanges.length}件）。ほかの方の画面には、最長10分で反映されます` });
   };
 
   // ── 並び替え ──
@@ -407,7 +407,7 @@ const FeaturePermissionsTab: React.FC = () => {
     }
     setRoleOrderDraft(null); setIsRoleEditMode(false);
     await fetchAll(); refreshRoles();
-    setRoleMsg({ fail: false, text: '役職の並びを保存しました。次に画面を開いたときから反映されます' });
+    setRoleMsg({ fail: false, text: '役職の並びを保存しました。ほかの方の画面には、最長10分で反映されます' });
   };
 
   // ── 役職追加 ──

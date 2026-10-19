@@ -122,7 +122,7 @@ const NavSettingsSection: React.FC = () => {
   };
   const changed = editing && draft.join() !== order.join();
   const saveOrder = async () => {
-    if (await saveSetting('nav_order', { keys: draft }, '初めの並びを保存しました', 'order')) { setOrder(draft); setEditing(false); }
+    if (await saveSetting('nav_order', { keys: draft }, '初めの並びを保存しました。ほかの方の画面には、最長10分で反映されます', 'order')) { setOrder(draft); setEditing(false); }
   };
   // 🚨 片方を変えるときも、もう片方の値は消さずにそのまま保存する
   const saveRule = async (kind: RuleKind, nextRule: NavRolloutRule, okMsg: string) => {
@@ -229,7 +229,7 @@ const NavSettingsSection: React.FC = () => {
         {editing
           ? <SaveBar isDark={isDarkMode} changes={changes} saving={saving} msg={msg && msgArea === kind && fail ? { text: msg, fail: true } : null}
               warn={rule.mode === 'off' && saved.mode !== 'off' ? offText : undefined}
-              onCancel={() => { setRuleDraft(null); setMsg(''); }} onSave={() => void saveRule(kind, rule, '保存しました')} />
+              onCancel={() => { setRuleDraft(null); setMsg(''); }} onSave={() => void saveRule(kind, rule, '保存しました。ほかの方の画面には、最長10分で反映されます')} />
           : msgBox(kind)}
       </div>
     );

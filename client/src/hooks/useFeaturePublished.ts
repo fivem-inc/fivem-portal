@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { writtenSince } from '../lib/writeWatch';
 import { attrsFor } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -40,9 +41,11 @@ export function isFeaturePublished(
 }
 
 // 🚨 ホームでは3か所がこのフックを呼び、画面を開くたびに3本ずつ（計9本）読んでいた（2026-09-27・通信量の見直し）。
-//    同時の呼び出しは1本にまとめ、読んだ値は 30 秒だけ使い回す。設定を変えても長くて 30 秒で全画面に行き渡る
+//    同時の呼び出しは1本にまとめ、読んだ値は 10 分使い回す（2026-10-19 に 30秒 → 10分・通信量の見直し②）。
+//    設定を変えても、ほかの人の画面には長くて 10 分で行き渡る。自分が書き込んだあと（lib/writeWatch の 'admin'）はすぐ読み直す
 type PublishedValues = Omit<FeaturePublishState, 'roles'>;
-const PUBLISHED_TTL_MS = 30 * 1000;
+const PUBLISHED_TTL_MS = 10 * 60 * 1000;
+const PUBLISHED_REFRESH_TOPICS = ['admin'] as const;
 let publishedCache: { at: number; value: PublishedValues } | null = null;
 let publishedInflight: Promise<PublishedValues> | null = null;
 // 🚨 2026-10-17：5つの設定を1本で読む（前は3本を別々に読んでいた）。退職者は RLS で読めるキーが限られるので、
@@ -60,7 +63,7 @@ function readNavLocal(): { navOrder: string[]; navRollout: NavRollout } {
   } catch { return { navOrder: [], navRollout: NAV_ROLLOUT_OFF }; }
 }
 function loadPublished(): Promise<PublishedValues> {
-  if (publishedCache && Date.now() - publishedCache.at < PUBLISHED_TTL_MS) return Promise.resolve(publishedCache.value);
+  if (publishedCache && Date.now() - publishedCache.at < PUBLISHED_TTL_MS && !writtenSince(PUBLISHED_REFRESH_TOPICS, publishedCache.at)) return Promise.resolve(publishedCache.value);
   if (publishedInflight) return publishedInflight;
   publishedInflight = Promise.resolve(supabase.from('app_settings').select('key, value').in('key', PUBLISHED_KEYS))
     .then(({ data, error }) => {
@@ -81,7 +84,7 @@ function loadPublished(): Promise<PublishedValues> {
   return publishedInflight;
 }
 
-/** 管理画面でナビの設定を変えたあと、すぐ読み直す（30秒の使い回しを捨てる） */
+/** 管理画面でナビの設定を変えたあと、すぐ読み直す（10分の使い回しを捨てる） */
 export function invalidatePublishedCache(): void {
   publishedCache = null;
 }

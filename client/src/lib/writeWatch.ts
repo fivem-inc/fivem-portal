@@ -41,8 +41,19 @@ const TOPIC_RULES: [RegExp, RefreshTopic[]][] = [
   [/^app_settings$|^roles$|^feature_permissions$|^admin_|^staff_checklist/, ['admin']],
 ];
 
-/** 読むだけの RPC（名前の形で見分ける・漏れても1回余計に数え直すだけ） */
+/** 読むだけの RPC で、名前の形では見分けられないもの（2026-10-19・DB の関数の中身で書き込みが無いことを確かめた）。
+ *  🚨 admin_setup_alerts を「管理の書き込み」と数えていたため、管理者の画面で「読む→書き込みと数える→'admin' を読み直す→読む…」が
+ *     約2.5秒ごとに続いていた（10/18〜19）。数え直しを呼ぶ話題の中で読む RPC は、必ずここか下の形に入れること */
+const READ_RPCS = new Set([
+  'admin_setup_alerts', 'admin_user_sessions', 'board_can_manage_groups', 'clock_inquiry_day_states',
+  'overtime_day_check_enabled', 'overtime_visible_roster', 'shift_adjust_my_part_requests',
+  'faq_public_data', 'faq_public_contact', 'retire_access_default', 'retire_purchase_pending',
+  'cleaning_token', 'kids_shift_token', 'shift_patterns_token', 'study_sessions_token',
+]);
+
+/** 読むだけの RPC（名前の形で見分ける・漏れても1回余計に数え直すだけ。ただし堂々めぐりになることがある＝上の READ_RPCS） */
 function isReadRpc(name: string): boolean {
+  if (READ_RPCS.has(name)) return true;
   return /^(my_|get_|count_|list_|search_|calendar_|report_|faq_public_event_summary)|_count$|_ids$|_counts$|_totals?$|_banner$|_status$|_options$|_preview$|_summary$|_check_conflict$|_busy$|_visible$|_estimate$|_overview$|_progress$|_for$|^role_is_|^is_|^has_|^room_check|^room_staff_busy/.test(name);
 }
 
