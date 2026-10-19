@@ -107,8 +107,10 @@ const OvertimeThresholdBanner: React.FC<{
           margin: '0 0 10px 0', padding: '12px 14px',
           background: BG, border: `1px solid ${BORDER}`, borderRadius: 10,
         }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <div style={{ flex: 1, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          {/* 🚨 幅が足りないとき（文字を特大にした幅288など）は、右の［確認した］を下の行に回す（2026-10-19・前は右端が21px切れていた）。
+                ふだんの幅（375）では今までどおり右に並ぶ。中身は 200px より細くしない */}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 200px', minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
               <div style={{ textAlign: 'center', flexShrink: 0, width: 80, paddingTop: 2 }}>
                 <div style={{ fontSize: 21, fontWeight: 500, color: TEXT, lineHeight: 1.15 }}>
                   {fmtSigned(data.self.total)}
@@ -131,7 +133,7 @@ const OvertimeThresholdBanner: React.FC<{
                 </p>
               </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 'auto' }}>
               {isNew(selfKeys) && <NewTag />}
               {allAcked(selfKeys) ? <AckedTag /> : selfKeys.length > 0 && <AckButton keys={selfKeys} />}
             </div>
@@ -158,8 +160,8 @@ const OvertimeThresholdBanner: React.FC<{
             margin: '0 0 10px 0', padding: '12px 14px',
             background: BG, border: `1px solid ${BORDER}`, borderRadius: 10,
           }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-              <div style={{ flex: 1, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 200px', minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                 <div style={{ textAlign: 'center', flexShrink: 0, width: 56, paddingTop: 2 }}>
                   <div style={{ fontSize: 21, fontWeight: 500, color: TEXT, lineHeight: 1.15 }}>
                     {members.length}人
@@ -195,7 +197,7 @@ const OvertimeThresholdBanner: React.FC<{
                   </p>
                 </div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 'auto' }}>
                 {isNew(teamKeys) && <NewTag />}
                 {allAcked(teamKeys) ? <AckedTag /> : teamKeys.length > 0 && <AckButton keys={teamKeys} />}
               </div>

@@ -57,6 +57,32 @@ export function normalizeIdleConfig(raw: unknown): IdleLogoutConfig {
   return { minutes, show_on_mobile: o.show_on_mobile === true };
 }
 
+/**
+ * 最後に操作した時刻（端末に覚えておく・2026-10-19）。
+ * 🚨 前は画面の中（ref）だけで数えていたので、電源を切る・ブラウザを閉じると数えるのが止まり、
+ *    次に開いたときに0から数え直して「ログインしたまま」になっていた（共有パソコンで実際に起きた）。
+ *    → 操作のたびに（数秒おきに）ここへ書き、開いたときにここから経った時間で判定する。
+ *    ログアウト（handleLogout の localStorage.clear）で消える＝次のログインは新しく数え始める
+ */
+export const IDLE_LAST_AT_KEY = 'fivem_idle_last_at';
+
+export function readIdleLastAt(): number | null {
+  try {
+    const n = Number(localStorage.getItem(IDLE_LAST_AT_KEY));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeIdleLastAt(at: number): void {
+  try {
+    localStorage.setItem(IDLE_LAST_AT_KEY, String(at));
+  } catch {
+    /* 保存できない端末では画面の中だけで数える（前と同じ） */
+  }
+}
+
 export function readIdleLogoutSetting(): IdleLogoutSetting | null {
   try {
     const v = localStorage.getItem(IDLE_LOGOUT_KEY);

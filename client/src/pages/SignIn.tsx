@@ -6,7 +6,7 @@ import { AuthContext } from '../contexts/AuthContext.tsx';
 import { useAuth } from '../hooks/useAuth';
 import {
   defaultIdleSetting, formatMinutes, idleCheckboxVisible, isPointerDevice, readCachedIdleConfig,
-  readIdleLogoutSetting, writeIdleLogoutSetting, type IdleLogoutSetting,
+  readIdleLogoutSetting, writeIdleLogoutSetting, writeIdleLastAt, type IdleLogoutSetting,
 } from '../lib/idleLogout';
 
 export default function SignIn() {
@@ -73,6 +73,7 @@ export default function SignIn() {
     // 🚨 自動ログアウトのチェックは**ログインしたときに端末へ記憶**する（チェックを出していない端末では触らない）。
     //    記憶が無い端末では動かないので、いまログイン中の端末には次のログインまで効かない
     if (showIdleCheck) writeIdleLogoutSetting(idleLogout);
+    writeIdleLastAt(Date.now());
 
     // シンプルなログイン処理（is_active判定はAuthContextが行う）
     const { error } = await supabase.auth.signInWithPassword({ email, password });

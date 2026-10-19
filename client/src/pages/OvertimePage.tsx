@@ -1056,6 +1056,16 @@ const OvertimeForm: React.FC<{
   );
 
   const fullDayMode = fullDay && !!fullDayType;
+  // 終日の休みを選んだ時点で知らせる（2026-10-19・有休奨励日の決まり／休暇との重なり）。文は DB が作る。最後は送る前の確かめと DB が止める
+  const [fullDayBlockMsg, setFullDayBlockMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fullDayMode || !fullDayType || !date || isReportPhase) { setFullDayBlockMsg(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      void checkDayOffConflict([date], 'overtime', fullDayType).then(m => { if (alive) setFullDayBlockMsg(m); });
+    }, 400);
+    return () => { alive = false; clearTimeout(t); };
+  }, [fullDayMode, fullDayType, date, isReportPhase]);
 
   // 打刻ズレは「事後報告の新規」でだけ使う（実績報告・再提出・事前申請では出さない）
   const clockOnlyMode = clockOnly && mode === 'posthoc' && !editTarget;
@@ -2206,6 +2216,9 @@ const OvertimeForm: React.FC<{
                 ))}
               </div>
 
+              {fullDayBlockMsg && (
+              <div role="alert" style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 13, lineHeight: 1.6 }}>{fullDayBlockMsg}</div>
+            )}
               {/* この申請が合計時間数にどう効くか（本人が一番不安な点を1行で明示） */}
               {fullDayType && (
                 <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginTop: 8 }}>

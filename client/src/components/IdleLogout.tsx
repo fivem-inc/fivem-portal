@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { idleLogoutActive, idleState, readCachedIdleConfig } from '../lib/idleLogout';
+import { idleLogoutActive, idleState, readCachedIdleConfig, readIdleLastAt, writeIdleLastAt } from '../lib/idleLogout';
 import { loadIdleConfig } from '../lib/idleLogoutConfig';
 
 // 共有パソコン用の自動ログアウト（2026-09-14）。決めたことは lib/idleLogout.ts の冒頭を見ること。
@@ -32,7 +32,8 @@ const IdleLogout: React.FC = () => {
   // 🚨 チェック（端末ごと）はログイン画面でしか変えられないので、ログイン中に変わることはない
   const active = idleLogoutActive(cfg);
   const limitMs = cfg.minutes * 60_000;
-  const lastActivityAt = useRef<number>(Date.now());
+  // 🚨 開いたときは「端末に覚えた最後の操作」から数える（電源を切った・閉じた間も時間が経っている）。覚えが無ければ今から
+  const lastActivityAt = useRef<number>(readIdleLastAt() ?? Date.now());
   const loggingOut = useRef(false);
   // 予告の区間だけ描き直す（残り秒数）。普段は null で何も描かない
   const [remainingSec, setRemainingSec] = useState<number | null>(null);
@@ -40,9 +41,19 @@ const IdleLogout: React.FC = () => {
   useEffect(() => {
     if (!active) return;
 
-    const touch = () => { lastActivityAt.current = Date.now(); };
+    // 端末に書くのは5秒に1回まで（マウスを動かすたびに書かない）
+    let lastWritten = 0;
+    const save = (at: number) => { lastWritten = at; writeIdleLastAt(at); };
+    const touch = () => {
+      const now = Date.now();
+      lastActivityAt.current = now;
+      if (now - lastWritten >= 5000) save(now);
+    };
     const check = () => {
       if (loggingOut.current) return;
+      // ほかのタブで操作していれば、そちらの時刻を使う（1つのタブだけ切れないように）
+      const stored = readIdleLastAt();
+      if (stored && stored > lastActivityAt.current) lastActivityAt.current = stored;
       const st = idleState(lastActivityAt.current, Date.now(), limitMs);
       if (st.expired) {
         loggingOut.current = true;
@@ -53,14 +64,24 @@ const IdleLogout: React.FC = () => {
       setRemainingSec(st.warn ? Math.ceil(st.remainingMs / 1000) : null);
     };
 
+    // 開いた直後に1回：前回の最後の操作から時間が過ぎていれば、ここで切れる（電源を切って後日開いたとき）
+    check();
+    if (!loggingOut.current && !readIdleLastAt()) save(lastActivityAt.current);
+
     // 🚨 passive にして、スクロールやポインタの動きを重くしない（ref を書くだけ）
     ACTIVITY_EVENTS.forEach(ev => window.addEventListener(ev, touch, { passive: true }));
-    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+      else if (!loggingOut.current) save(lastActivityAt.current); // 隠れる・閉じる直前に最新の操作を書く
+    };
+    const onHide = () => { if (!loggingOut.current) save(lastActivityAt.current); };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pagehide', onHide);
     const timer = setInterval(check, 1000);
     return () => {
       ACTIVITY_EVENTS.forEach(ev => window.removeEventListener(ev, touch));
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pagehide', onHide);
       clearInterval(timer);
     };
   }, [active, limitMs, handleLogout]);

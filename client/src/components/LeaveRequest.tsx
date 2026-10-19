@@ -53,7 +53,7 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
-import { syncEncouragementCalendar } from '../lib/gcalEncouragement';
+import EncouragementAnswerModal from './EncouragementAnswerModal';
 import { usualWorkplaceFor } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
 import { useRoles } from '../hooks/useRoles';
@@ -447,14 +447,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [choseiOriginDates, setChoseiOriginDates] = useState<string[]>(ld?.choseiOriginDates ?? []);
   const [encPending, setEncPending] = useState<{ id: string; target_date: string; deadline: string }[]>([]);
   const [encAnsweringId, setEncAnsweringId] = useState<string | null>(null);
-  const [encAnswerChoice, setEncAnswerChoice] = useState<number | null>(null);
-  const [encAnswerNote, setEncAnswerNote] = useState('');
-  const [encAnswerSubmitting, setEncAnswerSubmitting] = useState(false);
-  // 🚨 「その他」で出勤する人の休暇を作らないための印（文章に「出勤」と書いてあるかでは判定しない。
-  //    「仕事のため」を取りこぼし、「出勤しません」を誤判定するため。2026-09-12 ユーザー確定）
-  const [encAnswerWorking, setEncAnswerWorking] = useState(false);
-  // 🚨 これまでモーダルに失敗の表示が無く、送信に失敗しても何も出なかった
-  const [encAnswerError, setEncAnswerError] = useState('');
 
   const fetchEncPending = async () => {
     const { data: targets } = await supabase
@@ -500,6 +492,17 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       });
     return () => { alive = false; };
   }, [showConfirm, selectedDates, user.id]);
+  // 日付と種類を選んだ時点で知らせる（2026-10-19・有休奨励日の決まり／休暇と残業の終日の休みの重なり）。
+  // 文は DB が作る（my_day_off_conflict）。最後は［確認へ］の確かめと DB のトリガーが止める。読めないときは何も出さない
+  const [dateBlockMsg, setDateBlockMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedDates.length === 0 || !leaveType) { setDateBlockMsg(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      void checkDayOffConflict(selectedDates, 'leave', leaveType).then(m => { if (alive) setDateBlockMsg(m); });
+    }, 400);
+    return () => { alive = false; clearTimeout(t); };
+  }, [selectedDates, leaveType]);
   // 時間調整フォームの下書きを自動保存
   useEffect(() => {
     saveDraft(DRAFT_KEYS.leaveAdjustment, { adjLateStart, adjEarlyEnd, adjDate, adjLateTime, adjEarlyTime, adjReason, adjLocation, adjApproverMode, adjApproverSelectedId, adjApproverFree });
@@ -915,87 +918,18 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     return { ...d, msg, diffDays };
   });
 
+  // 回答の画面は components/EncouragementAnswerModal（ホームと同じもの・2026-10-19 にまとめた）
   const encAnswerModal = encAnsweringDay ? (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-        <h3 style={{ margin: '0 0 4px', color: text, fontSize: 16 }}>📅 有休奨励日への回答</h3>
-        <p style={{ margin: '0 0 16px', fontSize: 13, color: subText }}>対象日: {(() => { const d = new Date(encAnsweringDay.target_date + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${['日','月','火','水','木','金','土'][d.getUTCDay()]})`; })()}　期限: {(() => { const d = new Date(encAnsweringDay.deadline + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${['日','月','火','水','木','金','土'][d.getUTCDay()]})`; })()}</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-          {([1, 2, 3, 4] as const).map(n => {
-            const labels: Record<number, string> = { 1: '有給休暇', 2: '欠勤（調整休）', 3: '定休日', 4: 'その他' };
-            const colors: Record<number, string> = { 1: '#28a745', 2: '#fd7e14', 3: '#17a2b8', 4: '#6c757d' };
-            const selected = encAnswerChoice === n;
-            return (
-              <button key={n} onClick={() => setEncAnswerChoice(n)} style={{
-                padding: '12px 16px', borderRadius: 10, border: selected ? `2px solid ${colors[n]}` : `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`,
-                background: selected ? colors[n] : (isDark ? '#495057' : '#f8f9fa'),
-                color: selected ? '#fff' : text, fontSize: 14, fontWeight: selected ? 'bold' : 'normal', cursor: 'pointer', textAlign: 'left',
-              }}>{labels[n]}</button>
-            );
-          })}
-        </div>
-        {encAnswerChoice === 4 && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: subText, display: 'block', marginBottom: 4 }}>備考（必須）</label>
-            <textarea value={encAnswerNote} onChange={e => setEncAnswerNote(e.target.value)} rows={3}
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, background: inputBg, color: text, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
-              placeholder="詳細を入力してください" />
-          </div>
-        )}
-        {encAnswerChoice === 4 && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 13, color: text, cursor: 'pointer' }}>
-            <input type="checkbox" checked={encAnswerWorking} onChange={e => setEncAnswerWorking(e.target.checked)} />
-            この日は出勤します（休暇は作りません）
-          </label>
-        )}
-        {encAnswerError && (
-          <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: '#f8d7da', color: '#842029', fontSize: 12 }}>{encAnswerError}</div>
-        )}
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={() => { setEncAnsweringId(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError(''); }}
-            style={{ flex: 1, padding: '10px 0', background: isDark ? '#495057' : '#e9ecef', color: text, border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-          <button disabled={!encAnswerChoice || (encAnswerChoice === 4 && !encAnswerNote.trim()) || encAnswerSubmitting}
-            onClick={async () => {
-              if (!encAnswerChoice) return;
-              if (encAnswerChoice === 4 && !encAnswerNote.trim()) return;
-              setEncAnswerSubmitting(true);
-              setEncAnswerError('');
-              // 🚨 回答の保存と休暇の作成は **DBの専用処理にまとめてある**（2026-09-12）。
-              //    画面から2回に分けて書くと、2回押したときに回答だけ失敗して
-              //    「受理済みの休暇」だけ二重に増える（実際に起きうる状態だった）。
-              //    また、本人が受理済みの休暇を直接作れる穴を塞ぐため、入口を1本にしている。
-              const { data: encRes, error: encErr } = await supabase.rpc('answer_encouragement_day', {
-                p_day_id: encAnsweringDay.id,
-                p_choice: encAnswerChoice,
-                p_note: encAnswerNote.trim() || null,
-                p_working: encAnswerChoice === 4 && encAnswerWorking,
-              });
-              // 🚨 rpc は 4xx/5xx でも例外にならない。error と ok の両方を見る（CLAUDE.md）
-              const encRow = (Array.isArray(encRes) ? encRes[0] : encRes) as { ok?: boolean; reason?: string } | null;
-              if (encErr || !encRow?.ok) {
-                setEncAnswerError(dayOffConflictText(encErr?.message) ?? (encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。'));
-                setEncAnswerSubmitting(false);
-                return;
-              }
-              // Google カレンダーの奨励日の予定を、回答した今の状態で作り直す（2026-10-19・待たない・失敗しても回答は済んでいる）
-              void syncEncouragementCalendar(encAnsweringDay.target_date);
-              setEncAnswerSubmitting(false);
-              setEncAnsweringId(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError('');
-              fetchEncPending();
-            }}
-            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : BTN_BLUE, color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
-            {encAnswerSubmitting ? '送信中...' : '回答を送信'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <EncouragementAnswerModal day={encAnsweringDay} isDark={isDark}
+      onClose={() => setEncAnsweringId(null)}
+      onDone={() => { setEncAnsweringId(null); fetchEncPending(); }} />
   ) : null;
 
   return (
     <div style={{ maxWidth: 600, width: '100%', margin: '20px auto', padding: '0 12px', boxSizing: 'border-box' }}>
       {encAnswerModal}
       {encBannerList.map(d => (
-        <div key={d.id} onClick={() => { setEncAnsweringId(d.id); setEncAnswerChoice(null); setEncAnswerNote(''); }}
+        <div key={d.id} onClick={() => setEncAnsweringId(d.id)}
           style={{
             cursor: 'pointer', marginBottom: 8, padding: '10px 14px', borderRadius: 10,
             background: d.diffDays <= 0 ? '#dc3545' : d.diffDays <= 1 ? '#fd7e14' : d.diffDays <= 3 ? '#ffc107' : '#007bff',
@@ -1426,6 +1360,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 </div>
               );
             })()}
+            {dateBlockMsg && (
+              <div role="alert" style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 13, lineHeight: 1.6 }}>{dateBlockMsg}</div>
+            )}
             {/* 日付ごとの校選択（選択日の一覧を兼ねる・1日1行） */}
             {selectedDates.length > 0 && (
               <div style={{ marginTop: 10 }}>

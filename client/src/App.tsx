@@ -91,8 +91,7 @@ import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
-import { dayOffConflictText } from './lib/dayOffConflictText';
-import { syncEncouragementCalendar } from './lib/gcalEncouragement';
+import EncouragementAnswerModal from './components/EncouragementAnswerModal';
 import { countMyOpenClockInquiries } from './lib/clockInquiry';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -2307,14 +2306,6 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
   const [expenses, setExpensesState] = useState<Expense[]>([]);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
   const [encAnsweringDay, setEncAnsweringDay] = useState<EncDay | null>(null);
-  const [encAnswerChoice, setEncAnswerChoice] = useState<number | null>(null);
-  const [encAnswerNote, setEncAnswerNote] = useState('');
-  const [encAnswerSubmitting, setEncAnswerSubmitting] = useState(false);
-  // 🚨 「その他」で出勤する人の休暇を作らないための印（文章に「出勤」と書いてあるかでは判定しない。
-  //    「仕事のため」を取りこぼし、「出勤しません」を誤判定するため。2026-09-12 ユーザー確定）
-  const [encAnswerWorking, setEncAnswerWorking] = useState(false);
-  // 🚨 これまでモーダルに失敗の表示が無く、送信に失敗しても何も出なかった
-  const [encAnswerError, setEncAnswerError] = useState('');
   const [encRefreshKey, setEncRefreshKey] = useState(0);
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -2346,83 +2337,16 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
     return <Navigate to="/" replace />;
   }
 
+  // 回答の画面は components/EncouragementAnswerModal（休暇申請のページと同じもの・2026-10-19 にまとめた）
   const encAnswerModal = encAnsweringDay ? (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: '#343a40', borderRadius: 16, padding: 24, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-        <h3 style={{ margin: '0 0 4px', color: '#fff', fontSize: 16 }}>📅 有休奨励日への回答</h3>
-        <p style={{ margin: '0 0 16px', fontSize: 13, color: '#adb5bd' }}>対象日: {fmtDow(encAnsweringDay.target_date)}　期限: {fmtDow(encAnsweringDay.deadline)}</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-          {([1, 2, 3, 4] as const).map(n => {
-            const labels: Record<number, string> = { 1: '有給休暇', 2: '欠勤（調整休）', 3: '定休日', 4: 'その他' };
-            const colors: Record<number, string> = { 1: '#28a745', 2: '#fd7e14', 3: '#17a2b8', 4: '#6c757d' };
-            const selected = encAnswerChoice === n;
-            return (
-              <button key={n} onClick={() => setEncAnswerChoice(n)} style={{
-                padding: '12px 16px', borderRadius: 10,
-                border: selected ? `2px solid ${colors[n]}` : '1px solid #6c757d',
-                background: selected ? colors[n] : '#495057',
-                color: '#fff', fontSize: 14, fontWeight: selected ? 'bold' : 'normal', cursor: 'pointer', textAlign: 'left',
-              }}>{labels[n]}</button>
-            );
-          })}
-        </div>
-        {encAnswerChoice === 4 && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: '#adb5bd', display: 'block', marginBottom: 4 }}>備考（必須）</label>
-            <textarea value={encAnswerNote} onChange={e => setEncAnswerNote(e.target.value)} rows={3}
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #6c757d', background: '#495057', color: '#fff', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
-              placeholder="詳細を入力してください" />
-          </div>
-        )}
-        {encAnswerChoice === 4 && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 13, color: '#fff', cursor: 'pointer' }}>
-            <input type="checkbox" checked={encAnswerWorking} onChange={e => setEncAnswerWorking(e.target.checked)} />
-            この日は出勤します（休暇は作りません）
-          </label>
-        )}
-        {encAnswerError && (
-          <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: '#f8d7da', color: '#842029', fontSize: 12 }}>{encAnswerError}</div>
-        )}
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={() => { setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError(''); }}
-            style={{ flex: 1, padding: '10px 0', background: '#495057', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-          <button disabled={!encAnswerChoice || (encAnswerChoice === 4 && !encAnswerNote.trim()) || encAnswerSubmitting}
-            onClick={async () => {
-              if (!encAnswerChoice || !encAnsweringDay) return;
-              if (encAnswerChoice === 4 && !encAnswerNote.trim()) return;
-              setEncAnswerSubmitting(true);
-              setEncAnswerError('');
-              // 🚨 回答の保存と休暇の作成は **DBの専用処理にまとめてある**（2026-09-12）。
-              //    画面から2回に分けて書くと、2回押したときに回答だけ失敗して
-              //    「受理済みの休暇」だけ二重に増える（実際に起きうる状態だった）。
-              //    また、本人が受理済みの休暇を直接作れる穴を塞ぐため、入口を1本にしている。
-              const { data: encRes, error: encErr } = await supabase.rpc('answer_encouragement_day', {
-                p_day_id: encAnsweringDay.id,
-                p_choice: encAnswerChoice,
-                p_note: encAnswerNote.trim() || null,
-                p_working: encAnswerChoice === 4 && encAnswerWorking,
-              });
-              // 🚨 rpc は 4xx/5xx でも例外にならない。error と ok の両方を見る（CLAUDE.md）
-              const encRow = (Array.isArray(encRes) ? encRes[0] : encRes) as { ok?: boolean; reason?: string } | null;
-              if (encErr || !encRow?.ok) {
-                setEncAnswerError(dayOffConflictText(encErr?.message) ?? (encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。'));
-                setEncAnswerSubmitting(false);
-                return;
-              }
-              // Google カレンダーの奨励日の予定を、回答した今の状態で作り直す（2026-10-19・待たない・失敗しても回答は済んでいる）
-              void syncEncouragementCalendar(encAnsweringDay.target_date);
-              setEncAnswerSubmitting(false);
-              setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError('');
-              setEncRefreshKey(k => k + 1);
-              setEncAnswerSuccess(true);
-              setTimeout(() => setEncAnswerSuccess(false), 3000);
-            }}
-            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : BTN_BLUE, color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
-            {encAnswerSubmitting ? '送信中...' : '回答を送信'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <EncouragementAnswerModal day={encAnsweringDay} isDark={isDarkMode}
+      onClose={() => setEncAnsweringDay(null)}
+      onDone={() => {
+        setEncAnsweringDay(null);
+        setEncRefreshKey(k => k + 1);
+        setEncAnswerSuccess(true);
+        setTimeout(() => setEncAnswerSuccess(false), 3000);
+      }} />
   ) : null;
 
   return (
@@ -2527,7 +2451,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       )}
 
       {/* ③ 有休奨励日バナー（消せない） */}
-      <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => { setEncAnsweringDay(d); setEncAnswerChoice(null); setEncAnswerNote(''); }} />
+      <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => setEncAnsweringDay(d)} />
 
       {/* ④ 休暇申請承認バナー（承認者のみ） */}
       <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />

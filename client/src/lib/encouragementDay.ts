@@ -27,3 +27,32 @@ export function leavePurposeLabel(purpose: string | null | undefined): string {
   if (!purpose) return '';
   return purpose === ENC_PURPOSE_MARK ? ENC_LABEL : purpose;
 }
+
+/**
+ * 奨励日の回答の選択肢（2026-10-19 ユーザー確定・計画 docs/計画-有休奨励日の申請止め.md）。
+ * 回答の画面（components/EncouragementAnswerModal）と管理画面の回答の修正が同じものを使う。
+ * 🚨 数字は DB の paid_leave_encouragement_responses.choice と answer_encouragement_day に合わせる（変えない）
+ *   4 は「出勤する」（working=true・休暇は作らない）。working が空の4は 2026-10-19 より前の回答（休暇「その他」を作ったもの）
+ *   5 は「ほかの休みを申請する」（休暇は作らない・慶弔は休暇申請、振替休日・欠勤は残業申請から別に出してもらう）
+ */
+export interface EncChoice { value: 1 | 2 | 3 | 4 | 5; label: string; sub: string; color: string; needsNote: boolean; working?: boolean }
+export const ENC_CHOICES: EncChoice[] = [
+  { value: 1, label: '有給休暇', sub: '', color: '#28a745', needsNote: false },
+  { value: 2, label: '時間外調整休', sub: '', color: '#fd7e14', needsNote: false },
+  { value: 3, label: '定休日', sub: '', color: '#17a2b8', needsNote: false },
+  { value: 4, label: '出勤する（イベント・会議など）', sub: '休暇は作られません', color: '#6c757d', needsNote: true, working: true },
+  { value: 5, label: 'ほかの休みを申請する（慶弔・振替休日・欠勤）', sub: '', color: '#6c757d', needsNote: true },
+];
+
+/** 選択肢5のときの案内（どこから申請するか） */
+export const ENC_OTHER_LEAVE_GUIDE = 'この回答では休暇は作られません。慶弔休暇は「休暇申請」、振替休日・欠勤は「残業申請」から、別に申請してください。';
+
+/** 回答の名前（管理画面の一覧など）。昔の「その他」（出勤のチェックの記録が無い4）も読めるように */
+export function encChoiceLabel(choice: number | null | undefined, working?: boolean | null): string {
+  if (choice === 4) {
+    if (working === true) return '出勤する';
+    if (working === false) return 'その他（休む）';
+    return 'その他';
+  }
+  return ENC_CHOICES.find(c => c.value === choice)?.label ?? '';
+}

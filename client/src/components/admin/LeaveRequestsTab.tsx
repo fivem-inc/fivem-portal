@@ -19,8 +19,10 @@ import CorrectionNotice from '../CorrectionNotice';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import { ApprovedByLines, type ApprovedLine } from './ApprovedByLines';
-import { ENC_PURPOSE_MARK, ENC_REASON_MARK, leavePurposeLabel } from '../../lib/encouragementDay';
+import { ENC_REASON_MARK, ENC_CHOICES, encChoiceLabel, leavePurposeLabel } from '../../lib/encouragementDay';
+import EncouragementExemptSection from './EncouragementExemptSection';
 import { syncEncouragementCalendar } from '../../lib/gcalEncouragement';
+import { dayOffConflictText } from '../../lib/dayOffConflictText';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -74,9 +76,12 @@ interface EncResponse {
   choice: number | null;
   note: string | null;
   responded_at: string | null;
+  /** 選択肢4で出勤するか（2026-10-19〜・空＝それより前の回答） */
+  working: boolean | null;
 }
 
-const ENC_CHOICE_LABEL: Record<number, string> = { 1: '有給休暇', 2: '欠勤（調整休）', 3: '定休日', 4: 'その他' };
+// 回答の選択肢と名前は lib/encouragementDay（ENC_CHOICES・encChoiceLabel）。回答の画面と同じもの（2026-10-19）
+const encChoiceColor = (choice: number | null) => ENC_CHOICES.find(c => c.value === choice)?.color ?? '#6c757d';
 const ENC_DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const fmtEncDow = (dateStr: string) => { const d = new Date(dateStr + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${ENC_DOW[d.getUTCDay()]})`; };
 
@@ -171,6 +176,10 @@ const LeaveRequestsTab: React.FC = () => {
   const [encEditSaving, setEncEditSaving] = useState(false);
   const [encEditError, setEncEditError] = useState<string | null>(null);
   const [encEditSuccess, setEncEditSuccess] = useState<string | null>(null);
+  // 対象外の方（役員など・2026-10-19）：受付を作るときは最初から外す（EncouragementExemptSection が読み書き）
+  const [encExemptIds, setEncExemptIds] = useState<string[]>([]);
+  // 受付を作る前の確かめ：選んだ方のうち、その日にもう休暇・終日の休みを出している方（回答の受付で断られるため・2026-10-19）
+  const [encExistingLeave, setEncExistingLeave] = useState<string[] | null>(null);
 
   // CSV export state
   const [showLeaveCsvModal, setShowLeaveCsvModal]   = useState(false);
@@ -353,19 +362,42 @@ const LeaveRequestsTab: React.FC = () => {
     ]);
     const nameMap: Record<string, string> = {};
     (profiles || []).forEach((p: { id: string; name: string }) => { nameMap[p.id] = p.name || p.id; });
-    const resMap: Record<string, { choice: number; note: string | null; responded_at: string }> = {};
-    (responses || []).forEach((r: { user_id: string; choice: number; note: string | null; responded_at: string }) => { resMap[r.user_id] = r; });
+    const resMap: Record<string, { choice: number; note: string | null; responded_at: string; working: boolean | null }> = {};
+    (responses || []).forEach((r: { user_id: string; choice: number; note: string | null; responded_at: string; working: boolean | null }) => { resMap[r.user_id] = r; });
     setEncResponses(userIds.map((uid: string) => ({
       user_id: uid,
       userName: nameMap[uid] || '不明',
       choice: resMap[uid]?.choice ?? null,
       note: resMap[uid]?.note ?? null,
       responded_at: resMap[uid]?.responded_at ?? null,
+      working: resMap[uid]?.working ?? null,
     })));
     setEncDetailLoading(false);
   }, [supabase, encDays]);
 
   useEffect(() => { fetchEncDays(); }, [fetchEncDays]);
+
+  // 受付を作る前の確かめ（2026-10-19）：選んだ方のうち、その日にもう休暇・終日の休みがある方
+  useEffect(() => {
+    if (!showEncConfirm || !encCreateDate || encCreateTargets.length === 0) { setEncExistingLeave(null); return; }
+    let alive = true;
+    void (async () => {
+      const [lv, ot] = await Promise.all([
+        supabase.from('leave_requests').select('user_id').in('user_id', encCreateTargets)
+          .not('status', 'in', '(cancelled,rejected)').like('leave_dates', `%${encCreateDate}%`),
+        supabase.from('overtime_reports').select('applicant_id').in('applicant_id', encCreateTargets)
+          .eq('entry_type', 'manual').eq('work_date', encCreateDate).not('status', 'in', '(cancelled,rejected,returned)')
+          .overlaps('application_types', ['chosei_off', 'furikae_off', 'absence']),
+      ]);
+      if (!alive) return;
+      const ids = new Set<string>([
+        ...((lv.data ?? []) as { user_id: string }[]).map(x => x.user_id),
+        ...((ot.data ?? []) as { applicant_id: string }[]).map(x => x.applicant_id),
+      ]);
+      setEncExistingLeave([...ids].map(id => users.find(u => u.id === id)?.name || '').filter(Boolean));
+    })();
+    return () => { alive = false; };
+  }, [showEncConfirm, encCreateDate, encCreateTargets, supabase, users]);
 
   // 有休奨励日を「日ごと削除」する。
   // 既存の「個人ごとの✕（対象から削除）」を全員に行うのと同じ挙動：
@@ -587,15 +619,16 @@ const LeaveRequestsTab: React.FC = () => {
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
                       {employmentTypes.map(et => (
                         <button key={et} onClick={() => {
-                          const ids = activeUsers.filter(u => u.employment_type === et).map(u => u.id);
+                          // 対象外の方（役員など）は一括では選ばない（2026-10-19）
+                          const ids = activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id)).map(u => u.id);
                           const allSelected = ids.every(id => encCreateTargets.includes(id));
                           setEncCreateTargets(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
                         }} style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12,
-                          background: activeUsers.filter(u => u.employment_type === et).every(u => encCreateTargets.includes(u.id)) ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
-                          color: activeUsers.filter(u => u.employment_type === et).every(u => encCreateTargets.includes(u.id)) ? '#fff' : (isDarkMode ? '#fff' : '#333'),
+                          background: activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id)).every(u => encCreateTargets.includes(u.id)) ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
+                          color: activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id)).every(u => encCreateTargets.includes(u.id)) ? '#fff' : (isDarkMode ? '#fff' : '#333'),
                         }}>{et}を一括選択</button>
                       ))}
-                      <button onClick={() => setEncCreateTargets(activeUsers.map(u => u.id))}
+                      <button onClick={() => setEncCreateTargets(activeUsers.filter(u => !encExemptIds.includes(u.id)).map(u => u.id))}
                         style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333' }}>全員</button>
                       <button onClick={() => setEncCreateTargets([])}
                         style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333' }}>クリア</button>
@@ -621,7 +654,7 @@ const LeaveRequestsTab: React.FC = () => {
                                       <input type="checkbox"
                                         checked={roleUsers.length > 0 && roleUsers.every(u => encCreateTargets.includes(u.id))}
                                         onChange={() => {
-                                          const ids = roleUsers.map(u => u.id);
+                                          const ids = roleUsers.filter(u => !encExemptIds.includes(u.id)).map(u => u.id);
                                           const allSelected = ids.every(id => encCreateTargets.includes(id));
                                           setEncCreateTargets(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
                                         }} />
@@ -633,6 +666,7 @@ const LeaveRequestsTab: React.FC = () => {
                                           setEncCreateTargets(prev => e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id));
                                         }} />
                                         <span>{u.name || u.email}</span>
+                                        {encExemptIds.includes(u.id) && <span style={{ fontSize: 10.5, color: isDarkMode ? '#adb5bd' : '#888' }}>（対象外の方）</span>}
                                       </label>
                                     ))}
                                   </div>
@@ -712,6 +746,11 @@ const LeaveRequestsTab: React.FC = () => {
                       </p>
                     </div>
                   </div>
+                  {encExistingLeave && encExistingLeave.length > 0 && (
+                    <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
+                      ⚠️ 次の方は、この日にすでに休暇・終日の休みを申請しています。回答で休暇を選ぶと止められるため、先に申請の内容をご確認ください：{encExistingLeave.join('、')}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button onClick={() => { setShowEncConfirm(false); setShowAllEncTargets(false); }}
                       style={{ flex: 1, padding: '10px 0', background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>
@@ -790,9 +829,9 @@ const LeaveRequestsTab: React.FC = () => {
                             {r.choice ? (
                               <>
                                 <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 10, whiteSpace: 'nowrap',
-                                  background: r.choice === 1 ? '#28a745' : r.choice === 2 ? '#fd7e14' : r.choice === 3 ? '#17a2b8' : '#6c757d',
-                                  color: '#fff' }}>{ENC_CHOICE_LABEL[r.choice]}</span>
-                                {r.note && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note}</span>}
+                                  background: encChoiceColor(r.choice),
+                                  color: '#fff' }}>{encChoiceLabel(r.choice, r.working)}</span>
+                                {r.note && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666', flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>{r.note}</span>}
                                 {r.responded_at && (() => {
                                   const d = new Date(r.responded_at);
                                   const date = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -853,24 +892,23 @@ const LeaveRequestsTab: React.FC = () => {
                           {isEditing && (
                             <div style={{ padding: '10px 12px', borderTop: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, background: isDarkMode ? '#3d4349' : '#fff' }}>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                                {([1, 2, 3, 4] as const).map(n => {
-                                  const colors: Record<number, string> = { 1: '#28a745', 2: '#fd7e14', 3: '#17a2b8', 4: '#6c757d' };
-                                  const sel = encEditChoice === n;
+                                {ENC_CHOICES.map(c => {
+                                  const sel = encEditChoice === c.value;
                                   return (
-                                    <button key={n} onClick={() => setEncEditChoice(n)} style={{
+                                    <button key={c.value} onClick={() => setEncEditChoice(c.value)} style={{
                                       padding: '5px 12px', borderRadius: 8, fontSize: 12,
-                                      border: sel ? `2px solid ${colors[n]}` : `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
-                                      background: sel ? colors[n] : (isDarkMode ? '#495057' : '#f8f9fa'),
+                                      border: sel ? `2px solid ${c.color}` : `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
+                                      background: sel ? c.color : (isDarkMode ? '#495057' : '#f8f9fa'),
                                       color: sel ? '#fff' : (isDarkMode ? '#fff' : '#333'), cursor: 'pointer', fontWeight: sel ? 'bold' : 'normal',
-                                    }}>{ENC_CHOICE_LABEL[n]}</button>
+                                    }}>{c.label}</button>
                                   );
                                 })}
                               </div>
-                              {encEditChoice === 4 && (
-                                <input value={encEditNote} onChange={e => setEncEditNote(e.target.value)} placeholder="備考（必須）"
+                              {(encEditChoice === 4 || encEditChoice === 5) && (
+                                <input value={encEditNote} onChange={e => setEncEditNote(e.target.value)} placeholder="内容（必須）"
                                   style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, fontSize: 12, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', boxSizing: 'border-box', marginBottom: 8 }} />
                               )}
-                              {encEditChoice !== 4 && (
+                              {encEditChoice !== 4 && encEditChoice !== 5 && (
                                 <input value={encEditNote} onChange={e => setEncEditNote(e.target.value)} placeholder="備考（任意）"
                                   style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, fontSize: 12, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', boxSizing: 'border-box', marginBottom: 8 }} />
                               )}
@@ -882,60 +920,25 @@ const LeaveRequestsTab: React.FC = () => {
                               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                                 <button onClick={() => { setEncEditingUserId(null); setEncEditError(null); }}
                                   style={{ padding: '5px 14px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
-                                <button disabled={!encEditChoice || (encEditChoice === 4 && !encEditNote.trim()) || encEditSaving}
+                                <button disabled={!encEditChoice || ((encEditChoice === 4 || encEditChoice === 5) && !encEditNote.trim()) || encEditSaving}
                                   onClick={async () => {
-                                    if (!encEditChoice) return;
+                                    if (!encEditChoice || !showEncDetail) return;
                                     setEncEditError(null);
                                     setEncEditSaving(true);
-                                    if (r.choice) {
-                                      // 🚨 update は0件でもエラーにならない。件数を見ないと、回答が
-                                      //    保存できていないのに、このあと休暇申請だけが入れ替わる
-                                      const res = await supabase.from('paid_leave_encouragement_responses')
-                                        .update({ choice: encEditChoice, note: encEditNote.trim() || null })
-                                        .eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id).select('id');
-                                      const fail = describeUpdate(res, '登録', 'missing');
-                                      if (fail) { setEncEditError(fail); setEncEditSaving(false); return; }
-                                    } else {
-                                      await supabase.from('paid_leave_encouragement_responses').insert({
-                                        encouragement_day_id: showEncDetail,
-                                        user_id: r.user_id,
-                                        choice: encEditChoice,
-                                        note: encEditNote.trim() || null,
-                                      });
-                                    }
-                                    // 既存の回答がある場合、leave_requestsから削除してから再挿入
-                                    if (encDetailDay) {
-                                      // 🚨 消してから入れ直す形なので、消せていないのに insert まで進むと
-                                      //    同じ日の承認済みの休暇が**二重に**できる。
-                                      //    delete は0件でもエラーにならないので、必ず error を見て止める。
-                                      //    件数0は失敗ではない（まだ休暇申請が無い人を直したときは元から0件）。
-                                      const { error: delErr } = await supabase.from('leave_requests')
-                                        .delete()
-                                        .eq('user_id', r.user_id)
-                                        .eq('start_date', encDetailDay.target_date)
-                                        .eq('reason', ENC_REASON_MARK)
-                                        .eq('status', 'approved')
-                                        .select('id');
-                                      if (delErr) {
-                                        setEncEditError(`前の休暇申請を取り消せませんでした：${delErr.message}`);
-                                        setEncEditSaving(false);
-                                        return;
-                                      }
-                                      const encLeaveType = encEditChoice === 1 ? '有給休暇' : encEditChoice === 2 ? '調整休' : 'その他';
-                                      const encLeaveTypeOther = encEditChoice === 3 ? '定休日' : encEditChoice === 4 ? (encEditNote.trim() || 'その他') : undefined;
-                                      const { error: lrErr } = await supabase.from('leave_requests').insert({
-                                        user_id: r.user_id,
-                                        leave_type: encLeaveType,
-                                        ...(encLeaveTypeOther ? { leave_type_other: encLeaveTypeOther } : {}),
-                                        leave_dates: JSON.stringify([encDetailDay.target_date]),
-                                        start_date: encDetailDay.target_date,
-                                        end_date: encDetailDay.target_date,
-                                        purpose: ENC_PURPOSE_MARK,
-                                        reason: ENC_REASON_MARK,
-                                        status: 'approved',
-                                        current_approver: 'none',
-                                      });
-                                      if (lrErr) { setEncEditError(lrErr.message); setEncEditSaving(false); return; }
+                                    // 🚨 2026-10-19：回答と休暇を DB の1回の処理で直す（前は画面から delete → insert で、途中で止まると休暇だけ消えた。
+                                    //    選択肢4で出勤でも「その他」の休暇を作っていた）。休暇の中身は回答と同じ決まり（encouragement_leave_spec）
+                                    const { data, error } = await supabase.rpc('admin_set_encouragement_answer', {
+                                      p_day_id: showEncDetail,
+                                      p_user_id: r.user_id,
+                                      p_choice: encEditChoice,
+                                      p_note: encEditNote.trim() || null,
+                                      p_working: encEditChoice === 4,
+                                    });
+                                    const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
+                                    if (error || !row?.ok) {
+                                      setEncEditError(dayOffConflictText(error?.message) ?? (error?.message || row?.reason || '登録できませんでした'));
+                                      setEncEditSaving(false);
+                                      return;
                                     }
                                     setEncEditingUserId(null);
                                     setEncEditError(null);
@@ -1057,7 +1060,7 @@ const LeaveRequestsTab: React.FC = () => {
                         const header = '名前,回答,備考,回答日時';
                         const rows = encResponses.map(r => [
                           r.userName,
-                          r.choice ? ENC_CHOICE_LABEL[r.choice] : '未回答',
+                          r.choice ? encChoiceLabel(r.choice, r.working) : '未回答',
                           r.note || '',
                           r.responded_at ? new Date(r.responded_at + 'Z').toLocaleString('ja-JP') : '',
                         ].map(v => `"${v}"`).join(','));
@@ -1167,6 +1170,8 @@ const LeaveRequestsTab: React.FC = () => {
                       style={{ padding: '4px 12px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 'bold' }}>＋ 新規作成</button>
                   </div>
                 </div>
+                <EncouragementExemptSection users={users} isDark={isDarkMode} onChange={setEncExemptIds} />
+                <div style={{ height: 10 }} />
                 {encLoading ? (
                   <p style={{ textAlign: 'center', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', margin: 0 }}>読み込み中...</p>
                 ) : filteredEncDays.length === 0 ? (
