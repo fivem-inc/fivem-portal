@@ -115,14 +115,14 @@ const OvertimeThresholdBanner: React.FC<{
                 <div style={{ fontSize: 21, fontWeight: 500, color: TEXT, lineHeight: 1.15 }}>
                   {fmtSigned(data.self.total)}
                 </div>
-                <div style={{ fontSize: 9.5, color: SUB, marginTop: 1 }}>（見込み）</div>
+                <div style={{ fontSize: 11, color: SUB, marginTop: 1 }}>（見込み）</div>
                 <div style={{
                   fontSize: 10.5, color: SUB, marginTop: 5,
                   border: `1px solid ${LINE}`, borderRadius: 3, padding: '1px 0',
                 }}>
                   確定 {fmtSigned(data.self.confirmed)}
                 </div>
-                <div style={{ fontSize: 9.5, color: SUB, marginTop: 4 }}>{periodLabel}</div>
+                <div style={{ fontSize: 11, color: SUB, marginTop: 4 }}>{periodLabel}</div>
               </div>
               <div style={{ flex: 1, borderLeft: `1px solid ${LINE}`, paddingLeft: 11, minWidth: 0 }}>
                 <p style={{ fontSize: 12.5, color: TEXT, lineHeight: 1.7, margin: 0 }}>
@@ -166,8 +166,8 @@ const OvertimeThresholdBanner: React.FC<{
                   <div style={{ fontSize: 21, fontWeight: 500, color: TEXT, lineHeight: 1.15 }}>
                     {members.length}人
                   </div>
-                  <div style={{ fontSize: 9.5, color: SUB, marginTop: 3 }}>{periodLabel}</div>
-                  <div style={{ fontSize: 9.5, color: SUB }}>{todayLabel} 時点</div>
+                  <div style={{ fontSize: 11, color: SUB, marginTop: 3 }}>{periodLabel}</div>
+                  <div style={{ fontSize: 11, color: SUB }}>{todayLabel} 時点</div>
                 </div>
                 <div style={{ flex: 1, borderLeft: `1px solid ${LINE}`, paddingLeft: 11, minWidth: 0 }}>
                   <p style={{ fontSize: 12.5, color: TEXT, lineHeight: 1.6, margin: '0 0 6px' }}>

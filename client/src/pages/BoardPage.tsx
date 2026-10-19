@@ -4052,7 +4052,7 @@ const BoardPage: React.FC = () => {
                                   {p.id === user?.id && <span style={{ fontSize: 10, color: subColor }}> (自分)</span>}
                                 </span>
                                 {gTags.map(g => (
-                                  <span key={g.name} style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, background: g.bg, color: g.color, whiteSpace: 'nowrap', flexShrink: 0 }}>{g.name}</span>
+                                  <span key={g.name} style={{ fontSize: 11, padding: '1px 5px', borderRadius: 3, background: g.bg, color: g.color, whiteSpace: 'nowrap', flexShrink: 0 }}>{g.name}</span>
                                 ))}
                               </label>
                             );
