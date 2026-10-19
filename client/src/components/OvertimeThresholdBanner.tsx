@@ -117,7 +117,7 @@ const OvertimeThresholdBanner: React.FC<{
                 </div>
                 <div style={{ fontSize: 11, color: SUB, marginTop: 1 }}>（見込み）</div>
                 <div style={{
-                  fontSize: 10.5, color: SUB, marginTop: 5,
+                  fontSize: 11, color: SUB, marginTop: 5,
                   border: `1px solid ${LINE}`, borderRadius: 3, padding: '1px 0',
                 }}>
                   確定 {fmtSigned(data.self.confirmed)}
@@ -192,7 +192,7 @@ const OvertimeThresholdBanner: React.FC<{
                       ))}
                     </tbody>
                   </table>
-                  <p style={{ fontSize: 10, color: SUB, margin: '6px 0 0' }}>
+                  <p style={{ fontSize: 11, color: SUB, margin: '6px 0 0' }}>
                     見込みの時間です。（ ）は前回のお知らせからの増加
                   </p>
                 </div>
