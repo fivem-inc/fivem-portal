@@ -2507,6 +2507,14 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
         <p style={{ margin: '0 0 3px', fontSize: 10, letterSpacing: '0.22em', color: isDarkMode ? '#6c757d' : '#adb5bd', fontWeight: 700 }}>ファイブMスタッフサイト</p>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>{mode === 'expense' ? '🚃 交通費' : '🏠 ホーム'}</h1>
       </div>
+      {/* 過去のお知らせ（2026-10-19 ユーザー指示）：見出しの線のすぐ下・右寄せ。帯が何枚あっても開いてすぐ見える。どの幅でも同じ位置。
+          🚨 homeTopRef（「新しいお知らせはありません」の判定）の外に置く */}
+      {mode !== 'expense' && !isRetiree && (
+        <div style={{ textAlign: 'right', margin: '-8px 0 6px' }}>
+          <button type="button" onClick={() => navigate('/announcements')}
+            style={{ background: 'none', border: 'none', color: isDarkMode ? '#90caf9' : '#0d6efd', fontSize: 13, cursor: 'pointer', padding: '4px 0', whiteSpace: 'nowrap' }}>過去のお知らせ ›</button>
+        </div>
+      )}
 
       {/* ── 上半分（お知らせ・帯）。交通費のページでは出さない ── */}
       {mode !== 'expense' && (<div ref={homeTopRef}><HomeNewContext.Provider value={homeNewCtx}>
@@ -2625,13 +2633,6 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       )}
 
       </HomeNewContext.Provider></div>)}
-      {/* 🚨 「新しいお知らせはありません」の判定（homeTopRef の文字）に入らないよう、帯の枠の外に置く。過去のお知らせ（2026-10-18 ユーザー確定 A）：［確認した］で消えたお知らせも、届いた日・確認した日・掲載期限つきで読める */}
-      {mode !== 'expense' && !isRetiree && (
-        <div style={{ textAlign: 'right', margin: '2px 0 10px' }}>
-          <button type="button" onClick={() => navigate('/announcements')}
-            style={{ background: 'none', border: 'none', color: isDarkMode ? '#90caf9' : '#0d6efd', fontSize: 13, cursor: 'pointer', padding: '4px 0' }}>過去のお知らせ ›</button>
-        </div>
-      )}
       {mode === 'home' && homeEmpty && (
         <p style={{ textAlign: 'center', fontSize: 14, color: isDarkMode ? '#adb5bd' : '#6c757d', margin: '24px 0' }}>新しいお知らせはありません</p>
       )}
@@ -3038,7 +3039,7 @@ function App() {
             {/* 旧URL。ブックマークやメール内リンクから来ても迷子にならないよう転送する */}
             <Route path="/help" element={<Navigate to="/faq" replace />} />
             <Route path="/account" element={<Suspense fallback={<PageLoader />}><AccountSettings /></Suspense>} />
-            {/* 過去のお知らせ（2026-10-18・ホームのいちばん下から） */}
+            {/* 過去のお知らせ（2026-10-18・ホームの見出しの線の下から） */}
             <Route path="/announcements" element={<Suspense fallback={<PageLoader />}><AnnouncementsHistory /></Suspense>} />
             <Route path="/notification-settings" element={<Suspense fallback={<PageLoader />}><NotificationSettings /></Suspense>} />
             <Route path="/change-email" element={<Suspense fallback={<PageLoader />}><ChangeEmail /></Suspense>} />
