@@ -9,6 +9,7 @@ import { describeUpdate } from '../../lib/statusUpdate';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
 import PayrollCloseNoticeSection from './PayrollCloseNoticeSection';
 import GcalCalendarSection from './GcalCalendarSection';
+import GcalEncouragementSection from './GcalEncouragementSection';
 import LeaveShiftAlertSection from './LeaveShiftAlertSection';
 import ShiftAdjustSettingsSection from './ShiftAdjustSettingsSection';
 import { BTN_BLUE } from '../../lib/buttonStyles';
@@ -1071,6 +1072,8 @@ const NotificationsTab: React.FC = () => {
       <PayrollCloseNoticeSection />
 
       <GcalCalendarSection />
+      {/* 有休奨励日の休みを Google カレンダーにどう出すか（2026-10-19） */}
+      <GcalEncouragementSection />
 
       <LeaveShiftAlertSection />
       <ShiftAdjustSettingsSection />

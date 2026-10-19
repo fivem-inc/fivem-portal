@@ -1,6 +1,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkCaller } from '../_shared/callerGate.ts'
+import { ENC_REASON, type EncCtx, parseLeaveDates, readEncSetting, syncEncouragementDay, syncEncouragementAll, cleanupOrphans } from './encouragement.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -177,14 +178,34 @@ async function getAccessToken(serviceAccountJson: string): Promise<string> {
   return tokenData.access_token
 }
 
+// Google が一時的に断ったとき（混み合い 429・サーバーの不調 5xx・通信の切れ）は3回まで待ってやり直す（2026-10-19）。
+// 🚨 4xx（429 以外）はやり直しても同じなので、そのまま返す
+async function gfetch(url: string, init: RequestInit): Promise<Response> {
+  let last: unknown = null
+  for (let i = 0; i < 4; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 500 * 2 ** (i - 1)))
+    try {
+      const res = await fetch(url, init)
+      if (res.status !== 429 && res.status < 500) return res
+      last = res
+      if (i < 3) await res.body?.cancel()
+    } catch (e) {
+      last = e
+    }
+  }
+  if (last instanceof Response) return last
+  throw last instanceof Error ? last : new Error(String(last))
+}
+
 async function createEvent(
   token: string,
   calendarId: string,
   summary: string,
   date: string,
-  colorId: string
+  colorId: string,
+  description?: string
 ): Promise<string> {
-  const res = await fetch(
+  const res = await gfetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
     {
       method: 'POST',
@@ -194,6 +215,7 @@ async function createEvent(
         start: { date },
         end: { date: nextDay(date) },
         colorId: colorId,
+        ...(description ? { description } : {}),
       }),
     }
   )
@@ -229,12 +251,36 @@ async function updateEvent(
   }
 }
 
+/** 予定の中身の一部だけ直す（有休奨励日のまとめの予定・消して作り直さない） */
+async function patchEvent(
+  token: string,
+  calendarId: string,
+  eventId: string,
+  fields: Record<string, unknown>
+): Promise<boolean> {
+  const res = await gfetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    }
+  )
+  // 404/410＝人が Google カレンダー側で消した。false を返し、呼んだ側で作り直す
+  if (res.status === 404 || res.status === 410) return false
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(`イベント更新失敗: status=${res.status} ${JSON.stringify(data)}`)
+  }
+  return true
+}
+
 async function deleteEvent(
   token: string,
   calendarId: string,
   eventId: string
 ): Promise<void> {
-  const res = await fetch(
+  const res = await gfetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
   )
@@ -293,7 +339,7 @@ serve(async (req) => {
     const token = await getAccessToken(serviceAccountJson)
 
     const body = await req.json()
-    const { action, source_type, source_id, dates, name, leave_type, absence_type, time, locations, work_segments } = body
+    const { action, source_type, source_id, dates, name, leave_type, absence_type, time, locations, work_segments, target_date, dry_run } = body
     // タイトル用の名前は姓名間の全角スペースを半角に正規化（DBのprofiles.nameは変更しない）
     const normName = String(name ?? '').replace(/　/g, ' ')
     // locations: 日付→校 の対応表（省略可。無ければ従来どおり校なしタイトル）
@@ -339,12 +385,14 @@ serve(async (req) => {
 
       const { data: existing } = await supabase
         .from('gcal_events')
-        .select('id, event_id, date')
+        .select('id, event_id, date, calendar_id')
         .eq('source_type', 'overtime')
         .eq('source_id', source_id)
 
+      // 🚨 消すときは、作ったときのカレンダーから消す（2026-10-19）。今選ばれているカレンダーから消すと、
+      //    本番／テストを切り替えたあと、前のカレンダーの予定が消えずに残る
       if (!shouldExist) {
-        for (const row of existing ?? []) await deleteEvent(token, calendarId, row.event_id)
+        for (const row of existing ?? []) await deleteEvent(token, row.calendar_id || calendarId, row.event_id)
         await supabase.from('gcal_events').delete().eq('source_type', 'overtime').eq('source_id', source_id)
         return new Response(JSON.stringify({ success: true, synced: false }),
           { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
@@ -393,7 +441,7 @@ serve(async (req) => {
 
       // 日付が変わった場合の旧イベントを掃除しつつ、work_date に1件だけ立てる（色反映のため削除→再作成）
       for (const row of existing ?? []) {
-        await deleteEvent(token, calendarId, row.event_id)
+        await deleteEvent(token, row.calendar_id || calendarId, row.event_id)
         await supabase.from('gcal_events').delete().eq('id', row.id)
       }
       const newEventId = await createEvent(token, calendarId, summary, report.work_date, otColorId)
@@ -431,17 +479,92 @@ serve(async (req) => {
         { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
     }
 
+    // ── 有休奨励日（2026-10-19・docs/計画-有休奨励日のカレンダー.md）─────────────────────
+    const json = (obj: unknown, status = 200) => new Response(JSON.stringify(obj),
+      { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
+    // 管理者か（service は管理者と同じ扱い）。日付を指定しない作り直し・毎晩の処理・dry_run に使う
+    const isAdminCaller = async (): Promise<boolean> => {
+      if (gate.kind === 'service') return true
+      const { data } = await supabase.auth.admin.getUserById(gate.userId)
+      return (data?.user?.app_metadata as { role?: string } | undefined)?.role === 'admin'
+    }
+    const makeEncCtx = async (dryRun: boolean): Promise<EncCtx> => ({
+      supabase, token, calendarId, dryRun, ops: [],
+      setting: await readEncSetting(supabase),
+      createEvent, patchEvent, deleteEvent,
+      leaveLabel: (t: string) => LEAVE_CONFIG[t]?.label ?? '休み',
+    })
+    const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
+    // その日に奨励日があれば、その日の予定を作り直す（奨励日が無い日は何もしない）
+    const syncEncDates = async (ctx: EncCtx, list: string[]) => {
+      const uniq = [...new Set(list.filter(isDate))]
+      const sum = { created: 0, updated: 0, deleted: 0, days: 0 }
+      if (uniq.length === 0) return sum
+      const { data: days } = await supabase.from('paid_leave_encouragement_days').select('id, target_date').in('target_date', uniq)
+      const dayByDate = new Map(((days ?? []) as { id: string; target_date: string }[]).map(d => [d.target_date, d.id]))
+      for (const d of uniq.sort()) {
+        const dayId = dayByDate.get(d)
+        if (!dayId) continue
+        const c = await syncEncouragementDay(ctx, d, dayId)
+        sum.created += c.created; sum.updated += c.updated; sum.deleted += c.deleted; sum.days++
+      }
+      return sum
+    }
+
+    // action: 'sync_encouragement' — 奨励日の予定を、今の記録と設定どおりにそろえる（差分だけ・何度呼んでも同じ）
+    //   target_date あり … その日だけ（奨励日を消したあとも、日付を渡せばその日の予定を消す）。在籍者なら呼べる（回答・修正のあと）
+    //   target_date なし … これからの奨励日すべて（設定の保存）。管理者と service だけ
+    //   dry_run … Google も DB も書かず、作る・直す・消すの一覧（ops）を返す。管理者と service だけ
+    if (action === 'sync_encouragement') {
+      if (target_date != null && !isDate(target_date)) return json({ success: false, error: 'bad_date' }, 400)
+      if ((!target_date || dry_run) && !(await isAdminCaller())) return json({ success: false, error: 'forbidden' }, 403)
+      const ctx = await makeEncCtx(!!dry_run)
+      let result
+      if (target_date) {
+        const { data: day } = await supabase.from('paid_leave_encouragement_days').select('id').eq('target_date', target_date).maybeSingle()
+        const c = await syncEncouragementDay(ctx, target_date, (day?.id as string | undefined) ?? null)
+        result = { ...c, days: 1 }
+      } else {
+        result = await syncEncouragementAll(ctx)
+      }
+      return json({ success: true, mode: ctx.setting.mode, ...result, ...(dry_run ? { ops: ctx.ops } : {}) })
+    }
+
+    // action: 'nightly' — 毎晩（cron・service）。①これからの奨励日をそろえる ②これからの日付の休暇・残業の予定のうち、もとの行が無いものを消す
+    //   片方が失敗しても、もう片方は行う
+    if (action === 'nightly') {
+      if (!(await isAdminCaller())) return json({ success: false, error: 'forbidden' }, 403)
+      const ctx = await makeEncCtx(!!dry_run)
+      const errors: string[] = []
+      let enc = null, orphans = 0
+      try { enc = await syncEncouragementAll(ctx) } catch (e) { errors.push('奨励日: ' + (e instanceof Error ? e.message : String(e))) }
+      try { orphans = await cleanupOrphans(ctx) } catch (e) { errors.push('取り残し: ' + (e instanceof Error ? e.message : String(e))) }
+      if (errors.length > 0) console.error('[gcal-sync nightly]', errors.join(' / '))
+      return json({ success: errors.length === 0, encouragement: enc, orphans_deleted: orphans, errors, ...(dry_run ? { ops: ctx.ops } : {}) },
+        errors.length === 0 ? 200 : 500)
+    }
+
+    // 休暇の upsert／delete のとき、奨励日の休暇（reason＝【有給奨励日】で、その日に奨励日がある）は 1人ずつの予定にせず、その日の作り直しに回す
+    let encLeaveDates: string[] = []
+    if (source_type === 'leave' && source_id) {
+      const { data: lv } = await supabase.from('leave_requests').select('reason, leave_dates, start_date').eq('id', source_id).maybeSingle()
+      if (lv?.reason === ENC_REASON) {
+        const ds = parseLeaveDates(lv.leave_dates) ?? []
+        encLeaveDates = [...ds, lv.start_date, ...((dates ?? []) as string[])].filter(isDate)
+      }
+    }
+
     // action: 'upsert' | 'delete'
     if (action === 'delete') {
-      // 既存イベントをすべて削除
+      // 既存イベントをすべて削除（🚨 作ったときのカレンダーから消す）
       const { data: existing } = await supabase
         .from('gcal_events')
-        .select('event_id')
+        .select('event_id, calendar_id, date')
         .eq('source_type', source_type)
         .eq('source_id', source_id)
 
       for (const row of existing ?? []) {
-        await deleteEvent(token, calendarId, row.event_id)
+        await deleteEvent(token, row.calendar_id || calendarId, row.event_id)
       }
 
       await supabase
@@ -450,10 +573,26 @@ serve(async (req) => {
         .eq('source_type', source_type)
         .eq('source_id', source_id)
 
+      // 休暇を消した日が奨励日なら、その日のまとめの予定を直す（休暇の行が消されていても、予定のあった日・渡された日で探す）
+      let encError: string | null = null
+      if (source_type === 'leave') {
+        try {
+          const ctx = await makeEncCtx(false)
+          await syncEncDates(ctx, [...encLeaveDates, ...((dates ?? []) as string[]), ...((existing ?? []) as { date: string }[]).map(r => r.date)])
+        } catch (e) { encError = e instanceof Error ? e.message : String(e) }
+      }
+
       return new Response(
-        JSON.stringify({ success: true }),
+        JSON.stringify({ success: true, ...(encError ? { encouragement_error: encError } : {}) }),
         { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // 奨励日の休暇：その日は作り直しに回し、1人ずつの予定はここでは作らない（1人ずつの設定なら作り直しの中で作る）
+    if (action === 'upsert' && encLeaveDates.length > 0) {
+      const ctx = await makeEncCtx(false)
+      const r = await syncEncDates(ctx, encLeaveDates)
+      if (r.days > 0) return json({ success: true, encouragement: r })
     }
 
     // action: 'upsert' — 日付ごとにイベントを作成or更新
@@ -476,19 +615,19 @@ serve(async (req) => {
         : baseSummary
       const { data: existing } = await supabase
         .from('gcal_events')
-        .select('id, event_id')
+        .select('id, event_id, calendar_id')
         .eq('source_type', source_type)
         .eq('source_id', source_id)
         .eq('date', date)
         .maybeSingle()
 
       if (existing) {
-        // PUTではcolorIdが反映されないケースがあるため削除→再作成
-        await deleteEvent(token, calendarId, existing.event_id)
+        // PUTではcolorIdが反映されないケースがあるため削除→再作成（🚨 消すのは作ったときのカレンダーから）
+        await deleteEvent(token, existing.calendar_id || calendarId, existing.event_id)
         const newEventId = await createEvent(token, calendarId, summary, date, colorId)
         await supabase
           .from('gcal_events')
-          .update({ event_id: newEventId, updated_at: new Date().toISOString() })
+          .update({ event_id: newEventId, calendar_id: calendarId, updated_at: new Date().toISOString() })
           .eq('id', existing.id)
       } else {
         const eventId = await createEvent(token, calendarId, summary, date, colorId)

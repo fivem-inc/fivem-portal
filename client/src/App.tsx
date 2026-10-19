@@ -92,6 +92,7 @@ import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
 import { dayOffConflictText } from './lib/dayOffConflictText';
+import { syncEncouragementCalendar } from './lib/gcalEncouragement';
 import { countMyOpenClockInquiries } from './lib/clockInquiry';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -2408,6 +2409,8 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
                 setEncAnswerSubmitting(false);
                 return;
               }
+              // Google カレンダーの奨励日の予定を、回答した今の状態で作り直す（2026-10-19・待たない・失敗しても回答は済んでいる）
+              void syncEncouragementCalendar(encAnsweringDay.target_date);
               setEncAnswerSubmitting(false);
               setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError('');
               setEncRefreshKey(k => k + 1);

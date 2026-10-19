@@ -20,6 +20,7 @@ import { useLatestCorrections } from '../../lib/correctionNotice';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import { ApprovedByLines, type ApprovedLine } from './ApprovedByLines';
 import { ENC_PURPOSE_MARK, ENC_REASON_MARK, leavePurposeLabel } from '../../lib/encouragementDay';
+import { syncEncouragementCalendar } from '../../lib/gcalEncouragement';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -394,6 +395,8 @@ const LeaveRequestsTab: React.FC = () => {
       return;
     }
     setSuccessMsg(`奨励日（${fmtEncDow(day.target_date)}）を削除しました`);
+    // Google カレンダーのその日の奨励日の予定も消す（奨励日が無くなった日として作り直す・2026-10-19）
+    void syncEncouragementCalendar(day.target_date);
     fetchEncDays();
   }, [supabase, fetchEncDays, setSuccessMsg]);
 
@@ -838,6 +841,8 @@ const LeaveRequestsTab: React.FC = () => {
                                   .delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id).select('id');
                                 const tgtFail = describeUpdate(tgtDel, '対象からの削除', 'missing');
                                 if (tgtFail) { setErrorMsg(tgtFail); fetchEncDetail(showEncDetail!); return; }
+                                // Google カレンダーの奨励日の予定を作り直す（2026-10-19）
+                                if (encDetailDay) void syncEncouragementCalendar(encDetailDay.target_date);
                                 fetchEncDetail(showEncDetail!);
                                 fetchEncDays();
                               } });
@@ -936,6 +941,8 @@ const LeaveRequestsTab: React.FC = () => {
                                     setEncEditError(null);
                                     setEncEditSaving(false);
                                     setEncEditSuccess('登録しました');
+                                    // Google カレンダーの奨励日の予定を作り直す（2026-10-19）
+                                    if (encDetailDay) void syncEncouragementCalendar(encDetailDay.target_date);
                                     setTimeout(() => setEncEditSuccess(null), 3000);
                                     fetchEncDetail(showEncDetail!);
                                     fetchEncDays();

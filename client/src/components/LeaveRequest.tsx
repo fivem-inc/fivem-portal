@@ -53,6 +53,7 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
+import { syncEncouragementCalendar } from '../lib/gcalEncouragement';
 import { usualWorkplaceFor } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
 import { useRoles } from '../hooks/useRoles';
@@ -976,6 +977,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 setEncAnswerSubmitting(false);
                 return;
               }
+              // Google カレンダーの奨励日の予定を、回答した今の状態で作り直す（2026-10-19・待たない・失敗しても回答は済んでいる）
+              void syncEncouragementCalendar(encAnsweringDay.target_date);
               setEncAnswerSubmitting(false);
               setEncAnsweringId(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError('');
               fetchEncPending();
