@@ -129,6 +129,8 @@ interface ExpenseFormProps {
   onTemplateApplied?: () => void;
   /** 雇用形態（useAuth の値・役職プレビューで切り替わる）。パートには定期券の6か月の注意を出さない（2026-10-14） */
   employmentType?: string;
+  /** 交通費のページ（ホームと分けた人の /expense）として出すとき true。見出しを休暇申請などのページと同じ形・位置にする（2026-10-19） */
+  asPage?: boolean;
 }
 
 const TRANSPORT_PRESETS = ['JR', '阪急', '京阪', '京都地下鉄', '京都市バス'];
@@ -176,7 +178,7 @@ function checkExpense(e: Expense, existing: Expense[]): { msg: string; fields: s
   return null;
 }
 
-const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName, pendingTemplates, onTemplateApplied, employmentType }) => {
+const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName, pendingTemplates, onTemplateApplied, employmentType, asPage = false }) => {
   // 会社の休館日。カレンダーの色分けと、選んだあとの注意書きに使う。
   // 休館日なのに交通費を申請するケースが毎月出ていたため
   const calendarKinds = useCompanyCalendar();
@@ -620,16 +622,23 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     <div>
       {/* ホームの中の1機能としてのセクション見出し。ページ名（🏠 ホーム）は App.tsx 側にある。
           区切り線を上に置き、バナー群と入力欄の境目が分かるようにしている */}
+      {asPage ? (
+        // 交通費のページ：休暇申請（components/LeaveRequest のページタイトル）と同じ形・位置
+        <div style={{ textAlign: 'center', padding: '28px 0 12px' }}>
+          <h1 style={{ fontSize: 20, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: 0 }}>🚃 交通費申請</h1>
+        </div>
+      ) : (
       <div style={{ textAlign: 'center', paddingTop: 16, marginBottom: 12, paddingBottom: 4, borderTop: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }} aria-label="交通費申請フォーム">🚃 交通費申請</h2>
       </div>
+      )}
 
       
       {/* このページの説明 */}
       <div style={{
         background: '#fff3cd',
         border: '1px solid #ffe0a3',
-        borderRadius: 8, padding: '12px 14px', margin: '16px 0', textAlign: 'left',
+        borderRadius: 8, padding: '12px 14px', margin: asPage ? '0 0 16px' : '16px 0', textAlign: 'left',
         position: 'relative', // 右上のFAQボタンの基準
       }}>
         <HelpLinkButton category="交通費申請" />

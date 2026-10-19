@@ -2502,11 +2502,15 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
 
       {/* ページタイトル。ホームであることが分かるよう他ページと同じ「サイト名＋ページ名」の形にする。
-          交通費申請の見出しは ExpenseForm 側にセクション見出しとして置いている */}
+          交通費申請の見出しは ExpenseForm 側にセクション見出しとして置いている。
+          🚨 2026-10-19：交通費のページ（ホームと分けた人の /expense）ではこの見出しを出さない（ExpenseForm の見出しと2重になっていた・ユーザー指摘）。
+             そのページでは ExpenseForm がページの見出し（休暇申請などと同じ形・位置）を出す */}
+      {mode !== 'expense' && (
       <div style={{ textAlign: 'center', paddingTop: 12, marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
         <p style={{ margin: '0 0 3px', fontSize: 10, letterSpacing: '0.22em', color: isDarkMode ? '#6c757d' : '#adb5bd', fontWeight: 700 }}>ファイブMスタッフサイト</p>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>{mode === 'expense' ? '🚃 交通費' : '🏠 ホーム'}</h1>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>🏠 ホーム</h1>
       </div>
+      )}
       {/* 過去のお知らせ（2026-10-19 ユーザー指示）：見出しの線のすぐ下・右寄せ。帯が何枚あっても開いてすぐ見える。どの幅でも同じ位置。
           🚨 homeTopRef（「新しいお知らせはありません」の判定）の外に置く */}
       {mode !== 'expense' && !isRetiree && (
@@ -2647,6 +2651,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       <ExpenseForm
         user={user}
         employmentType={employmentType}
+        asPage={mode === 'expense'}
         onSubmissionComplete={fetchExpenses}
         expenses={expenses}
         setExpenses={setExpenses}
