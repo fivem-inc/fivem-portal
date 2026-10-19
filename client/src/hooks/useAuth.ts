@@ -54,6 +54,8 @@ interface UseAuthReturn {
   canOvertimeGrid: boolean;
   /** 勤務変更の「カレンダーの予定の一覧」（2026-10-05・最初はマネージャー以上だけ） */
   canShiftReportTodo: boolean;
+  /** 上のナビの「📋 手続き」（入社・退職の手続き /retire）。マネージャー以上の役職のうち、権限管理の「手続き」が ON の役職と管理者 */
+  canProcedures: boolean;
   /**
    * シフト調整の作業場（勤怠カレンダーの中のタブ）の5つの権限。
    * 🚨 1つのまとまりで渡す。ばらばらに5つ足すと App.tsx（2人共通ファイル）の
@@ -458,6 +460,9 @@ export const useAuth = (): UseAuthReturn => {
   const canOvertimeGrid = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_grid ?? false);
   // 勤務変更の「カレンダーの予定の一覧」（2026-10-05）。既定は OFF＝権限行が読めなかったときは出さない
   const canShiftReportTodo = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_todo ?? false);
+  // 「📋 手続き」（2026-10-19・権限管理の行）。🚨 中身の読み書き（DB の RLS）は「マネージャー以上」のままなので、
+  //    ON にできるのはマネージャー以上の役職だけ（リーダーなどを ON にしても中身が空のページになるため）。退職者には出さない
+  const canProcedures = !retireeMode && isManagerPlus && (realIsAdmin && !previewRole ? true : (effectivePerms.procedures ?? false));
   // シフト調整の作業場（2026-09-13）。既定はすべて OFF ＝ 権限行が読めなかったときは出さない。
   // 🚨 テスト中は社長・管理者だけ ON にしてある（DB側・migration 20260912222515）
   // 🚨 useMemo で包む。5つをまとめた「もの」を毎回作り直すと、受け取った側が
@@ -573,6 +578,7 @@ export const useAuth = (): UseAuthReturn => {
     canOvertimeMemo,
     canOvertimeGrid,
     canShiftReportTodo,
+    canProcedures,
     shiftAdjust,
     canFaq,
     canFaqNav,

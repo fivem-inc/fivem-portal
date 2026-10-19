@@ -16,6 +16,7 @@ interface Role {
   name: string;
   sort_order: number;
   is_fixed: boolean;
+  is_manager_plus?: boolean;
 }
 
 interface FeaturePermission {
@@ -105,7 +106,13 @@ const FEATURES = [
   //    フロア責任者は含めない。「マネージャー以上」にフロア責任者を入れるかは
   //    毎回判断が割れるので、役職ごとのONで持って曖昧さを残さない
   { key: 'room_booking',    icon: '🚪', label: '場所予約', note: '初期はマネージャー・社長のみ。フロア責任者は含めない', group: 'その他' as FeatureGroup, bySuperior: false },
+  // 2026-10-19 追加。上のナビの「📋 手続き」（入社・退職の手続き）とホームの案内。
+  // 🚨 中身の読み書き（DB の RLS）は「マネージャー以上」の役職だけなので、それ以外の役職は ON にできない（managerPlusOnly）
+  { key: 'procedures', icon: '📋', label: '手続き（入社・退職）', note: 'ナビの「📋 手続き」とホームの案内。マネージャー以上の役職だけ選べます', group: 'その他' as FeatureGroup, bySuperior: true, managerPlusOnly: true },
 ] as const;
+
+/** マネージャー以上の役職だけ ON にできる行か（それ以外の役職のスイッチは OFF のまま押せない） */
+const isManagerPlusOnly = (feat: (typeof FEATURES)[number]) => 'managerPlusOnly' in feat && feat.managerPlusOnly === true;
 
 /** 退職後の申請期間に出す機能（3段目・2026-09-20）。
  *  🚨 保存先は feature_permissions ではなく **app_settings.retiree_feature_keys**。
@@ -353,7 +360,7 @@ const FeaturePermissionsTab: React.FC = () => {
       FEATURES.map(feat => ({
         role_id:     role.id,
         feature_key: feat.key,
-        enabled:     role.is_fixed ? true : (perms[role.id]?.[feat.key] ?? false),
+        enabled:     role.is_fixed ? true : (isManagerPlusOnly(feat) && !role.is_manager_plus) ? false : (perms[role.id]?.[feat.key] ?? false),
         updated_at:  new Date().toISOString(),
       }))
     );
@@ -982,9 +989,14 @@ const FeaturePermissionsTab: React.FC = () => {
                     })()}
                     {roles.map(role => {
                       const isFixed = role.is_fixed;
-                      const on = isFixed ? true : (perms[role.id]?.[feat.key] ?? false);
+                      // マネージャー以上の役職だけ選べる行（手続き）。それ以外の役職は OFF のまま押せない
+                      const locked = !isFixed && isManagerPlusOnly(feat) && !role.is_manager_plus;
+                      const on = isFixed ? true : locked ? false : (perms[role.id]?.[feat.key] ?? false);
                       return (
                         <td key={role.id} style={{ boxSizing: 'border-box', textAlign: 'center', padding: '8px 3px', borderBottom: `1px solid ${border}` }}>
+                          {locked ? (
+                            <span title={`${role.name}：マネージャー以上の役職だけ選べます`} style={{ fontSize: 11, color: subText }}>—</span>
+                          ) : (
                           <button
                             onClick={() => { if (!isFixed && isEditMode) togglePerm(role.id, feat.key); }}
                             disabled={isFixed || !isEditMode}
@@ -1007,6 +1019,7 @@ const FeaturePermissionsTab: React.FC = () => {
                               background: '#fff', transition: 'left .15s', display: 'block',
                             }} />
                           </button>
+                          )}
                         </td>
                       );
                     })}

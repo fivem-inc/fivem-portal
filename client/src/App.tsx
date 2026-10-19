@@ -929,9 +929,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   // 「⚙️ 管理」を出すか：管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき（hooks/useAdminAccess.ts）
   const navRoles = useRoles();
   const adminAccess = useAdminAccess({ isAdmin, isManagerPlus: isAdmin || attrsFor(navRoles, roleTitle).is_manager_plus });
-  // 「📋 手続き」（入社・退職の手続き /retire）を出すか（2026-10-17）。マネージャー以上と管理者。
+  // 「📋 手続き」（入社・退職の手続き /retire）を出すか（2026-10-17）。
   // 🚨 全部済むとホームの案内もベルも出ないので、いつでも開ける入口として置く。赤い数字は付けない（押して消せない赤は付けない決まり）
-  const canProcedures = !isRetiree && (isAdmin || attrsFor(navRoles, roleTitle).is_manager_plus);
+  // 🚨 2026-10-19：権限管理の「手続き」の行で決める（マネージャー以上の役職のうち ON の役職と管理者）。判定は useAuth の canProcedures 1か所
+  //    （useAuth の読み込みは使い回しなので、ここで呼んでも問い合わせは増えない）
+  const { canProcedures } = useAuth();
   const { count: overtimeUnreported } = useOvertimeUnreportedCount(userId, canOvertime);
   // 🚨 自分あての「申請の依頼」も数に入れる（2026-09-20）。
   //    ベルとプッシュしか無く、9日間気づかれなかった実例があるため。
@@ -2241,7 +2243,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
   const {
     user,
     isAdmin,
-    isManagerPlus,
+    canProcedures,
     isApprover,
     profileName,
     roleTitle,
@@ -2463,7 +2465,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       <PurchaseApprovalBanner userId={user.id} canPurchaseRequest={canPurchaseRequest} />
 
       {/* ④-4 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19） */}
-      <RetireChecklistBanner show={isAdmin || isManagerPlus} isDark={isDarkMode} />
+      <RetireChecklistBanner show={canProcedures} isDark={isDarkMode} />
 
       {/* ④-4 残業・時間調整の確認待ちバナー（確認者のみ） */}
       <OvertimeApprovalBanner userId={user.id} canOvertime={canOvertime} roleTitle={roleTitle} isAdmin={isAdmin} />
@@ -2621,10 +2623,10 @@ const LeaveApprovalsPage: React.FC = () => {
 // 入社・退職の手続き（/retire）。マネージャー以上と管理者。スマホでも開ける（管理画面はパソコンだけのため別に置く・2026-09-19）
 // 🚨 中身は StaffChecklistTabs 1つ（管理画面の「入社・退職の手続き」タブと共用）。?kind=hire|retire で開くほうを決める（2026-10-06）
 const RetirePage: React.FC = () => {
-  const { user, isAdmin, isManagerPlus, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isManagerPlus, canProcedures, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const isDarkMode = useDarkMode();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
-  if (!isAdmin && !isManagerPlus) return <Navigate to="/" />;
+  if (!canProcedures) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0', maxWidth: 760, margin: '0 auto' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
