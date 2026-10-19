@@ -745,68 +745,15 @@ const useBoardUnread =(userId: string | undefined, pathname: string, enabled = t
     if (!userId) return;
     if (!enabled) return;   // 🚨 退職者は連絡板の表を読めない。1本も投げない
 
-    const [memberRes, inboxRes] = await Promise.all([
-      supabase.from('board_channel_members').select('channel_id').eq('user_id', userId),
-      supabase.from('board_message_recipients').select('message_id').eq('user_id', userId).eq('archived', false),
-    ]);
-
-    // チャンネル未読（board_reads を唯一の既読判定ソースとして使用）
-    let channelUnread = 0;
-    if (memberRes.data && memberRes.data.length > 0) {
-      const channelIds = memberRes.data.map((r: any) => r.channel_id);
-      const { data: msgs } = await supabase.from('board_messages').select('id').in('channel_id', channelIds).is('parent_id', null).neq('user_id', userId);
-      if (msgs && msgs.length > 0) {
-        const msgIds = msgs.map((m: any) => m.id);
-        const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
-        const readSet = new Set((reads || []).map((r: any) => r.message_id));
-        channelUnread = msgIds.filter((id: string) => !readSet.has(id)).length;
-      }
-    }
-
-    // 受信トレイ：「未読 または 未対応」の件数（2026-09-08 ユーザー確定・案①）。
-    // 🚨 足し算しない。1通が「未読でもあり未対応でもある」ときに2件と数えてしまう。
-    //    重なりを除いた「私がまだ触る必要があるお知らせの数」にする。
-    //    未対応＝読了報告・回答などが要る（requires_confirmation / deadline_type）のに
-    //    board_confirmations に自分の行が無いもの。開いただけでは減らず、［完了］を押すまで残る
-    //    （連絡板の受信トレイの「未対応」タブと同じ判定）。
-    // 予約中(status='scheduled')はまだ送信されていないためカウントしない
-    let inboxUnread = 0;
-    if (inboxRes.data && inboxRes.data.length > 0) {
-      const inboxMsgIds = inboxRes.data.map((r: any) => r.message_id);
-      // 🚨 お知らせ本体と、お知らせへの返信は**別々に数える**（2026-09-24）。
-      //    2026-09-21 は返信を数から外していた。一覧に返信が並ばないので、数えると
-      //    「バッジは1なのに開いても何も無い」になるためだった。
-      //    いまは受信トレイの**元のお知らせの行に「↩ 返信 ◯」の印**を出すようにしたので、
-      //    数えても必ず行き先がある。数えないと、ベルを見ない人が返信に気づけない
-      const { data: sentMsgs } = await supabase.from('board_messages').select('id, requires_confirmation, deadline_type').in('id', inboxMsgIds).is('parent_id', null).eq('status', 'sent');
-      const sentMsgIds = (sentMsgs || []).map((m: any) => m.id);
-      const needConfirmIds = (sentMsgs || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
-      // お知らせへの返信（2026-09-24）。🚨 自分が書いたものは数えない
-      const { data: replyMsgs } = await supabase.from('board_messages')
-        .select('id').in('id', inboxMsgIds).not('parent_id', 'is', null).is('channel_id', null).neq('user_id', userId);
-      // 🚨 周りに合わせて any にしない（ESLint が1件増える）。必要な列だけ型を書く
-      const replyIds = (replyMsgs || []).map((m: { id: string }) => m.id);
-      // 🚨 既読は1回の問い合わせでまとめて引く（お知らせと返信を分けて投げない）
-      const readTargetIds = [...sentMsgIds, ...replyIds];
-      const [{ data: reads }, { data: confs }] = await Promise.all([
-        supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', readTargetIds),
-        needConfirmIds.length > 0
-          ? supabase.from('board_confirmations').select('message_id').eq('user_id', userId).in('message_id', needConfirmIds)
-          : Promise.resolve({ data: [] as { message_id: string }[] }),
-      ]);
-      const readSet = new Set((reads || []).map((r: any) => r.message_id));
-      const confSet = new Set((confs || []).map((c: any) => c.message_id));
-      // 🚨 足し算ではなく集合にする。1通が「未読でもあり未対応でもある」ときに2件と数えないため
-      const attention = new Set<string>();
-      sentMsgIds.forEach((id: string) => { if (!readSet.has(id)) attention.add(id); });
-      needConfirmIds.forEach((id: string) => { if (!confSet.has(id)) attention.add(id); });
-      // 未読の返信。🚨 返信は返信でIDが別なので、お知らせ本体と二重には数えられない
-      replyIds.forEach((id: string) => { if (!readSet.has(id)) attention.add(id); });
-      inboxUnread = attention.size;
-    }
-
-    setChannelCount(channelUnread);
-    setInboxCount(inboxUnread);
+    // 🚨 2026-10-19：DB の関数 my_board_unread 1本で数える（前は最大7本・グループのメッセージの id を全部読んでいた）。
+    //    数え方は前と同じ（migration 20261019120804 の頭に書いてある）：
+    //    グループ＝自分以外が書いた親メッセージの未読／受信トレイ＝「未読 または 未対応」の集合（足し算しない）＋お知らせへの返信の未読
+    // 🚨 読めなかったときは前の数のまま（0 にしない）
+    const { data, error } = await supabase.rpc('my_board_unread');
+    if (error || !data) return;
+    const d = data as { channel?: number; inbox?: number };
+    setChannelCount(Number(d.channel ?? 0));
+    setInboxCount(Number(d.inbox ?? 0));
   }, [userId, enabled, setChannelCount, setInboxCount]);
 
   useEffect(() => {
