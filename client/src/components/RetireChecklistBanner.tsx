@@ -29,7 +29,12 @@ const RetireChecklistBanner: React.FC<{ show: boolean; isDark: boolean }> = ({ s
   const title = hire.length > 0 && retire.length > 0 ? '入社・退職の手続きが残っています'
     : hire.length > 0 ? '入社の準備が残っています' : '退職の手続きが残っています';
   return (
-    <button type="button" onClick={() => navigate(`/retire?kind=${hire.length > 0 ? 'hire' : 'retire'}`)}
+    <button type="button" onClick={() => {
+      // 先頭の方まで動いて光らせる（?person=・2026-10-19）
+      const kind = hire.length > 0 ? 'hire' : 'retire';
+      const first = (kind === 'hire' ? hire : retire)[0];
+      navigate(first ? `/retire?kind=${kind}&person=${first.id}` : `/retire?kind=${kind}`);
+    }}
       style={{ width: '100%', textAlign: 'left', font: 'inherit', background: isDark ? '#3d3520' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
       <div style={{ fontSize: 18, flexShrink: 0 }}>📋</div>
       <div style={{ flex: 1 }}>

@@ -201,7 +201,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // ⚠️ /overtime の既定タブは「申請・報告」の入力フォーム。tab=history を省くと
   //    「実績を報告してください」の知らせなのに、報告する場所（履歴タブ）ではなく
   //    新規申請の入力画面に着地する。ベル側（App.tsx）は tab=history で正しかった。
-  "overtime:unreported":         { app: "残業", word: "新着", text: "残業の実績報告がまだです", url: "/overtime?tab=history" },
+  // 2026-10-19：hl=unreported で、いちばん古い未報告の申請まで動いて光る（ベル・ホームの帯と同じ URL）
+  "overtime:unreported":         { app: "残業", word: "新着", text: "残業の実績報告がまだです", url: "/overtime?tab=history&hl=unreported" },
   // 残業の受理まちリマインド（確認者へ日次）。
   // 「未承認」は実機テスト済みの安全語。着地は確認者ビュー（申請の中身がそこに全部あるので bell は付けない）
   "overtime:pending_review":     { app: "残業", word: "未承認", text: "受理まちの残業申請があります", url: "/overtime?view=confirm" },

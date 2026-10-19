@@ -1413,7 +1413,7 @@ const classifyNotif = (n: NotifLike) => {
     //    回答はホームのバナー（EncouragementBanner）からなので、ホームへ返して、バナーまで移動させる
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
     // 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19）。済むまで残す
-    if (n.source_type === 'retire:checklist') return { path: '/retire?kind=retire', closeOnTap: false };
+    if (n.source_type === 'retire:checklist') return { path: n.reference_id ? `/retire?kind=retire&person=${n.reference_id}` : '/retire?kind=retire', closeOnTap: false };
     // 手続きがすべて済んだ（2026-10-17・ベルだけ）。その方を（済んだ方が隠れていても）出して光らせる
     if (n.source_type === 'hire:checklist_done' || n.source_type === 'retire:checklist_done') {
       const k = n.source_type.startsWith('hire') ? 'hire' : 'retire';
@@ -1553,8 +1553,9 @@ const classifyNotif = (n: NotifLike) => {
     if (isOtProposalReceived || isOtProposalResponded) {
       return { path: n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime', closeOnTap: true };
     }
-    // 実績未報告リマインド → 履歴（実績を報告する場所）へ
-    if (isOvertimeUnreported) return { path: '/overtime?tab=history', closeOnTap: true };
+    // 実績未報告リマインド → 履歴の、いちばん古い未報告の申請まで動いて光る（hl=unreported・2026-10-19）。
+    // 🚨 プッシュ（push-dispatch の EVENT_MAP）・ホームの帯も同じ URL にそろえる
+    if (isOvertimeUnreported) return { path: '/overtime?tab=history&hl=unreported', closeOnTap: true };
     // 受理まちリマインド（確認者へ）→ 確認待ちの一覧（受理する場所）へ。
     // 毎日つくり直されるリマインドなので、タップで閉じてよい（対応が済めば翌日から出なくなる）
     if (isOvertimePendingReview) return { path: '/overtime?view=confirm', closeOnTap: true };
@@ -2091,7 +2092,7 @@ const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean 
   const label = dates.map(d => d.slice(5).replace('-', '/')).join('・');
   return (
     <div
-      onClick={() => navigate('/overtime')}
+      onClick={() => navigate('/overtime?tab=history&hl=unreported')}
       style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 15, color: '#856404', fontWeight: 'bold' }}
     >
       <span style={{ fontSize: 22 }}>🔔</span>
@@ -2147,7 +2148,7 @@ const AppRequestBanner: React.FC<{ userId: string }> = ({ userId }) => {
     : 0;
   return (
     <div
-      onClick={() => navigate('/overtime?tab=history')}
+      onClick={() => navigate(`/overtime?tab=history&focus=${head.id}`)}
       style={{ margin: '0 0 16px 0', padding: '12px 16px', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 15, fontWeight: 'bold',
         background: isOverdue ? '#f8d7da' : '#fff3cd',
         border: `2px solid ${isOverdue ? '#dc3545' : '#f59e0b'}`,

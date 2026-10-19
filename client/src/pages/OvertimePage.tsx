@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import AppRequestCard from '../components/AppRequestCard';
 import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
@@ -3433,6 +3433,60 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     try { localStorage.setItem(OWN_HISTORY_FILTER_KEY, JSON.stringify(ownHistoryFilter)); } catch { /* ignore */ }
   }, [ownHistoryFilter]);
 
+  // ［履歴でこの申請を開く］・お知らせから来たとき：その申請が見える状態（本人の履歴・絞り込みなし・その期・取消済みなら取消も出す）にしてから6秒光らせる
+  // 🚨 絞り込み・期間でカードが隠れていると光らせられない
+  const showInHistory = (id: string) => {
+    const r = reports.find(x => x.id === id);
+    setEditTarget(null); setTab('history'); setHistoryMode('own');
+    setOwnHistoryFilter(f => ({ ...f, status: 'all', types: [], showCancelled: f.showCancelled || r?.status === 'cancelled' }));
+    if (r?.pay_period_start && r.pay_period_start !== currentPeriod
+      && r.pay_period_start >= ownCardPrevLimit && r.pay_period_start <= ownCardNextLimit) setOwnCardPeriod(r.pay_period_start);
+    else setOwnCardPeriod(currentPeriod);
+    setHistGlowId(id);
+  };
+
+  // ---- お知らせ（ベル・プッシュ・ホームの帯）から来たとき、その1件まで動いて光らせる（2026-10-19 ユーザー確定） ----
+  // ・?focus=<申請ID>（受理・差し戻し・取消・修正の結果／再提出のお願い）→ 履歴のその申請
+  // ・?hl=unreported（実績の報告がまだ）→ 報告していない申請のうち、いちばん古い1件
+  // ・?view=confirm&focus=<申請ID>（上長あての確認待ち）→ 確認ページのその申請
+  // 🚨 ?focus= が申請の依頼の ID のときは何もしない（依頼のカードは useFocusHighlight が光らせる）
+  // 🚨 同じお知らせをもう一度押したときも光るよう、画面の移動（location.key）ごとに1回
+  const location = useLocation();
+  const notifFocusDone = useRef('');
+  useEffect(() => {
+    if (loading || isConfirmView) return;
+    const sig = location.key + '|' + (focusParam ?? '') + '|' + (hlParam ?? '');
+    if (notifFocusDone.current === sig) return;
+    if (hlParam === 'unreported') {
+      notifFocusDone.current = sig;
+      const oldest = [...unreportedRequests].sort((a, b) => a.work_date.localeCompare(b.work_date))[0];
+      if (oldest) showInHistory(oldest.id);
+      else { setEditTarget(null); setTab('history'); setHistoryMode('own'); }
+      // 目印は URL から消す（残すと、ほかの操作のあとにも光る）
+      setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('hl'); return n; }, { replace: true });
+      return;
+    }
+    if (focusParam && reports.some(r => r.id === focusParam)) {
+      notifFocusDone.current = sig;
+      showInHistory(focusParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, isConfirmView, focusParam, hlParam, location.key]);
+
+  const [confirmGlowId, setConfirmGlowId] = useState<string | null>(null);
+  const confirmGlowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (loading || !isConfirmView || !focusParam) return;
+    if (pendingForMe.some(r => r.id === focusParam)) setConfirmGlowId(focusParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, isConfirmView, focusParam, location.key]);
+  useEffect(() => {
+    if (!confirmGlowId) return;
+    const t1 = setTimeout(() => confirmGlowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setConfirmGlowId(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [confirmGlowId]);
+
   // 実績を報告できるか。過去日は無条件、当日は「その日の勤務が終わるころ」（reportGateMin）を過ぎたら。
   // 🚨 requested（受理まち）も含める（2026-08-25）。受理を待たずに実績を報告できるようにしたため
   // 🚨🚨 催促する側（履歴タブの件数バッジ unreportedRequests／App.tsx のホーム件数・ナビ／
@@ -3796,7 +3850,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             // 通常シフトの時間帯（第2時間帯を含む）。2本以上なら帯ごとに1行ずつ出す
             const nsBands = normalShiftBands(r.normal_shift);
             return (
-              <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px', marginBottom: 12 }}>
+              <div key={r.id} ref={el => { if (el && r.id === confirmGlowId) confirmGlowRef.current = el; }}
+                style={{ background: r.id === confirmGlowId ? (isDark ? '#4a4423' : '#fff9c4') : cardBg, boxShadow: r.id === confirmGlowId ? 'inset 0 0 0 2px #f0c000' : 'none', transition: 'background 0.6s, box-shadow 0.6s', borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px', marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
                   <span style={{ fontSize: 15, fontWeight: 'bold', color: text }}>
                     {r.applicant?.name ?? ''}　{r.work_date}（{dowLabel(r.work_date)}）
@@ -4241,16 +4296,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               }}
               onGoHistory={() => { setEditTarget(null); setTab('history'); window.scrollTo({ top: 0 }); }}
               ownReportOf={(id) => reports.find(x => x.id === id)}
-              onShowInHistory={(id) => {
-                // 絞り込み・期間でカードが隠れていると光らせられないので、その申請が見える状態にしてから
-                const r = reports.find(x => x.id === id);
-                setEditTarget(null); setTab('history'); setHistoryMode('own');
-                setOwnHistoryFilter(f => ({ ...f, status: 'all', types: [] }));
-                if (r?.pay_period_start && r.pay_period_start !== currentPeriod
-                  && r.pay_period_start >= ownCardPrevLimit && r.pay_period_start <= ownCardNextLimit) setOwnCardPeriod(r.pay_period_start);
-                else setOwnCardPeriod(currentPeriod);
-                setHistGlowId(id);
-              }}
+              onShowInHistory={showInHistory}
             />
           </>) : (
             <>
