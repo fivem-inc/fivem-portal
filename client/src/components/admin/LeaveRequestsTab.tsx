@@ -23,6 +23,7 @@ import { ENC_REASON_MARK, ENC_CHOICES, encChoiceLabel, leavePurposeLabel } from 
 import EncouragementExemptSection from './EncouragementExemptSection';
 import { syncEncouragementCalendar } from '../../lib/gcalEncouragement';
 import { dayOffConflictText } from '../../lib/dayOffConflictText';
+import { fetchUnavailableIds, withoutUnavailable, fetchOpenLeaves, leaveActiveOnDay, type StaffLeave } from '../../lib/staffLeave';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -159,6 +160,10 @@ const LeaveRequestsTab: React.FC = () => {
   const [encCreateDate, setEncCreateDate] = useState('');
   const [encCreateDeadline, setEncCreateDeadline] = useState('');
   const [encCreateTargets, setEncCreateTargets] = useState<string[]>([]);
+  // 休職（2026-10-20）：奨励日にその日休職中の方は一括で選ばない・追加の候補に出さない
+  const [encLeaves, setEncLeaves] = useState<Map<string, StaffLeave>>(new Map());
+  useEffect(() => { void fetchOpenLeaves().then(setEncLeaves); }, []);
+  const encOnLeave = (uid: string, day: string) => !!day && leaveActiveOnDay(encLeaves.get(uid), day);
   const [encCreating, setEncCreating] = useState(false);
   const [showEncConfirm, setShowEncConfirm] = useState(false);
   const [showAllEncTargets, setShowAllEncTargets] = useState(false);
@@ -620,15 +625,15 @@ const LeaveRequestsTab: React.FC = () => {
                       {employmentTypes.map(et => (
                         <button key={et} onClick={() => {
                           // 対象外の方（役員など）は一括では選ばない（2026-10-19）
-                          const ids = activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id)).map(u => u.id);
+                          const ids = activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id) && !encOnLeave(u.id, encCreateDate)).map(u => u.id);
                           const allSelected = ids.every(id => encCreateTargets.includes(id));
                           setEncCreateTargets(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
                         }} style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12,
-                          background: activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id)).every(u => encCreateTargets.includes(u.id)) ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
-                          color: activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id)).every(u => encCreateTargets.includes(u.id)) ? '#fff' : (isDarkMode ? '#fff' : '#333'),
+                          background: activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id) && !encOnLeave(u.id, encCreateDate)).every(u => encCreateTargets.includes(u.id)) ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
+                          color: activeUsers.filter(u => u.employment_type === et && !encExemptIds.includes(u.id) && !encOnLeave(u.id, encCreateDate)).every(u => encCreateTargets.includes(u.id)) ? '#fff' : (isDarkMode ? '#fff' : '#333'),
                         }}>{et}を一括選択</button>
                       ))}
-                      <button onClick={() => setEncCreateTargets(activeUsers.filter(u => !encExemptIds.includes(u.id)).map(u => u.id))}
+                      <button onClick={() => setEncCreateTargets(activeUsers.filter(u => !encExemptIds.includes(u.id) && !encOnLeave(u.id, encCreateDate)).map(u => u.id))}
                         style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333' }}>全員</button>
                       <button onClick={() => setEncCreateTargets([])}
                         style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333' }}>クリア</button>
@@ -667,6 +672,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         }} />
                                         <span>{u.name || u.email}</span>
                                         {encExemptIds.includes(u.id) && <span style={{ fontSize: 10.5, color: isDarkMode ? '#adb5bd' : '#888' }}>（対象外の方）</span>}
+                                        {encOnLeave(u.id, encCreateDate) && <span style={{ fontSize: 10.5, color: isDarkMode ? '#adb5bd' : '#888' }}>（休職中）</span>}
                                       </label>
                                     ))}
                                   </div>
@@ -969,7 +975,7 @@ const LeaveRequestsTab: React.FC = () => {
                       </button>
                       {encShowAddTargets && (() => {
                         const existingIds = new Set(encResponses.map(r => r.user_id));
-                        const addableUsers = activeUsers.filter(u => !existingIds.has(u.id));
+                        const addableUsers = activeUsers.filter(u => !existingIds.has(u.id) && !encOnLeave(u.id, encDetailDay?.target_date ?? ''));
                         const addRoles = [...new Set(addableUsers.map(u => u.employment_type || 'その他'))];
                         return (
                           <div style={{ marginTop: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8 }}>
@@ -1573,9 +1579,11 @@ const LeaveRequestsTab: React.FC = () => {
                                     onClick={async () => {
                                       if (req.status === 'pending') {
                                         // マネージャー選択モーダルを開く
-                                        const { data: mgrs } = await supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as)').eq('roles.acts_as', 'manager').eq('is_active', true).order('name');
-                                        setAdminManagerList(mgrs || []);
-                                        setAdminSelectedManagerId(mgrs && mgrs.length > 0 ? mgrs[0].id : '');
+                                        const { data: mgrsRaw } = await supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as)').eq('roles.acts_as', 'manager').eq('is_active', true).order('name');
+                                        // 休職中のマネージャーは選択肢に出さない（2026-10-20）
+                                        const mgrs = withoutUnavailable(mgrsRaw ?? [], await fetchUnavailableIds());
+                                        setAdminManagerList(mgrs);
+                                        setAdminSelectedManagerId(mgrs.length > 0 ? mgrs[0].id : '');
                                         setAdminSelectingManagerFor(req);
                                       } else {
                                         // シフト調整の選択はマネージャー段（step2_pending から進む）の代理受理のときだけ（2026-09-28）

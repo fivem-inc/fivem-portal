@@ -94,6 +94,13 @@ serve(async (req) => {
       continue; // 誰が在籍中か分からないまま送ると退職者に届くので、この回は送らない
     }
     userIds = (activeRows ?? []).map((p: { id: string }) => p.id);
+    // 🚨 休職中の人には送らない（2026-10-20・ユーザー確定・復職したらまた届く）。読めなければ外さない（いつもどおり送る）
+    {
+      const { data: awayRows, error: awayErr } = await supabase.rpc("staff_on_leave_ids", { p_quiet_only: false });
+      if (awayErr) console.error("[remind-scheduled] 休職中の方の読み込みに失敗:", awayErr.message);
+      const away = new Set(((awayRows ?? []) as (string | { staff_on_leave_ids: string })[]).map((r) => (typeof r === "string" ? r : r.staff_on_leave_ids)));
+      userIds = userIds.filter((id) => !away.has(id));
+    }
     if (userIds.length === 0) continue;
 
     // 🚨 対応記録（ホームのバナー・管理画面の対応状況の元）を、通知より「先」に作る。

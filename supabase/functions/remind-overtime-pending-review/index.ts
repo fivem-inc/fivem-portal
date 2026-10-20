@@ -100,6 +100,27 @@ serve(async (req) => {
     overdueByReviewer.set(r.reviewer_id, arr);
   }
 
+  // 🚨 申請先が休職中なら、その分は経理（管理者のアカウント）へ回す（2026-10-20・ユーザー確定：付け替えなかった申請が誰にも気づかれず残らないように）。
+  //    経理は管理画面の［代わりに受理］か付け替えで対応する。読めなければ回さない（いつもどおり）
+  {
+    const { data: awayRows, error: awayErr } = await supabase.rpc("staff_on_leave_ids", { p_quiet_only: false });
+    const { data: adminRows, error: adminErr } = await supabase.rpc("staff_admin_ids");
+    if (awayErr || adminErr) console.error("[pending-review] 休職中の方・管理者の読み込みに失敗:", awayErr?.message ?? adminErr?.message);
+    const pick = (v: unknown, k: string) => (typeof v === "string" ? v : (v as Record<string, string>)[k]);
+    const away = new Set(((awayRows ?? []) as unknown[]).map((r) => pick(r, "staff_on_leave_ids")));
+    const admins = ((adminRows ?? []) as unknown[]).map((r) => pick(r, "staff_admin_ids"));
+    if (away.size > 0 && admins.length > 0) {
+      for (const byReviewer of [overdueByReviewer, advanceByReviewer]) {
+        for (const reviewerId of [...byReviewer.keys()]) {
+          if (!away.has(reviewerId)) continue;
+          const list = byReviewer.get(reviewerId) ?? [];
+          byReviewer.delete(reviewerId);
+          for (const adminId of admins) byReviewer.set(adminId, [...(byReviewer.get(adminId) ?? []), ...list]);
+        }
+      }
+    }
+  }
+
   // pile-up防止は①（毎日出す分）だけ。②は1回きりなので消さない
   await supabase.from("notifications").delete()
     .eq("event_key", "overtime:pending_review").eq("dismissed", false);
@@ -113,6 +134,7 @@ serve(async (req) => {
   // 宛先（確認者）と申請者の名前をまとめて取得。🚨 退職者（is_active=false）には送らない
   const ids = new Set<string>();
   for (const r of [...all, ...reported]) { if (r.reviewer_id) ids.add(r.reviewer_id); ids.add(r.applicant_id); }
+  for (const k of [...overdueByReviewer.keys(), ...advanceByReviewer.keys()]) ids.add(k);   // 経理へ回した分（2026-10-20）
   const { data: profs } = await supabase
     .from("profiles").select("id, name, email, is_active").in("id", [...ids]);
   const profById = new Map(((profs ?? []) as Prof[]).map((p) => [p.id, p]));

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { fetchOpenLeaves, leaveStatusOf } from '../../lib/staffLeave';
+import { todayJstStr as todayJstForLeave } from '../../lib/breakCalc';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useRoles } from '../../hooks/useRoles';
@@ -1905,7 +1907,12 @@ export const ScheduledRemindersPanel: React.FC = () => {
     ]);
     if (r) setReminders(r);
     if (c) setChannels(c);
-    if (p) setProfiles(p);
+    // 名指しの宛先が休職中なら「（休職中）」と添える（2026-10-20・休職中は送らない・選んだ記録は残す・管理者とマネージャー以上の画面）
+    if (p) {
+      const lv = await fetchOpenLeaves();
+      const today = todayJstForLeave();
+      setProfiles(p.map(x => { const l = lv.get(x.id); return l && leaveStatusOf(l, today) === 'on_leave' ? { ...x, name: `${x.name ?? ''}（休職中）` } : x; }));
+    }
     const failed = [re && '定期リマインド', ce && '送り先のグループ', pe && 'スタッフ'].filter(Boolean);
     if (failed.length > 0) setErrorMsg(`${failed.join('・')}の一覧を読み込めませんでした。画面を開き直してください`);
   }, []);

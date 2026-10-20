@@ -90,7 +90,11 @@ serve(async (req) => {
       await supabaseAdmin.from('announcements').update({ notified_at: null }).eq('id', id);
       return json({ error: '送る相手を読み込めませんでした' }, 500);
     }
-    const rows = (profiles ?? []) as { id: string; email: string | null }[];
+    // 🚨 休職中で連絡板のお知らせを「受け取らない」人には送らない（2026-10-20・ホームの帯には出る・復職後は「過去のお知らせ」で読める）
+    const { data: quietRows, error: quietErr } = await supabaseAdmin.rpc('staff_on_leave_ids', { p_quiet_only: true });
+    if (quietErr) console.error('[announcement-notify] 休職中の方の読み込みに失敗（全員に送ります）:', quietErr.message);
+    const quiet = new Set(((quietRows ?? []) as (string | { staff_on_leave_ids: string })[]).map((r) => (typeof r === 'string' ? r : r.staff_on_leave_ids)));
+    const rows = ((profiles ?? []) as { id: string; email: string | null }[]).filter((p) => !quiet.has(p.id));
 
     let pushCount = 0;
     let pushFailed = false;

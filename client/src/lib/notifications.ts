@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { fetchUnavailableIds } from './staffLeave';
 
 // 差し戻しバナー2行目用：申請した休暇日のサマリーを作る（例「7/26 有給休暇（1日）」「7/26・7/27 有給休暇（2日）」「7/26〜8/2 有給休暇（6日）」）
 // leaveDates は leave_requests.leave_dates（'YYYY-MM-DD'の配列のJSON文字列）。旧申請でnullの場合は start/end から補完する
@@ -42,8 +43,9 @@ export async function notifyLeaveFinalApprovers(
     .select('id, is_active, roles!profiles_role_id_fkey!inner(acts_as)')
     .eq('roles.acts_as', 'president');
   if (error) { console.error('[leave] 最終受理者を読めませんでした:', error.message); return; }
+  const away = await fetchUnavailableIds();   // 休職中は外す（2026-10-20）
   const ids = ((data ?? []) as { id: string; is_active: boolean | null }[])
-    .filter(p => p.is_active !== false && p.id !== actorId)
+    .filter(p => p.is_active !== false && p.id !== actorId && !away.has(p.id))
     .map(p => p.id);
   if (ids.length === 0) return;
   const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { fetchUnavailableIds, withoutUnavailable } from '../lib/staffLeave';
 import { supabase } from '../lib/supabaseClient';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
@@ -167,8 +168,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       .order('name')
       .then(({ data }) => {
         if (data) {
-          setManagers(data);
-          if (data.length > 0) setSelectedManagerId(data[0].id);
+          // 休職中のマネージャーは選択肢に出さない（2026-10-20）
+          void fetchUnavailableIds().then(away => {
+            const list = withoutUnavailable(data, away);
+            setManagers(list);
+            if (list.length > 0) setSelectedManagerId(list[0].id);
+          });
         }
       });
   }, []);

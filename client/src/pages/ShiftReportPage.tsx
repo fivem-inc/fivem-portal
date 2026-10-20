@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '../lib/staffLeave';
+import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useRoles } from '../hooks/useRoles';
@@ -500,6 +502,12 @@ const ShiftReportForm: React.FC<{
   const actStart  = segFirstStart(actSegs);
   const actEnd    = segLastEnd(actSegs);
   const [reviewerId, setReviewerId]   = useState(editTarget?.reviewer_id ?? sd?.reviewerId ?? '');
+  // 休職中で確認依頼先に選べない人が下書きなどから入っていたら空にして知らせる（2026-10-20）
+  const awayIds = useUnavailableIds();
+  const [reviewerAway, setReviewerAway] = useState(false);
+  useEffect(() => {
+    if (reviewerId && reviewerId !== user.id && awayIds.has(reviewerId)) { setReviewerId(''); setReviewerAway(true); }
+  }, [reviewerId, awayIds, user.id]);
   const [actNotes, setActNotes]       = useState(sd?.actNotes ?? '');
   const [changeSummary, setChangeSummary] = useState('');
 
@@ -679,7 +687,7 @@ const ShiftReportForm: React.FC<{
         const { data: updated, error: updErr } = await supabase.from('shift_reports').update(record).eq('id', editTarget.id).select('id');
         if (updErr || !updated || updated.length === 0) {
           console.error('[update shift_reports] error:', updErr);
-          setError(updErr ? updErr.message : 'この報告を修正する権限がありません');
+          setError(updErr ? (approverOnLeaveText(updErr.message) ?? updErr.message) : 'この報告を修正する権限がありません');
           setSaving(false); setShowConfirm(false);
           return;
         }
@@ -700,7 +708,7 @@ const ShiftReportForm: React.FC<{
         const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
         if (err) {
           console.error('[insert shift_reports] error:', err);
-          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : err.message);
+          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : (approverOnLeaveText(err.message) ?? err.message));
           setSaving(false); setShowConfirm(false);
           return;
         }
@@ -1121,7 +1129,7 @@ const ShiftReportForm: React.FC<{
                   </div>
                 </>
               ) : (
-              <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={ef('reviewer')}>
+              <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); setReviewerAway(false); }} style={ef('reviewer')}>
                 <option value="">選択してください</option>
                 {/* 自分が承認者の場合は最上部に表示 */}
                 {reviewers.find(r => r.id === user.id) && (
@@ -1142,6 +1150,11 @@ const ShiftReportForm: React.FC<{
                   })
                   .map(r => <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>)}
               </select>
+              )}
+              {reviewerAway && !reviewerId && (
+                <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 6 }}>
+                  <p style={{ margin: 0, fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>前回の確認依頼先は、現在選べません。別の方を選んでください。</p>
+                </div>
               )}
             </div>
 
@@ -1400,7 +1413,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map(r => r.value)); });
     supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(is_approver, is_org_wide, acts_as)').eq('roles.is_approver', true).eq('is_active', true).order('role_title').order('name')
-      .then(({ data }) => { if (data) setReviewers(data as Reviewer[]); });
+      .then(({ data }) => { if (data) void fetchUnavailableIds().then(away => setReviewers(withoutUnavailable(data as Reviewer[], away))); });   // 休職中は外す（2026-10-20）
     supabase.from('leader_assignments').select('id, course, school, leader, manager').order('display_order', { ascending: true })
       .then(({ data }) => { if (data) setLeaderAssignments(data as LeaderAssignment[]); setLoadingAssignments(false); });
     supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order')

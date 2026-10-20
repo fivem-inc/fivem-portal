@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { fetchUnavailableIds, withoutUnavailable } from '../lib/staffLeave';
+import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -659,6 +661,12 @@ const OvertimeForm: React.FC<{
   const visiblePastReasons = useMemo(() => pastReasons.filter(r => !hiddenReasons.includes(r)), [pastReasons, hiddenReasons]);
   const [showAllReasons, setShowAllReasons] = useState(false);
   const [reviewerId, setReviewerId] = useState(() => editTarget?.reviewer_id ?? draft?.reviewerId ?? '');
+  // 休職中で申請先に選べない人が入っていたら空にして知らせる（2026-10-20・前の申請・下書きから入ったとき）
+  const awayIds = useUnavailableIds();
+  const [reviewerAway, setReviewerAway] = useState(false);
+  useEffect(() => {
+    if (reviewerId && reviewerId !== SELF_REVIEW_VALUE && awayIds.has(reviewerId)) { setReviewerId(''); setReviewerAway(true); }
+  }, [reviewerId, awayIds]);
   // カレンダーに載せるか。🚨 editTarget → 下書き → 既定 の順で初期化すること。
   //   ここを既定から初期化すると、実績報告した瞬間に本人の設定が消えてカレンダーから外れる。
   const [showOnCalendar, setShowOnCalendar] = useState<boolean>(() =>
@@ -2758,7 +2766,7 @@ const OvertimeForm: React.FC<{
             {isSelfReview ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
           </div>
         ) : (
-        <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); setAbsenceReviewerDropped(''); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
+        <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); setAbsenceReviewerDropped(''); setReviewerAway(false); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
           <option value="">選択してください</option>
           {/* 🚨 自己受理はいちばん上に置く。マネージャーは自分で確定することが多く、
                  毎回リストの末尾まで送るのは手間になるため（2026-08-21 ユーザー指示）。
@@ -2776,6 +2784,11 @@ const OvertimeForm: React.FC<{
         )}
         {fullDay && fullDayType === 'absence' && !canSelfReview && (
           <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>欠勤はマネージャー以上の受理が必要です（自己受理はできません）</p>
+        )}
+        {reviewerAway && !reviewerId && (
+          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 6 }}>
+            <p style={{ margin: 0, fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>前回の申請先は、現在選べません。別の方を選んでください。</p>
+          </div>
         )}
         {/* 欠勤に切り替えたときに申請先を外した知らせ（黄色の固定色）。選び直すか、欠勤以外に戻すと消える */}
         {fullDay && fullDayType === 'absence' && absenceReviewerDropped && (
@@ -3083,7 +3096,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id),
         supabase.from('profiles').select('group_names').eq('id', user.id).maybeSingle(),
       ]);
-      setReviewers((revRes.data as Reviewer[] | null) ?? []);
+      // 休職中の人は申請先に出さない（2026-10-20）。🚨 申請先の名前は申請の行（editTarget.reviewer）から出す
+      setReviewers(withoutUnavailable((revRes.data as Reviewer[] | null) ?? [], await fetchUnavailableIds()));
       setWorkplaces(((wpRes.data as { value: string }[] | null) ?? []).map(w => w.value));
       setPatterns((patRes.data as PatternRow[] | null) ?? []);
       setMyGroups(((myProfRes.data as { group_names: string[] | null } | null)?.group_names) ?? []);

@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { fetchUnavailableIds } from './staffLeave';
 import { insertNotification } from './notifications';
 import { getNotificationTemplate } from './notificationDispatch';
 
@@ -169,7 +170,8 @@ export async function postPurchaseComment(params: {
     const { data: mgrs } = await supabase.from('profiles')
       .select('id, roles!profiles_role_id_fkey!inner(is_manager_plus)').eq('is_active', true)
       .eq('roles.is_manager_plus', true);   // 🚨 役職名ではなく属性で（2026-09-09）
-    (mgrs ?? []).forEach(m => targets.add((m as { id: string }).id));
+    const away = await fetchUnavailableIds();   // 休職中のマネージャー以上は外す（2026-10-20）
+    (mgrs ?? []).forEach(m => { const id = (m as { id: string }).id; if (!away.has(id)) targets.add(id); });
 
     targets.delete(params.authorId);
     if (targets.size === 0) return { ok: true };

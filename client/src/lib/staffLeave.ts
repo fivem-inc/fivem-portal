@@ -50,6 +50,15 @@ export function leaveStatusOf(l: StaffLeave, todayJst: string): LeaveStatus {
   return 'on_leave';
 }
 
+/** その日に休職中か（DB の staff_leave_active_on と同じ決め方） */
+export function leaveActiveOnDay(l: StaffLeave | null | undefined, day: string): boolean {
+  if (!l || l.cancelled_at) return false;
+  if (l.start_date > day) return false;
+  if (l.return_date && l.return_date <= day) return false;
+  if (l.ended_at && jstDate(l.ended_at) <= day) return false;
+  return true;
+}
+
 /** 一覧の「状態」の欄の文字（休職の予定・休職中のときだけ。それ以外は null） */
 export function leaveStateLabel(l: StaffLeave | null | undefined, todayJst: string): string | null {
   if (!l) return null;
@@ -178,4 +187,39 @@ export async function cancelLeave(id: string): Promise<string | null> {
 export async function returnFromLeave(id: string): Promise<string | null> {
   const { error } = await supabase.rpc('staff_leave_return', { p_id: id });
   return error ? error.message : null;
+}
+
+// ── 申請先・宛先の候補から外す（2026-10-20・段3の4）──
+// 🚨 だれが休職中かはほかのスタッフには読めない。DB の unavailable_approver_ids が
+//    「承認者になる役職の人で、いま休職中の人」だけを返す（マネージャー以上・管理者には休職中の全員）。
+// 🚨 読めなかったときは「外さない」（通信が悪いだけで候補が消えるほうが困る。申請先は DB のトリガーが最後に止める）
+const AWAY_FRESH_MS = 10 * 60 * 1000;
+let awayCache: { at: number; ids: Set<string> } | null = null;
+let awayInflight: Promise<Set<string>> | null = null;
+
+/** いま休職中で、申請先・宛先に選べない人の id（10分使い回す） */
+export async function fetchUnavailableIds(): Promise<Set<string>> {
+  if (awayCache && Date.now() - awayCache.at < AWAY_FRESH_MS) return awayCache.ids;
+  if (awayInflight) return awayInflight;
+  awayInflight = (async () => {
+    const { data, error } = await supabase.rpc('unavailable_approver_ids');
+    if (error) { console.error('[staffLeave] 選べない方の読み込みに失敗:', error); return awayCache?.ids ?? new Set<string>(); }
+    const ids = new Set<string>(((data ?? []) as (string | { unavailable_approver_ids: string })[])
+      .map(r => (typeof r === 'string' ? r : r.unavailable_approver_ids)));
+    awayCache = { at: Date.now(), ids };
+    return ids;
+  })();
+  try { return await awayInflight; } finally { awayInflight = null; }
+}
+
+/** 一覧から選べない人を外す（id を持つ行なら何でも） */
+export function withoutUnavailable<T extends { id: string }>(rows: T[], away: Set<string>): T[] {
+  return away.size === 0 ? rows : rows.filter(r => !away.has(r.id));
+}
+
+/** DB が申請先で止めたときの文（'APPROVER_ON_LEAVE|文'）を取り出す。違えば null */
+export function approverOnLeaveText(msg: string | null | undefined): string | null {
+  if (!msg) return null;
+  const i = msg.indexOf('APPROVER_ON_LEAVE|');
+  return i >= 0 ? msg.slice(i + 'APPROVER_ON_LEAVE|'.length).trim() : null;
 }

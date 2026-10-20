@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
+import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '../lib/staffLeave';
+import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import ManagerTabs from './ManagerTabs';
 import AppRequestBox from './AppRequestBox';
@@ -417,6 +419,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [submittedApproverLabel, setSubmittedApproverLabel] = useState('');
   const [approvers, setApprovers] = useState<Approver[]>([]);
   const [selectedApproverId, setSelectedApproverId] = useState(ld?.selectedApproverId ?? '');
+  // 休職中で申請先に選べない人が下書きなどから入っていたら空にして知らせる（2026-10-20）
+  const awayIds = useUnavailableIds();
+  const [approverAway, setApproverAway] = useState(false);
+  useEffect(() => {
+    if (selectedApproverId && awayIds.has(selectedApproverId)) { setSelectedApproverId(''); setApproverAway(true); }
+  }, [selectedApproverId, awayIds]);
   const [showApproverGuide, setShowApproverGuide] = useState(false);
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
@@ -609,7 +617,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             const a = embeddedRole(r as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as;
             return a === 'leader' ? 0 : a === 'manager' ? 1 : 2;
           };
-          setApprovers([...data].sort((a, b) => ord(a) - ord(b) || a.name.localeCompare(b.name, 'ja')));
+          const sorted = [...data].sort((a, b) => ord(a) - ord(b) || a.name.localeCompare(b.name, 'ja'));
+          // 休職中の人は申請先に出さない（2026-10-20）
+          void fetchUnavailableIds().then(away => setApprovers(withoutUnavailable(sorted, away)));
           // 初期選択なし（ユーザーに明示的に選ばせる）
         }
       });
@@ -822,7 +832,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       fetchReceivedReqs(); // 同じ日の依頼は DB のトリガーが「申請済み」にしているので、カードを読み直して消す（2026-09-26）
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err));
-      setSubmitError(dayOffConflictText(errMsg) ?? ('送信に失敗しました。' + errMsg));
+      setSubmitError(dayOffConflictText(errMsg) ?? approverOnLeaveText(errMsg) ?? ('送信に失敗しました。' + errMsg));
     } finally {
       setIsSubmitting(false);
     }
@@ -1190,7 +1200,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             ) : (
               <select
                 value={selectedApproverId}
-                onChange={e => { setSelectedApproverId(e.target.value); if (e.target.value) setErrFields(prev => { const n = new Set(prev); n.delete('approver'); return n; }); }}
+                onChange={e => { setSelectedApproverId(e.target.value); setApproverAway(false); if (e.target.value) setErrFields(prev => { const n = new Set(prev); n.delete('approver'); return n; }); }}
                 style={{ width: '100%', padding: '10px 14px', border: `1px solid ${errFields.has('approver') ? '#e24b4a' : borderColor}`, borderRadius: 8, fontSize: 15, background: errFields.has('approver') ? (isDark ? '#4a2b30' : '#fdecea') : inputBg, color: selectedApproverId ? text : subText }}
               >
                 <option value="" disabled>申請先を選択してください</option>
@@ -1198,6 +1208,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   <option key={a.id} value={a.id}>{a.name}（{a.role_title}）</option>
                 ))}
               </select>
+            )}
+            {approverAway && !selectedApproverId && (
+              <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 6 }}>
+                <p style={{ margin: 0, fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>前回の申請先は、現在選べません。別の方を選んでください。</p>
+              </div>
             )}
           </div>
 

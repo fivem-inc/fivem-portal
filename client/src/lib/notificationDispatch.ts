@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { fetchUnavailableIds } from './staffLeave';
 import { embeddedRole } from './roleAttrs';
 import type { EmbeddedRoleRow } from './roleAttrs';
 
@@ -142,6 +143,8 @@ export async function resolveRoleRecipients(
 
   const ids: RecipientMap = {};
   const emails: RecipientMap = {};
+  // 休職中の人は宛先から外す（2026-10-20・DB の resolve_role_recipients と同じ）
+  const away = await fetchUnavailableIds();
   type RoleBit = { id: string; name: string; is_org_wide: boolean };
   type Row = { id: string; group_names: string[] | null } & EmbeddedRoleRow<RoleBit>;
   for (const key of roleKeys) {
@@ -154,7 +157,7 @@ export async function resolveRoleRecipients(
       .select('id, group_names, roles!profiles_role_id_fkey!inner(id, name, is_org_wide)')
       .eq('roles.acts_as', ACTS_AS_BY_RECIPIENT_KEY[key]).eq('is_active', true);
     const rows = ((data ?? []) as unknown as Row[])
-      .filter(r => r.id !== applicantId)
+      .filter(r => r.id !== applicantId && !away.has(r.id))
       .filter(r => {
         if (groupFilter !== 'same' || teams.length === 0) return true;
         const role = embeddedRole(r);

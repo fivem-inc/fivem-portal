@@ -87,7 +87,11 @@ serve(async (req) => {
 
   // 送信先＝アクティブな全ユーザー（id と email）
   const { data: profiles } = await supabase.from("profiles").select("id, email").eq("is_active", true);
-  const rows = (profiles ?? []) as { id: string; email: string | null }[];
+  // 🚨 休職中で連絡板のお知らせを「受け取らない」人には送らない（2026-10-20・announcement-notify と同じ）
+  const { data: quietRows, error: quietErr } = await supabase.rpc("staff_on_leave_ids", { p_quiet_only: true });
+  if (quietErr) console.error("[announcement-remind] 休職中の方の読み込みに失敗（全員に送ります）:", quietErr.message);
+  const quiet = new Set(((quietRows ?? []) as (string | { staff_on_leave_ids: string })[]).map((r) => (typeof r === "string" ? r : r.staff_on_leave_ids)));
+  const rows = ((profiles ?? []) as { id: string; email: string | null }[]).filter((p) => !quiet.has(p.id));
   const userIds = rows.map((p) => p.id);
   const emails = rows.map((p) => p.email).filter((e): e is string => !!e);
 
