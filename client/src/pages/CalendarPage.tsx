@@ -2426,6 +2426,13 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         const k = sa ? slotMarkKey(sa) : null;
         if (k === 'pending' || k === 'working') monthListRows.push({ kind: 'absence', date, ab });
       }
+      // 🚨 残業申請（終日の休み・遅出・早退・勤務地変更）にもシフト調整の場がある（2026-10-13・2026-10-20）。
+      //    その人・その日の場が「未」「調整中」なら残す。前は出さず、毎朝のまとめから着いても行が見つからなかった
+      for (const ot of (overtimesByDate[date] || [])) {
+        const sa = saPerms.view ? saSlots[`${ot.user_id}|${ot.date}`] : undefined;
+        const k = sa ? slotMarkKey(sa) : null;
+        if (k === 'pending' || k === 'working') monthListRows.push({ kind: 'overtime', date, ot });
+      }
     }
   }
 

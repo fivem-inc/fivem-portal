@@ -18,6 +18,7 @@ import type { WorkSegment, PlanBreakCheck } from './breakCalc';
 import { normalShiftWindow } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import { isFullDayReport } from './overtimeTypes';
+import { isPartialShiftCase } from './partialShiftAdjust';
 import type { OvertimeType } from './overtimeTypes';
 
 /** 入力欄の1本ぶん（"HH:MM" か ""） */
@@ -427,6 +428,8 @@ export interface RecordInput {
   nowIso: string;
   /** 自分で受理する終日の休みで「シフト調整：調整不要」を選んだか（2026-10-14・選べるのは leave_shift_adjust の人だけ。DB でも確かめる） */
   shiftNotNeeded?: boolean;
+  /** 自分で受理する遅出・早退・勤務地変更の事前申請で「シフト調整：必要」を選んだか（2026-10-20・選べるのは leave_shift_adjust の人だけ。DB の見張りでも確かめる） */
+  shiftNeeded?: boolean;
   /** 出張報告から作った申請の日（2026-10-14・表示だけ）。undefined のときは触らない（送り直し・実績報告で消さない） */
   fromTripDate?: string | null;
 }
@@ -481,6 +484,10 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     // 自分で受理する終日の休み：送った時点で確定するので、ここで「シフト調整：必要／調整不要」を持つ（受理の画面の代わり・2026-10-14）。
     // 🚨 だれが・いつ決めたか（shift_adjusted_by/at）は DB のトリガーが入れる。権限が無ければ DB が断る
     ...((fullDayMode && isSelfReview) ? { shift_adjust_not_needed: v.shiftNotNeeded === true } : {}),
+    // 自分で受理する遅出・早退・勤務地変更の事前申請：送った時点で受理されるので、ここで「シフト調整：必要」を持つ（2026-10-20）。
+    // 🚨 それ以外（上長あて・実績報告・事後）では触らない＝受理の画面・受理済みの欄で決めた値を上書きしない
+    ...((!fullDayMode && isSelfReview && v.mode === 'advance' && phase === 'planned' && isPartialShiftCase(v.applicationTypes))
+      ? { shift_adjust_needed: v.shiftNeeded === true } : {}),
     // 🚨 「内容を修正する（取り消して再申請）」で来たときだけ、元の（取消済み）申請を指す。
     //    これが無いと受理者からは「ただの新しい申請」に見え、何が変わったのか分からない。
     //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。

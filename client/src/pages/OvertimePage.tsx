@@ -74,6 +74,9 @@ import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
 import ShiftAdjustChoice from '../components/ShiftAdjustChoice';
+import { isPartialShiftCase, partialCover, partialCoverLabel, PARTIAL_SHIFT_NOTE } from '../lib/partialShiftAdjust';
+import PartialShiftToggle from '../components/PartialShiftToggle';
+import { usePartialSlotMap } from '../hooks/usePartialSlotMap';
 import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
 import type { OvertimeType, SituationLike } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
@@ -149,6 +152,8 @@ interface OvertimeReport {
   confirmed_at: string | null;
   // 事前申請を上長が受理した日時。null は「受理を経ていない」または 2026-08-25 の導入より前
   request_confirmed_at: string | null;
+  /** 遅出・早退・勤務地変更で「シフト調整：必要」を選んだ印（2026-10-20） */
+  shift_adjust_needed?: boolean;
   return_comment: string | null;
   source_leave_request_id: string | null;
   created_at: string;
@@ -766,6 +771,8 @@ const OvertimeForm: React.FC<{
   const [showConfirm, setShowConfirm] = useState(false);
   // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で選ぶ・初めは「必要」）
   const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
+  // 自分で受理する遅出・早退・勤務地変更の「シフト調整：必要」（2026-10-20・初めは調整不要）
+  const [selfShiftNeeded, setSelfShiftNeeded] = useState(false);
   // 🚨 確認の枠は送信ボタンの場所で下に伸びるので、開いたらそこまで動かす（2026-09-25：
   //    ボタンは画面の下端で押すことが多く、［送信する］が画面の外に出ていた。表入力・申請の依頼と同じ直し）
   const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(showConfirm);
@@ -1228,6 +1235,10 @@ const OvertimeForm: React.FC<{
   const reviewerIsManager = (id: string): boolean => isManagerReviewer(reviewers.find(r => r.id === id));
 
   const today = todayJstStr();
+  // 遅出・早退・勤務地変更の「シフト調整」を自分で選べるか（2026-10-20）：自己受理・権限あり・事前申請（実績報告でない）・今日以降・出張報告からでない。
+  // 🚨 同じ条件を DB の見張り（enforce_overtime_shift_needed）も確かめる
+  const showPartialShiftChoice = !fullDayMode && isSelfReview && !!canChooseShiftAdjust && mode === 'advance' && !isReportPhase
+    && isPartialShiftCase(applicationTypes) && !!date && date >= today && !(tripHint && tripHint.work_date === date);
   // 事前申請で選べるいちばん先の日（今期から3期先の期末）。シフトが決まっていない先の日を
   // 押さえられないようにするための上限（2026-09-09 ユーザー確定）。判定は breakCalc に集約
   const advanceMaxDate = advanceRequestMaxDate(today);
@@ -1406,6 +1417,7 @@ const OvertimeForm: React.FC<{
         reviewerId, modifiedFromId: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
         clockOnlyMode, effectiveClockReason, clockInAt, clockOutAt, nowIso: new Date().toISOString(),
         shiftNotNeeded: fullDayMode && isSelfReview && !!canChooseShiftAdjust && selfShiftNotNeeded,
+        shiftNeeded: showPartialShiftChoice && selfShiftNeeded,
         // 出張報告から作った申請の印（表示だけ）。新規で、出張の日のままのときだけ付ける
         fromTripDate: (!editTarget && tripHint && tripHint.work_date === date) ? date : undefined,
       }, toDbTime);
@@ -2855,6 +2867,12 @@ const OvertimeForm: React.FC<{
           {fullDayMode && isSelfReview && canChooseShiftAdjust && (
             <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} />
           )}
+          {/* 自分で受理する遅出・早退・勤務地変更の事前申請：いつもの校の代わりが要るか（2026-10-20・初めは調整不要・ユーザー確定 案A） */}
+          {showPartialShiftChoice && (
+            <ShiftAdjustChoice notNeeded={!selfShiftNeeded} onChange={nn => setSelfShiftNeeded(!nn)} isDark={isDark}
+              detail={[partialCoverLabel(partialCover(applicationTypes, normalShift, workSegments, effectiveLocation)), 'いない時間'].filter(Boolean).join(' ')}
+              note={PARTIAL_SHIFT_NOTE} />
+          )}
           {/* カレンダーに載るかどうかを送信前に必ず見せる（入れ忘れ・外し忘れを潰せる最後の場所） */}
           {offerCalendarChoice && (
             <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.6, color: showOnCalendar ? (isDark ? '#8ec5f0' : '#1565c0') : subText }}>
@@ -3293,11 +3311,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const { canLeaveShiftAdjust } = useAuth();
   const canChooseShiftAdjust = isAdmin || canLeaveShiftAdjust;
   const [shiftNotNeededFor, setShiftNotNeededFor] = useState<Record<string, boolean>>({});
+  // 遅出・早退・勤務地変更の事前申請を受理するときの「シフト調整：必要」（2026-10-20・初めは調整不要）
+  const [shiftNeededFor, setShiftNeededFor] = useState<Record<string, boolean>>({});
+  /** この申請の受理の画面に、遅出などの「シフト調整」を出すか（事前申請・事後でない・出張からでない・今日以降）。🚨 Edge Function・DB の見張りと同じ条件 */
+  const partialChoiceCase = (r: OvertimeReport): boolean =>
+    r.status === 'requested' && isPartialShiftCase(r.application_types) && !r.is_post_hoc && !r.from_trip_date && r.work_date >= todayJstStr();
   const callApproveFunction = async (
-    reportId: string, action: 'approve' | 'return' | 'cancel', comment?: string, shiftNotNeeded?: boolean,
+    reportId: string, action: 'approve' | 'return' | 'cancel', comment?: string, shiftNotNeeded?: boolean, shiftNeeded?: boolean,
   ): Promise<{ ok: boolean; error?: string; gcalOk?: boolean }> => {
     const { data, error } = await supabase.functions.invoke('overtime-approve', {
-      body: { report_id: reportId, action, comment, shift_not_needed: shiftNotNeeded === true },
+      // 🚨 shift_needed は「必要」を選んだときだけ送る（送らなければ Edge Function は何もしない）
+      body: { report_id: reportId, action, comment, shift_not_needed: shiftNotNeeded === true, ...(shiftNeeded === true ? { shift_needed: true } : {}) },
     });
     const res = data as { success?: boolean; error?: string; gcal_ok?: boolean } | null;
     if (error || !res?.success) return { ok: false, error: res?.error ?? error?.message ?? '通信エラー' };
@@ -3400,7 +3424,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const doApprove = async (r: OvertimeReport) => {
     setActingId(r.id);
     setActionError('');
-    const res = await callApproveFunction(r.id, 'approve', undefined, isFullDayReport(r.application_types) && !!shiftNotNeededFor[r.id]);
+    const res = await callApproveFunction(r.id, 'approve', undefined, isFullDayReport(r.application_types) && !!shiftNotNeededFor[r.id],
+      canChooseShiftAdjust && partialChoiceCase(r) && !!shiftNeededFor[r.id]);
     if (!res.ok) {
       setActionError('受理に失敗しました：' + (res.error ?? ''));
     } else if (res.gcalOk === false) {
@@ -4105,6 +4130,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       </div>
                     </div>
                   )}
+                  {/* 遅出・早退・勤務地変更の事前申請：いつもの校の代わりが要るか（2026-10-20・初めは調整不要・ユーザー確定 案A）。
+                      権限の無い受理者には欄を出さず1行だけ（マネージャーが受理済みの欄で変えられる） */}
+                  {partialChoiceCase(r) && (canChooseShiftAdjust ? (
+                    <ShiftAdjustChoice notNeeded={!shiftNeededFor[r.id]} onChange={nn => setShiftNeededFor(p => ({ ...p, [r.id]: !nn }))} isDark={isDark}
+                      detail={[partialCoverLabel(partialCover(r.application_types ?? [], r.normal_shift,
+                        (r.segments ?? []).filter(x => x.phase === 'planned').map(x => ({ startMin: x.start_min, endMin: x.end_min })), r.location ?? '')), 'いない時間'].filter(Boolean).join(' ')}
+                      note={PARTIAL_SHIFT_NOTE} />
+                  ) : (
+                    <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>シフト調整は、マネージャーが受理後に判断します</p>
+                  ))}
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => doApprove(r)} disabled={actingId === r.id}
                       style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 1 }}>
@@ -5328,6 +5363,11 @@ const MemberDetailView: React.FC<{
     try { localStorage.setItem('overtime:memberDetailSortAsc', v ? '0' : '1'); } catch { /* 覚えられなくても並びは変わる */ }
     return !v;
   });
+  // 受理済みの遅出・早退・勤務地変更の「シフト調整」をあとから変える欄（2026-10-20・components/PartialShiftToggle）。相談はこの人・この期の分を1回で読む
+  const { canLeaveShiftAdjust: canShiftHere } = useAuth();
+  const [slotReload, setSlotReload] = useState(0);
+  const slotDates = rows.map(r => r.work_date).sort();
+  const slotMap = usePartialSlotMap(slotDates.length > 0 ? [userId] : [], slotDates[0] ?? '', slotDates[slotDates.length - 1] ?? '', slotReload);
   const visible = rows.filter(r => r.status !== 'cancelled')
     .sort((a, b) => (a.work_date.localeCompare(b.work_date) || a.created_at.localeCompare(b.created_at)) * (detailSortAsc ? 1 : -1));
 
@@ -5436,7 +5476,9 @@ const MemberDetailView: React.FC<{
               {detailSortAsc ? '↑ 昇順' : '↓ 降順'}
             </button>
           </div>
-          {visible.map(r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText} />)}
+          {visible.map(r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText}
+            extra={<PartialShiftToggle report={r} slot={slotMap[`${r.applicant_id}|${r.work_date}`]} canChange={isAdmin || canShiftHere}
+              isDark={isDark} onChanged={() => setSlotReload(n => n + 1)} />} />)}
         </>
       )}
       </>
@@ -5448,7 +5490,9 @@ const MemberDetailView: React.FC<{
 // 個人詳細の1申請カード（閲覧専用。アクションボタンは持たない）
 const ReadonlyReportCard: React.FC<{
   r: OvertimeReport; isDark: boolean; cardBg: string; borderColor: string; text: string; subText: string;
-}> = ({ r, isDark, cardBg, borderColor, text, subText }) => {
+  /** カードのいちばん下に足すもの（受理済みの遅出などの「シフト調整」の欄・2026-10-20） */
+  extra?: React.ReactNode;
+}> = ({ r, isDark, cardBg, borderColor, text, subText, extra }) => {
   const isAuto = r.entry_type === 'leave_auto';
   const isFullDay = isFullDayReport(r.application_types);
   const actual = (r.segments ?? []).filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
@@ -5497,6 +5541,7 @@ const ReadonlyReportCard: React.FC<{
           )}
         </>
       )}
+      {extra}
     </div>
   );
 };

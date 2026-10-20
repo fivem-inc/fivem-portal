@@ -13,11 +13,15 @@ const ShiftAdjustChoice: React.FC<{
   isDark: boolean;
   /** 何件分かを見出しに添える（まとめて送るとき） */
   countLabel?: string;
-}> = ({ notNeeded, onChange, isDark, countLabel }) => {
+  /** 見出しに添える「四条本校 13:00〜15:00 いない時間」など（遅出・早退・勤務地変更・2026-10-20） */
+  detail?: string;
+  /** 下の説明の1行（遅出などは lib/partialShiftAdjust の PARTIAL_SHIFT_NOTE。省略で終日の休みの文） */
+  note?: string;
+}> = ({ notNeeded, onChange, isDark, countLabel, detail, note }) => {
   const sub = isDark ? '#adb5bd' : '#6c757d';
   return (
     <div style={{ margin: '0 0 10px' }}>
-      <div style={{ fontSize: 12.5, color: sub, marginBottom: 6 }}>シフト調整{countLabel ? `（${countLabel}）` : ''}</div>
+      <div style={{ fontSize: 12.5, color: sub, marginBottom: 6 }}>シフト調整{countLabel ? `（${countLabel}）` : ''}{detail ? `（${detail}）` : ''}</div>
       <div style={{ display: 'flex', gap: 8 }}>
         {([[false, '必要'], [true, '調整不要']] as const).map(([v, l]) => {
           const on = notNeeded === v;
@@ -28,7 +32,7 @@ const ShiftAdjustChoice: React.FC<{
           );
         })}
       </div>
-      <div style={{ fontSize: 11.5, color: sub, marginTop: 6, lineHeight: 1.6 }}>{SHIFT_ADJUST_SELF_NOTE}</div>
+      <div style={{ fontSize: 11.5, color: sub, marginTop: 6, lineHeight: 1.6 }}>{note ?? SHIFT_ADJUST_SELF_NOTE}</div>
     </div>
   );
 };

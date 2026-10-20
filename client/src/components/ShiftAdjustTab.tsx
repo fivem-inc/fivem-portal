@@ -19,6 +19,7 @@ import { toDbTime } from '../lib/timeInput';
 import { tintBtn } from '../lib/buttonStyles';
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { isFullDayReport } from '../lib/overtimeTypes';
+import { partialCauseLabel, slotCoverLabel } from '../lib/partialShiftAdjust';
 
 // ───────────────────────────────────────────────────────────────
 // シフト調整の作業場（勤怠カレンダーの中のタブ）
@@ -32,9 +33,11 @@ import { isFullDayReport } from '../lib/overtimeTypes';
 //    このアプリの他の画面と同じ形にしてある。
 // ───────────────────────────────────────────────────────────────
 
-/** 場のきっかけの言葉（2026-10-13：残業申請の終日からも場ができる）。leave は呼ぶ場所で「休暇／休み」を使い分ける */
-const causeLabel = (cause: string, leaveWord: string): string =>
-  cause === 'absent' || cause === 'ot_absence' ? '欠勤'
+/** 場のきっかけの言葉（2026-10-13：残業申請の終日からも場ができる）。leave は呼ぶ場所で「休暇／休み」を使い分ける。
+ *  2026-10-20：ot_partial（遅出・早退・勤務地変更）は写した種別から「調整遅出」「勤務地変更」など */
+const causeLabel = (cause: string, leaveWord: string, coverTypes?: string[] | null): string =>
+  cause === 'ot_partial' ? partialCauseLabel(coverTypes)
+    : cause === 'absent' || cause === 'ot_absence' ? '欠勤'
     : cause === 'chosei_off' ? '時間外調整休'
     : cause === 'furikae_off' ? '振替休日'
     : leaveWord;
@@ -62,6 +65,11 @@ interface SlotRow {
   /** 調整済み（アプリ外）の印と出勤する人（2026-10-05）。status='decided' のときだけ意味がある（ほかの状態では DB が外す） */
   adjusted_outside?: boolean;
   outside_user_ids?: string[];
+  /** 遅出・早退・勤務地変更（cause ot_partial）のいない時間などの写し（2026-10-20・DB の ot_partial_cover が入れる） */
+  cover_segments?: { start: string; end: string }[] | null;
+  cover_location?: string | null;
+  cover_types?: string[] | null;
+  cover_note?: string | null;
 }
 
 interface CommentRow { id: string; user_id: string; body: string; created_at: string }
@@ -125,8 +133,9 @@ const STATUS_LABEL: Record<string, string> = {
 };
 /** 状態の表示。「変更なし」に調整不要の印が付いていれば「調整不要」（2026-09-28）。🚨 一覧と見出しで同じものを使う */
 /** 「調整済み」に「アプリ外」の印が付いていれば「調整済み（アプリ外）」（2026-10-05） */
-const slotStatusLabel = (status: string, notNeeded?: boolean, outside?: boolean): string =>
-  status === 'no_change' && notNeeded ? '調整不要'
+const slotStatusLabel = (status: string, notNeeded?: boolean, outside?: boolean, cause?: string): string =>
+  status === 'cause_cancelled' && cause === 'ot_partial' ? '元の申請が取り消されました'   // 2026-10-20：遅出などは「休み」ではない
+    : status === 'no_change' && notNeeded ? '調整不要'
     : status === 'decided' && outside ? '調整済み(外)'   // 2026-10-05：短く（ボタンの名前は「調整済み（アプリ外）」のまま）
     : (STATUS_LABEL[status] ?? status);
 
@@ -193,7 +202,7 @@ const ShiftAdjustTab: React.FC<{
     // 🚨 error を必ず見る。読めないまま「0件」と出すと、画面が嘘をつく
     const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }, { data: tData }, { data: planData }] = await Promise.all([
       supabase.from('shift_adjust_slots')
-        .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at, not_needed, adjusted_outside, outside_user_ids')
+        .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at, not_needed, adjusted_outside, outside_user_ids, cover_segments, cover_location, cover_types, cover_note')
         .gte('target_date', todayJstStr())
         .order('target_date', { ascending: true }),
       supabase.from('profiles').select('id, name, employment_type, role_title, group_names').eq('is_active', true),
@@ -327,7 +336,7 @@ const ShiftAdjustTab: React.FC<{
                   {nameOf(s.target_user_id) || '（名前を読み込めませんでした）'}
                 </span>
                 <span style={{ fontSize: 11, color: subText, whiteSpace: 'nowrap' }}>
-                  {causeLabel(s.cause, '休暇')}
+                  {causeLabel(s.cause, '休暇', s.cover_types)}
                 </span>
                 {/* 案がある未調整・調整中の場（2026-09-25：件数と、意見の期限を過ぎた案があるか）。🚨 新しい色は足さない */}
                 {undone && planCounts.has(s.id) && (
@@ -343,7 +352,7 @@ const ShiftAdjustTab: React.FC<{
                   background: s.status === 'pending' ? warnBg : 'transparent',
                   border: `1px solid ${undone ? warnBd : border}`,
                 }}>
-                  {slotStatusLabel(s.status, s.not_needed, s.adjusted_outside)}
+                  {slotStatusLabel(s.status, s.not_needed, s.adjusted_outside, s.cause)}
                 </span>
                 <span style={{ color: subText, fontSize: 14 }}>›</span>
               </button>
@@ -1405,16 +1414,24 @@ const SlotDetail: React.FC<{
         </div>
         <div style={{ fontSize: 13.5, color: text, marginTop: 4 }}>
           {nameOf(slot.target_user_id) || '（名前を読み込めませんでした）'}さんの
-          {causeLabel(slot.cause, '休み')}
+          {causeLabel(slot.cause, '休み', slot.cover_types)}
         </div>
+        {/* 遅出・早退・勤務地変更（2026-10-20）：いつもの校と代わりが要る時間。🚨 DB が申請から写したもの（相談を見る人は残業申請を読めないことがある） */}
+        {slot.cause === 'ot_partial' && (
+          <div style={{ ...shiftBand, marginTop: 6 }}>
+            いつもの校：{slot.cover_location || '—'}<br />
+            代わりが要る時間：{slotCoverLabel(null, slot.cover_segments) || '（申請の時間をまだ読めていません）'}
+            {slot.cover_note && <><br /><span style={{ fontSize: 11.5 }}>{slot.cover_note}</span></>}
+          </div>
+        )}
         {/* 休む方のこの日のシフト（2026-09-14 ユーザー指示）。🚨 週の基本シフトが読めなかったときは出さない（嘘をつかない） */}
         {candLoaded && !candErr && (
           <div style={shiftBand}>
-            休む方のこの日のシフト：{targetShiftText}
+            {slot.cause === 'ot_partial' ? 'この方のこの日のシフト' : '休む方のこの日のシフト'}：{targetShiftText}
           </div>
         )}
         <div style={{ fontSize: 12, color: ['pending', 'working'].includes(status) ? warnFg : subText, marginTop: 6 }}>
-          状態：{slotStatusLabel(status, notNeeded, outside)}
+          状態：{slotStatusLabel(status, notNeeded, outside, slot.cause)}
           {slot.decided_at && status === 'no_change' && (
             <span style={{ color: subText, marginLeft: 10 }}>
               {nameOf(slot.decided_by) ? `${nameOf(slot.decided_by)}・` : ''}
