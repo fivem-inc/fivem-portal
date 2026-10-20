@@ -65,6 +65,10 @@ export const SEND_DELIVERED_TEXT = 'さきほどの申請は届いていまし�
 export const SEND_DELIVERED_SUB = '履歴で確認できます';
 /** 届いたか分からないまま中身を直して送り直したら、さきほどの申請が届いていたとき（黄色・2026-10-21 ユーザー確定） */
 export const SEND_DELIVERED_CHANGED_TEXT = 'さきほどの申請は届いていました。直した内容は送っていません。内容を直す場合は、履歴から取り消して、申請し直してください。';
+/** まとめて申請・表入力で、通信の失敗が2回続いたため送らずに止めた行（2026-10-21 ユーザー確定の文） */
+export function bulkStoppedText(button: string): string {
+  return `通信が不安定なため、送信を中断しました。通信環境の良い場所で、もう一度［${button}］を押してください。`;
+}
 /** 送信が8秒を過ぎたときの灰色の案内（2026-10-21 ユーザー確定） */
 export const SEND_SLOW_TEXT = '通信に時間がかかっています。画面を閉じずにお待ちください。';
 

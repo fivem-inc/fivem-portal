@@ -424,7 +424,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       targets,
       date => rows.find(x => x.date === date),
       { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar,
-        selfFullDayShiftNotNeeded: !!canChooseShiftAdjust && selfShiftNotNeeded },
+        selfFullDayShiftNotNeeded: !!canChooseShiftAdjust && selfShiftNotNeeded, buttonLabel: '送信する' },
       supabaseBulkWriter,
       (date, status, message) => setRes(date, { status, message }),
       (done, total) => setProgress({ done, total }),

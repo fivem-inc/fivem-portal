@@ -15,8 +15,9 @@ import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOverti
 import type { BulkWriter, ExistingManual } from './overtimeBulkSend';
 import type { GridReport } from './overtimeGrid';
 import { loadMyTripPendingDays } from './tripPending';
-import { submitOnce } from './submitOnce';
-import { sendUnstableOnceText, SEND_DELIVERED_CHANGED_TEXT, timeoutSignal } from './netFailure';
+import { submitOnce, raceTimeout, SUBMIT_TIMEOUT_MS } from './submitOnce';
+import { sendUnstableOnceText, SEND_DELIVERED_CHANGED_TEXT, timeoutSignal, isNetworkFailure } from './netFailure';
+import { existingMatchesRecord } from './overtimeBulkSend';
 
 export type SaveStage = 'insert' | 'update' | 'conflict' | 'seg_delete' | 'seg_insert' | 'unknown' | 'delivered_changed';
 
@@ -55,6 +56,20 @@ export interface SaveArgs {
   buttonLabel?: string;
 }
 
+/**
+ * 書き換えが届いていたか（2026-10-21 電波 段3b）。true＝いまの行が「送った状態・中身」と同じ／false＝違う／null＝読めなかった。
+ * 🚨 状態（status）も同じことを条件にする（届いていないのに、予定どおりの実績で中身だけ同じに見えるのを取り違えないため）。
+ *    送った記録に状態が無いときは判定しない（false）
+ */
+async function editLanded(id: string, record: Record<string, unknown>): Promise<boolean | null> {
+  if (typeof record.status !== 'string') return false;
+  const r = await raceTimeout(signal => supabase.from('overtime_reports')
+    .select('status, diff_minutes, reason, application_types, location, furikae_origin_date').eq('id', id).abortSignal(signal).maybeSingle(), 8000);
+  if (r === 'timeout' || r.error) return null;
+  const row = r.data as (ExistingManual & { status: string }) | null;
+  return !!row && row.status === record.status && existingMatchesRecord(row, record);
+}
+
 export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
   let reportId: string;
   let recovered = false;
@@ -62,13 +77,27 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
     // 🚨 開いてから送るまでの間に、上長が受理・差し戻し・取消をしている場合がある。
     //    status を条件に付けて件数を見ないと、差し戻された申請に実績を上書きしてしまい、
     //    差し戻し理由が残ったまま「実績 確認待ち」に戻る（update は0件でもエラーにならない）
-    const { data: updatedRows, error: err } = await supabase.from('overtime_reports')
-      .update(a.record).eq('id', a.edit.id).eq('status', a.edit.status).select('id');
-    if (err) return { ok: false, stage: 'update', message: friendlyOvertimeDbError(err.message, err.code), code: err.code };
-    if (!updatedRows || updatedRows.length === 0) {
-      return { ok: false, stage: 'conflict', message: 'この申請の状態が変わっています（先に受理・差し戻し・取消がされた可能性があります）。画面を更新してからやり直してください。' };
+    // 🚨 2026-10-21 電波 段3b：書き換えにも上限（20秒）。応答だけ落ちて押し直すと、1回目で状態が変わっているので0件になる。
+    //    そのとき「状態が変わっています」と出さず、読み直して「送った内容と同じ状態・中身」なら届いていたとして続き（記録・時間帯）を行う
+    const edit = a.edit;
+    const upd = await raceTimeout(signal => supabase.from('overtime_reports')
+      .update(a.record).eq('id', edit.id).eq('status', edit.status).select('id').abortSignal(signal), SUBMIT_TIMEOUT_MS);
+    const lost = upd === 'timeout' || (!!upd.error && isNetworkFailure(upd.error, upd.status));
+    if (upd !== 'timeout' && upd.error && !lost) {
+      return { ok: false, stage: 'update', message: friendlyOvertimeDbError(upd.error.message, upd.error.code), code: upd.error.code };
     }
-    reportId = a.edit.id;
+    const updatedRows = upd === 'timeout' || upd.error ? null : upd.data;
+    if (!updatedRows || updatedRows.length === 0) {
+      const landed = await editLanded(edit.id, a.record);
+      if (landed === true) {
+        recovered = true;
+      } else if (lost || landed === null) {
+        return { ok: false, stage: 'unknown', message: sendUnstableOnceText(a.buttonLabel ?? '申請する') };
+      } else {
+        return { ok: false, stage: 'conflict', message: 'この申請の状態が変わっています（先に受理・差し戻し・取消がされた可能性があります）。画面を更新してからやり直してください。' };
+      }
+    }
+    reportId = edit.id;
     // 修正の記録。🚨 書き換えが成功してから残す（2026-09-24）。
     //    以前は書き換えの前に残していたので、状態が変わっていて書き換えられなかったときに
     //    「実績報告」の記録だけが残っていた。記録の失敗で送信は止めない（今までどおり）

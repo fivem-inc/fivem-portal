@@ -72,8 +72,9 @@ export function clearSubmitSlot(userId: string, slot: string): void {
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-/** 時間内に終わらなければ abort して 'timeout' を返す（fetch の前の合言葉の取り直しにも abortSignal は効かないので、待ち自体も打ち切る） */
-async function raceTimeout<T>(run: (signal: AbortSignal) => PromiseLike<T>, ms: number): Promise<T | 'timeout'> {
+/** 時間内に終わらなければ abort して 'timeout' を返す（fetch の前の合言葉の取り直しにも abortSignal は効かないので、待ち自体も打ち切る）。
+ *  書き換え（update）の上限にも使う（lib/overtimeSubmitApi） */
+export async function raceTimeout<T>(run: (signal: AbortSignal) => PromiseLike<T>, ms: number): Promise<T | 'timeout'> {
   const ctrl = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<'timeout'>(resolve => { timer = setTimeout(() => { ctrl.abort(); resolve('timeout'); }, ms); });

@@ -16,6 +16,7 @@ import { overtimeAmountLabel } from './overtimeTypes';
 import { toDbTime } from './timeInput';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import type { SaveArgs, SaveResult } from './overtimeSubmitApi';
+import { bulkStoppedText } from './netFailure';
 
 /** 送る行（表入力の1行・まとめて申請の箱の1件） */
 export interface BulkRow {
@@ -93,6 +94,8 @@ export interface BulkCtx {
   canChooseCalendar: boolean;
   /** 自分で受理する終日の休みを「シフト調整：調整不要」で送るか（確認の画面で1つ選ぶ・2026-10-14） */
   selfFullDayShiftNotNeeded?: boolean;
+  /** 送るボタンの名前（「届いたか分からない」「中断しました」の文に入れる・2026-10-21）。既定「申請する」 */
+  buttonLabel?: string;
 }
 
 export interface BulkResult {
@@ -176,9 +179,17 @@ export async function runBulkSend(
   const usedOrigins = new Set<string>();
   // 出張の申請がまだの日（1件フォームと同じ扱いにする・2026-10-14 ユーザー確定 A）。読めなければ空＝印を付けないだけ
   const tripDates = writer.tripPendingDates ? await writer.tripPendingDates() : new Set<string>();
+  // 🚨 届いたか分からない（通信の失敗）が2回続いたら、残りの行は送らずに止める（2026-10-21 電波 段3b）。
+  //    1件ずつ全部試して全部失敗するのを防ぐ。止めた行はまだ送っていない（もう一度押すと、送っていない行だけ送る）
+  let netFails = 0;
 
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
+    if (netFails >= 2) {
+      failed++; onRow(t.date, 'failed', bulkStoppedText(ctx.buttonLabel ?? '申請する'));
+      onProgress(i + 1, targets.length);
+      continue;
+    }
     if (seen.has(t.date)) {
       failed++; onRow(t.date, 'failed', '同じ日が2つ入っています。1つにしてください');
       onProgress(i + 1, targets.length);
@@ -271,13 +282,14 @@ export async function runBulkSend(
       //    （選び直しの欄を出した再提出は、本人の選択のまま）
       if (fresh && c.isResubmit && !c.offerCalendar) record.show_on_calendar = (fresh.show_on_calendar as boolean | null | undefined) ?? null;
       const saved = await writer.save({
-        userId: ctx.userId, record, phase: c.phase, segments: c.workSegments, segRetries: 2,
+        userId: ctx.userId, record, phase: c.phase, segments: c.workSegments, segRetries: 2, buttonLabel: ctx.buttonLabel,
         edit: fresh ? {
           id: fresh.id, status: fresh.status, snapshot: fresh,
           historySummary: editHistorySummary({ isReportPhase: c.isReportPhase, isPureZero: c.isPureZero, changedAxes: c.changedAxes, typeSwitched: null }),
           historyChangeReason: (c.isReportPhase && c.hasChanges) ? r.draft.changeReason.trim() : null,
         } : null,
       });
+      netFails = !saved.ok && saved.stage === 'unknown' ? netFails + 1 : 0;
       if (!saved.ok) {
         if (saved.stage === 'conflict') {
           check++; onRow(r.date, 'check', saved.message);
