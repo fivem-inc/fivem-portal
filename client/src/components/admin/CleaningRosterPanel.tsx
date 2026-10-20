@@ -128,6 +128,9 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const allRows = useMemo(() => [...(data?.rows ?? [])].sort((a, b) => a.sort_order - b.sort_order), [data]);
   const activeStaff = useMemo(() => [...(data?.staff ?? [])].filter(s => s.is_active).sort((a, b) => a.name.localeCompare(b.name, 'ja')), [data]);
 
+  // ［確認した］の理由（任意・2026-10-21 ユーザー確定）。注意ごとに書きかけを持つ
+  const [ackNotes, setAckNotes] = useState<Record<string, string>>({});
+
   if (loading && !data) return <p style={{ color: subText }}>読み込んでいます...</p>;
   if (loadErr && !data) return <p style={{ color: red }}>{loadErr}</p>;
   if (!data || !roster) return null;
@@ -177,10 +180,16 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     if (!v) { v = issuesOf(row, day); issueMemo.set(k, v); }
     return v;
   };
-  const isAcked = (row: CleaningRow, day: RosterDayKind, key: string) => {
-    if (changedSet.has(cellKey(row.id, day))) return false;
+  const ackOf = (row: CleaningRow, day: RosterDayKind, key: string) => {
+    if (changedSet.has(cellKey(row.id, day))) return null;
     const v = cellVersionOn(cells, row.id, day, applyFrom);
-    return !!v && data.acks.some(a => a.cell_id === v.id && a.issue_key === key);
+    return v ? data.acks.find(a => a.cell_id === v.id && a.issue_key === key) ?? null : null;
+  };
+  const isAcked = (row: CleaningRow, day: RosterDayKind, key: string) => !!ackOf(row, day, key);
+  /** 確認済みの文（理由があれば添える・2026-10-21） */
+  const ackedSuffix = (row: CleaningRow, day: RosterDayKind, key: string) => {
+    const note = ackOf(row, day, key)?.note;
+    return note ? `（確認済み：${note}）` : '（確認済み）';
   };
   const allIssues = activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => issuesAt(r, d).map(i => ({ r, d, i, acked: i.level !== 'red' && isAcked(r, d, i.key) }))));
   const unacked = allIssues.filter(x => !x.acked);
@@ -254,9 +263,23 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
     const v = cellVersionOn(cells, row.id, day, applyFrom);
     if (!v) return;
     setSaveErr('');
-    const e = await ackCleaningIssue(v.id, key);
+    const nk = `${row.id}|${day}|${key}`;
+    const e = await ackCleaningIssue(v.id, key, ackNotes[nk] ?? '');
     if (e) { setSaveErr(e); return; }
+    setAckNotes(prev => { const n = { ...prev }; delete n[nk]; return n; });
     await load(true);
+  };
+  /** 理由の欄と［確認した］（マスを開いた所・人ごとの所の2か所で同じものを使う） */
+  const ackControls = (row: CleaningRow, day: RosterDayKind, key: string) => {
+    const nk = `${row.id}|${day}|${key}`;
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input type="text" maxLength={200} value={ackNotes[nk] ?? ''} placeholder="理由（任意）"
+          onChange={e => setAckNotes(prev => ({ ...prev, [nk]: e.target.value }))}
+          style={{ ...inputStyle, fontSize: 12, padding: '2px 6px', width: 260 }} />
+        <button type="button" onClick={() => void ack(row, day, key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
+      </span>
+    );
   };
 
   // ─── 行・注意書き ───
@@ -385,11 +408,9 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           {issues.map(i => {
             const acked = i.level !== 'red' && isAcked(row, day, i.key);
             return (
-              <div key={i.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
-                <span>{acked ? '✓' : i.level === 'red' ? '🔴' : '⚠️'} {i.text}{acked ? '（確認済み）' : i.level === 'red' ? '（直してください・保存はできます）' : '（保存はできます）'}</span>
-                {!acked && i.level !== 'red' && !changedSet.has(k) && cellVersionOn(cells, row.id, day, applyFrom) && (
-                  <button type="button" onClick={() => void ack(row, day, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
-                )}
+              <div key={i.key} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
+                <span>{acked ? '✓' : i.level === 'red' ? '🔴' : '⚠️'} {i.text}{acked ? ackedSuffix(row, day, i.key) : i.level === 'red' ? '（直してください・保存はできます）' : '（保存はできます）'}</span>
+                {!acked && i.level !== 'red' && !changedSet.has(k) && cellVersionOn(cells, row.id, day, applyFrom) && ackControls(row, day, i.key)}
               </div>
             );
           })}
@@ -589,11 +610,9 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
           {issues.map(({ r, i }) => {
             const acked = i.level !== 'red' && isAcked(r, day, i.key);
             return (
-              <div key={`${r.id}|${i.key}`} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
-                <span>{acked ? '✓' : i.level === 'red' ? '🔴' : '⚠️'} {r.school === '四条本校' ? '' : `${shortSchool(r.school)} `}{r.floor ?? ''}{r.short_name}：{i.text}{acked ? '（確認済み）' : i.level === 'red' ? '（直してください・保存はできます）' : '（保存はできます）'}</span>
-                {!acked && i.level !== 'red' && !changedSet.has(cellKey(r.id, day)) && cellVersionOn(cells, r.id, day, applyFrom) && (
-                  <button type="button" onClick={() => void ack(r, day, i.key)} style={{ ...inputStyle, cursor: 'pointer', fontSize: 12, padding: '2px 8px' }}>確認した</button>
-                )}
+              <div key={`${r.id}|${i.key}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: acked ? subText : red, marginTop: 4 }}>
+                <span>{acked ? '✓' : i.level === 'red' ? '🔴' : '⚠️'} {r.school === '四条本校' ? '' : `${shortSchool(r.school)} `}{r.floor ?? ''}{r.short_name}：{i.text}{acked ? ackedSuffix(r, day, i.key) : i.level === 'red' ? '（直してください・保存はできます）' : '（保存はできます）'}</span>
+                {!acked && i.level !== 'red' && !changedSet.has(cellKey(r.id, day)) && cellVersionOn(cells, r.id, day, applyFrom) && ackControls(r, day, i.key)}
               </div>
             );
           })}

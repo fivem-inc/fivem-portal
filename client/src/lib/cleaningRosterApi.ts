@@ -17,6 +17,8 @@ export interface CleaningStaff {
 export interface CleaningAck {
   cell_id: string;
   issue_key: string;
+  /** ［確認した］のときの理由（任意・2026-10-21） */
+  note?: string | null;
 }
 
 export interface CleaningData {
@@ -51,7 +53,7 @@ export async function loadCleaningData(sinceDate: string): Promise<{ data: Clean
       .select('id, row_id, day_kind, is_none, note, valid_from, valid_to, cleaning_cell_entries(user_id, start_time, sort_order)')
       .or(`valid_to.is.null,valid_to.gte.${sinceDate}`)
       .order('valid_from'),
-    supabase.from('cleaning_acks').select('cell_id, issue_key'),
+    supabase.from('cleaning_acks').select('cell_id, issue_key, note'),
     supabase.from('cleaning_excluded_staff').select('user_id'),
     supabase.from('staff_display_names').select('user_id, label'),
     supabase.from('profiles').select(`id, name, ${PREHIRE_COLS}`).order('name'),
@@ -126,11 +128,14 @@ export async function saveCleaning(payload: { apply_from: string; confirm_past: 
 }
 
 /** ⚠️ を「確認した」にする。🚨 件数を見る（権限で弾かれても error にならないため） */
-export async function ackCleaningIssue(cellId: string, issueKey: string): Promise<string | null> {
+export async function ackCleaningIssue(cellId: string, issueKey: string, note = ''): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return 'ログインし直してください';
+  // 理由は空でもよい（空白だけは保存しない＝DB の決まりと同じ・200字まで）
+  const trimmed = note.trim();
+  if (trimmed.length > 200) return '理由は200字までにしてください';
   const { data, error } = await supabase.from('cleaning_acks')
-    .insert({ cell_id: cellId, issue_key: issueKey, acked_by: user.id }).select('id');
+    .insert({ cell_id: cellId, issue_key: issueKey, acked_by: user.id, note: trimmed || null }).select('id');
   if (error) return error.code === '23505' ? null : `確認を残せませんでした：${error.message}`;
   if (!data || data.length === 0) return '確認を残せませんでした（権限がない可能性があります）';
   return null;
