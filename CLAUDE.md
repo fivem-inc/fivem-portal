@@ -267,6 +267,20 @@ URLを開けば全ファイルを読めます（2026-08-28 実測確認済み）
     `select has_function_privilege('anon','public.<名前>(<型>)','execute');`
     🚨 2026-09-05 にまた踏んだ。`from public` だけでは `true` のままだった。
     **実際に呼んで確かめなければ気づけない**
+- 🚨 **新しい表を作るときは、同じ migration に GRANT を書く**（2026-10-30 からの Supabase の変更）
+  10/30 以降、public に新しく作った表には、ログインしている人（authenticated）にも自動で権限が付かなくなる。
+  書き忘れると、画面から読み書きした瞬間に **42501（権限がありません）** で止まる。今ある表（2026-10-21 時点で161）は影響なし。
+
+  ```sql
+  create table public.<表> (...);
+  alter table public.<表> enable row level security;
+  grant select, insert, update, delete on public.<表> to authenticated;   -- 使う操作だけでよい（読むだけなら select だけ）
+  grant all on public.<表> to service_role;                               -- cron・Edge Function から使うため
+  -- anon（ログインしていない人）には付けない。ログイン前に読む表だけ、RLS とセットで付ける
+  ```
+  - 番号を自動で振る列（serial・identity）を使うときは、その連番にも `grant usage on sequence …` が要る（uuid の既定値なら不要）
+  - 適用後に実測する：`select has_table_privilege('authenticated','public.<表>','select');`
+  - RLS（行ごとの決まり）は今までどおり必ず付ける。GRANT は「表に触れてよいか」、RLS は「どの行か」で、両方が要る
 - 🚨 **記録を貯める仕組みを新しく作るときは、掃除する仕組みも必ず一緒に作る**
   （毎晩の cron で古い行を消す＋1日の上限。匿名から書ける入口なら上限は必須）。
   2026-08-20 に cron の記録が **130,817件・115MB** まで膨らみ、DB全体136MBの87%を占めていた。
