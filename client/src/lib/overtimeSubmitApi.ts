@@ -15,11 +15,14 @@ import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOverti
 import type { BulkWriter, ExistingManual } from './overtimeBulkSend';
 import type { GridReport } from './overtimeGrid';
 import { loadMyTripPendingDays } from './tripPending';
+import { submitOnce } from './submitOnce';
+import { sendUnstableOnceText, SEND_DELIVERED_CHANGED_TEXT, timeoutSignal } from './netFailure';
 
-export type SaveStage = 'insert' | 'update' | 'conflict' | 'seg_delete' | 'seg_insert';
+export type SaveStage = 'insert' | 'update' | 'conflict' | 'seg_delete' | 'seg_insert' | 'unknown' | 'delivered_changed';
 
 export type SaveResult =
-  | { ok: true; reportId: string }
+  /** recovered＝押し直して「さきほどの申請は届いていた」と分かった（2026-10-21 電波 段3） */
+  | { ok: true; reportId: string; recovered?: boolean }
   /** reportId があるのは「申請本体は保存できたが、そのあとで失敗した」とき */
   | { ok: false; stage: SaveStage; message: string; code?: string; reportId?: string };
 
@@ -46,10 +49,15 @@ export interface SaveArgs {
    *    取消の経路を通すと申請先に「取り消しました」が飛ぶ）。
    */
   segRetries?: number;
+  /** 送信が8秒を過ぎたとき（灰色の案内を出す・2026-10-21） */
+  onSlow?: () => void;
+  /** 「届いたか分からない」の文に入れるボタンの名前（既定「申請する」） */
+  buttonLabel?: string;
 }
 
 export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
   let reportId: string;
+  let recovered = false;
   if (a.edit) {
     // 🚨 開いてから送るまでの間に、上長が受理・差し戻し・取消をしている場合がある。
     //    status を条件に付けて件数を見ないと、差し戻された申請に実績を上書きしてしまい、
@@ -90,20 +98,37 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
     const { error: segDelErr } = await segDel.select('id');
     if (segDelErr) return { ok: false, stage: 'seg_delete', message: '前回の時間帯を消せませんでした：' + segDelErr.message, reportId };
   } else {
-    const { data: inserted, error: err } = await supabase.from('overtime_reports')
-      .insert({ applicant_id: a.userId, submitted_by: a.userId, entry_type: 'manual', ...a.record })
-      .select('id').single();
-    if (err || !inserted) {
-      return { ok: false, stage: 'insert', message: friendlyOvertimeDbError(err?.message ?? '保存した申請を読み戻せませんでした', err?.code), code: err?.code };
+    // 🚨 2026-10-21 電波 段3：lib/submitOnce で1回だけ届ける（端末で作る番号・20秒まで）。1件フォーム・表入力・まとめて申請の3つがここを通る。
+    //    同じ人・同じ日の手入力は DB で1件（uq_overtime_manual_per_day）なので2件にはならないが、押し直したときに
+    //    「届いていたのにエラー」に見えるのを防ぐ（自分の番号の行なら届いていた）。中身の比べに送るたびに変わる時刻（◯◯_at）は入れない
+    const row = { applicant_id: a.userId, submitted_by: a.userId, entry_type: 'manual', ...a.record };
+    const fpRow = Object.fromEntries(Object.entries(row).filter(([k]) => !k.endsWith('_at')));
+    const r = await submitOnce({
+      userId: a.userId, slot: `ot:${String(a.record.work_date ?? '')}`, fingerprint: JSON.stringify([fpRow, a.phase, a.segments]),
+      insert: (id, signal) => supabase.from('overtime_reports').insert({ id, ...row }).abortSignal(signal),
+      exists: (id, signal) => supabase.from('overtime_reports').select('id').eq('id', id).abortSignal(signal),
+      onSlow: a.onSlow,
+    });
+    if (r.kind === 'unknown') return { ok: false, stage: 'unknown', message: sendUnstableOnceText(a.buttonLabel ?? '申請する') };
+    if (r.kind === 'delivered_changed') return { ok: false, stage: 'delivered_changed', message: SEND_DELIVERED_CHANGED_TEXT };
+    if (r.kind === 'rejected') {
+      return { ok: false, stage: 'insert', message: friendlyOvertimeDbError(r.error.message, r.error.code), code: r.error.code };
     }
-    reportId = (inserted as { id: string }).id;
+    reportId = r.id;
+    recovered = r.recovered;
   }
 
   const segRows = a.segments.map((s, i) => ({
     report_id: reportId, phase: a.phase, seg_no: i + 1, start_min: s.startMin, end_min: s.endMin,
   }));
   if (segRows.length > 0) {
-    let segErr = (await supabase.from('overtime_report_segments').insert(segRows)).error;
+    // 🚨 時間帯にも上限（20秒）。止まったら「申請は保存されたが時間帯が…」の今までの案内になる
+    let segErr = (await supabase.from('overtime_report_segments').insert(segRows).abortSignal(timeoutSignal(20000))).error;
+    if (segErr?.code === '23505' && recovered) {
+      // 押し直しで届いていた申請：時間帯ももう入っていれば、そのまま成功（件数で確かめる）
+      const { count } = await supabase.from('overtime_report_segments').select('id', { count: 'exact', head: true }).eq('report_id', reportId).eq('phase', a.phase);
+      if (count === segRows.length) segErr = null;
+    }
     for (let t = 0; segErr && t < (a.segRetries ?? 0); t++) {
       // 入れ直し：途中まで入った分があれば消してから、もう一度全部入れる
       const { error: delErr } = await supabase.from('overtime_report_segments')
@@ -113,7 +138,7 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
     }
     if (segErr) return { ok: false, stage: 'seg_insert', message: '時間帯の保存に失敗しました: ' + segErr.message, reportId };
   }
-  return { ok: true, reportId };
+  return { ok: true, reportId, recovered };
 }
 
 /**

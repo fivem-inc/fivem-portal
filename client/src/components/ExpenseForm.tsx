@@ -18,7 +18,8 @@ const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ mes
 import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
-import { sendFailureText } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { submitOnce } from '../lib/submitOnce';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
@@ -196,7 +197,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [workplaceOptions, setWorkplaceOptions] = useState<string[]>([]);
   const [customExpenseTypes, setCustomExpenseTypes] = useState<string[]>([]);
   const [expenseTypeLabels, setExpenseTypeLabels] = useState<{ sort_order: number; value: string }[]>([]);
-  const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState<false | 'new' | 'recovered'>(false);
+  // 届いたか分からない・届いていた（直した内容は送っていない）の黄色い知らせ／8秒を過ぎた灰色の案内（2026-10-21 電波 段3）
+  const [formWarn, setFormWarn] = useState('');
+  const [sendSlow, setSendSlow] = useState(false);
+  const warnRef = useRef<HTMLDivElement>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
   const [recentTemplates, setRecentTemplates] = useState<Expense[]>([]);
@@ -261,6 +266,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [formError]);
+  useEffect(() => {
+    if (formWarn && warnRef.current) warnRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [formWarn]);
 
 
   // 区分・場所リストを取得
@@ -545,22 +553,43 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     setShowConfirm(true);
   };
 
-  // 確認後の実際の送信
+  // 確認後の実際の送信。
+  // 🚨 2026-10-21 電波 段3：lib/submitOnce で1回だけ届ける（端末で作る番号・20秒まで・押し直しても2件にならない）。
+  //    登録が通ったらすぐ「登録しました」を出し、Slack・お知らせ・メールは裏で送る（そこで止まっても申請の失敗にしない）
   const handleSubmit = async () => {
     if (!user) return;
     setShowConfirm(false);
-    setIsSubmitting(true);
+    setIsSubmitting(true); setSendSlow(false); setFormError(''); setFormWarn('');
     const expensesToSubmit = confirmedExpenses;
 
-    const { error, status } = await supabase.from('expenses').insert([
-      { user_id: user.id, expenses_data: expensesToSubmit, status: 'pending' }
-    ]);
+    const r = await submitOnce({
+      userId: user.id, slot: 'expense', fingerprint: JSON.stringify(expensesToSubmit),
+      insert: (id, signal) => supabase.from('expenses').insert([{ id, user_id: user.id, expenses_data: expensesToSubmit, status: 'pending' }]).abortSignal(signal),
+      exists: (id, signal) => supabase.from('expenses').select('id').eq('id', id).abortSignal(signal),
+      onSlow: () => setSendSlow(true),
+    });
+    setSendSlow(false);
 
-    if (error) {
+    if (r.kind === 'unknown') { setFormWarn(sendUnstableOnceText('申請する')); setIsSubmitting(false); return; }
+    if (r.kind === 'delivered_changed') { setFormWarn(SEND_DELIVERED_CHANGED_TEXT); setIsSubmitting(false); return; }
+    if (r.kind === 'rejected') {
       // 🚨 通信のせいなら英語の文を出さない（2026-10-20・lib/netFailure の sendFailureText）
-      setFormError(sendFailureText(error, status) ?? ('登録に失敗しました: ' + error.message));
+      setFormError(sendFailureText(r.error, r.status) ?? ('登録に失敗しました: ' + r.error.message));
       setIsSubmitting(false);
-    } else {
+      return;
+    }
+    {
+      setSubmitSuccess(r.recovered ? 'recovered' : 'new');
+      setFormError('');
+      setTemplateSource(null);
+      setTemplateQueue([]); setBulkTpl(null); setBulkDate('');
+      setExpenses([]);
+      setDraftExpense(emptyDraft);
+      clearDraft(DRAFT_KEYS.expense); // 送信成功で下書きを消す
+      onSubmissionComplete();
+      setIsSubmitting(false);
+    }
+    void (async () => { try {
       // 🚀 Slack通知を送信（通知設定でONの場合のみ）
       if (await shouldSend('expense:new_request', 'slack')) try {
         // Slackメッセージを作成（シンプル版）
@@ -606,18 +635,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       ]);
       await dispatchSiteNotification('expense:new_request', expVars, { applicant: user.id, ...expSite.ids }, insertNotification);
       await dispatchEmail('expense:new_request', expVars, { applicant: user.email || '', ...expMail.emails });
-
-      setSubmitSuccess(true);
-      setFormError('');
-      setTemplateSource(null);
-      setTemplateQueue([]); setBulkTpl(null); setBulkDate('');
-      setExpenses([]);
-      setDraftExpense(emptyDraft);
-      clearDraft(DRAFT_KEYS.expense); // 送信成功で下書きを消す
-      onSubmissionComplete();
-
-      setIsSubmitting(false);
-    }
+    } catch (e) {
+      // 🚨 申請は届いている。お知らせで止まっても本人には出さない（2026-10-20 段2 の決まり）
+      console.error('交通費のお知らせの送信に失敗:', e);
+    } })();
   };
 
   return (
@@ -1060,9 +1081,16 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           style={{ ...primaryBtn({ disabled: isSubmitting || expenses.length === 0 }), width: '100%', marginTop: 12 }}>
           {isSubmitting ? '送信中...' : `申請する${expenses.length > 0 ? `（${expenses.length}件）` : ''}`}
         </button>
+        {isSubmitting && sendSlow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6 }}>{SEND_SLOW_TEXT}</div>}
+        {formWarn && (
+          <div ref={warnRef} style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '12px 16px', marginTop: 12, color: '#856404', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{formWarn}</span>
+            <button type="button" onClick={() => setFormWarn('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#856404', fontSize: 18 }}>✕</button>
+          </div>
+        )}
 
         {submitSuccess && (
-          <BannerSuccess message="登録しました。承認をお待ちください。" onClose={() => setSubmitSuccess(false)} />
+          <BannerSuccess message={submitSuccess === 'recovered' ? `${SEND_DELIVERED_TEXT}${SEND_DELIVERED_SUB}。` : '登録しました。承認をお待ちください。'} onClose={() => setSubmitSuccess(false)} />
         )}
         {bulkDoneMsg && (
           <BannerSuccess message={bulkDoneMsg} onClose={() => setBulkDoneMsg('')} />

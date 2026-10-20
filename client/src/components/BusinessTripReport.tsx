@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { sendFailureText } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { submitOnce } from '../lib/submitOnce';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -248,6 +249,10 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   // 送ったあとに添える「申請の下書きを作成しました」（その日がまだの日の一覧に入ったときだけ・2026-10-14）
   // 報告は送れたが Slack に送れなかったとき（2026-10-16・送れたように見えて届いていない、を防ぐ）
   const [tripWarn, setTripWarn] = useState<string | null>(null);
+  // 届いたか分からない・届いていた（直した内容は送っていない）の黄色い知らせ／8秒を過ぎた灰色の案内／押し直しで届いていたと分かった（2026-10-21 電波 段3）
+  const [sendWarn, setSendWarn] = useState<string | null>(null);
+  const [sendSlow, setSendSlow] = useState(false);
+  const [tripRecovered, setTripRecovered] = useState(false);
   const [tripNote, setTripNote] = useState<{ type: '到着' | '終了'; note: string; action?: { label: string; href: string } } | null>(null);
 
   // ── 履歴タブ ──
@@ -377,7 +382,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   };
 
   const handleSubmit = async () => {
-    setIsSubmitting(true);
+    setIsSubmitting(true); setSendWarn(null); setSendSlow(false);
     try {
       const report: BusinessTripReport = {
         user_id: user.id,
@@ -395,10 +400,20 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         location_option_id: (!useCustomLocation && locationIds[category]?.[location]) || null,
       };
 
-      // 通知をタップして該当の報告へ飛べるようにするため、登録した報告のIDを受け取る
-      const { data: inserted, error } = await supabase
-        .from('business_trip_reports').insert([report]).select('id').single();
-      if (error) throw error;
+      // 🚨 2026-10-21 電波 段3：lib/submitOnce で1回だけ届ける（端末で作る番号・20秒まで・押し直しても2件にならない）。
+      //    番号＝報告の id（通知をタップして該当の報告へ飛ぶのにも使う）
+      const r = await submitOnce({
+        userId: user.id, slot: 'trip', fingerprint: JSON.stringify(report),
+        insert: (id, signal) => supabase.from('business_trip_reports').insert([{ id, ...report }]).abortSignal(signal),
+        exists: (id, signal) => supabase.from('business_trip_reports').select('id').eq('id', id).abortSignal(signal),
+        onSlow: () => setSendSlow(true),
+      });
+      setSendSlow(false);
+      if (r.kind === 'unknown') { setSendWarn(sendUnstableOnceText('送信する')); return; }
+      if (r.kind === 'delivered_changed') { setSendWarn(SEND_DELIVERED_CHANGED_TEXT); return; }
+      if (r.kind === 'rejected') throw r.error;
+      const inserted = { id: r.id };
+      setTripRecovered(r.recovered);
 
       // 終了報告 かつ チャンネルが1つ以上選択されている場合のみSlack送信
       // サイト通知・メール（ON/OFF制御あり）
@@ -708,7 +723,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
       </div>
 
       {submitted && (
-        <BannerSuccess message={tripNote ? `${tripNote.type}の報告を送信しました。` : '報告を送信しました！'}
+        <BannerSuccess message={tripRecovered ? `${SEND_DELIVERED_TEXT}${SEND_DELIVERED_SUB}。` : tripNote ? `${tripNote.type}の報告を送信しました。` : '報告を送信しました！'}
           note={tripNote?.note} action={tripNote?.action} warn={tripWarn}
           onClose={() => { setSubmitted(false); setTripNote(null); setTripWarn(null); }} />
       )}
@@ -1036,6 +1051,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
               </div>
             )}
 
+            {sendWarn && (
+              <div style={{ marginTop: 16, fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px' }}>{sendWarn}</div>
+            )}
             <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
               <button onClick={() => setShowConfirm(false)}
                 style={{ ...backBtn(isDark), flex: 1 }}>
@@ -1046,6 +1064,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
                 {isSubmitting ? '送信中...' : '送信する'}
               </button>
             </div>
+            {isSubmitting && sendSlow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
           </div>
         </div>
       )}

@@ -3,7 +3,8 @@ import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '..
 import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { sendFailureText } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { submitOnce } from '../lib/submitOnce';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, embeddedRole } from '../lib/roleAttrs';
 import type { EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -267,7 +268,7 @@ interface ConfirmData {
   breakMin: number; laborMin: number; reviewerName: string; isSelfReview: boolean;
   applicantName: string; isProxy: boolean;
 }
-const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: () => void; saving: boolean }> = ({ data, onBack, onSubmit, saving }) => {
+const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: () => void; saving: boolean; warn?: string | null; slow?: boolean }> = ({ data, onBack, onSubmit, saving, warn, slow }) => {
   const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : '#fff';
   const text = isDark ? '#fff' : '#1a1a2e';
@@ -341,10 +342,14 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
               <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 報告と同時に受理されます</span>
             </div>
           )}
+          {warn && (
+            <div style={{ marginTop: 16, fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px' }}>{warn}</div>
+          )}
           <button onClick={onSubmit} disabled={saving}
             style={{ ...primaryBtn({ disabled: saving }), width: '100%', marginTop: 20 }}>
             {saving ? '送信中...' : '✓ この内容で報告する'}
           </button>
+          {saving && slow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
         </div>
       </div>
     </div>
@@ -378,7 +383,7 @@ const ShiftReportForm: React.FC<{
   onApplicantChange?: (id: string) => void;
   /** 自分の分を出せるか。🚨 正社員は false（正社員の残業・早退などは残業申請・2026-10-17 ユーザー確定）。パートの方の代わりに出すことはできる */
   allowSelf?: boolean;
-  onClose: () => void; onSaved: () => void;
+  onClose: () => void; onSaved: (recovered?: boolean) => void;
 }> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, initialApplicantId, onApplicantChange, allowSelf = true, onClose, onSaved }) => {
   const navigate = useNavigate();
   // 代理報告＝承認者（役職名では判定しない）。🚨 Hook は || の右に置かない（条件付き呼び出しになる）
@@ -394,6 +399,9 @@ const ShiftReportForm: React.FC<{
   const [staffList, setStaffList]     = useState<Staff[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [saving, setSaving]           = useState(false);
+  // 届いたか分からない・届いていた（直した内容は送っていない）の黄色い知らせ／8秒を過ぎた灰色の案内（2026-10-21 電波 段3）
+  const [sendWarn, setSendWarn] = useState<string | null>(null);
+  const [sendSlow, setSendSlow] = useState(false);
   const [error, setError]             = useState('');
   // 入力エラーの欄を薄赤にする（lib/formHighlight.ts の共通色）
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
@@ -643,7 +651,8 @@ const ShiftReportForm: React.FC<{
   };
 
   const handleSubmit = async () => {
-    setSaving(true);
+    setSaving(true); setSendWarn(null); setSendSlow(false);
+    let recovered = false;
     try {
       const isSelfReview = reviewerId === user.id;
       const now = new Date().toISOString();
@@ -683,7 +692,6 @@ const ShiftReportForm: React.FC<{
       // 確認者へのベルの2行目（新規・再提出で共通）
       const reviewerBellSub = `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`;
       if (editTarget) {
-        await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: changeSummary.trim(), snapshot: editTarget });
         // 更新できたか必ず確認する。権限が足りないと0件更新で静かに失敗し、直したつもりで直っていない事故になる
         const { data: updated, error: updErr } = await supabase.from('shift_reports').update(record).eq('id', editTarget.id).select('id');
         if (updErr || !updated || updated.length === 0) {
@@ -692,6 +700,9 @@ const ShiftReportForm: React.FC<{
           setSaving(false); setShowConfirm(false);
           return;
         }
+        // 🚨 修正の記録は、書き換えが通ってから残す（前は先に残していて、押し直すたびに記録が増えた・2026-10-21）
+        await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: changeSummary.trim(), snapshot: editTarget })
+          .then(...logFail('勤務変更の修正の記録'));
         // 🚨 再提出も確認者へベル（2026-09-27・案A）。それまで新規だけで、再提出は確認者の数字が増えるのに何も届かなかった。
         //    自己受理（その場で確定）のときは確認者の番にならないので送らない。プッシュは新規と同じ種類（文は種類ごとに固定）
         if (!isSelfReview) {
@@ -706,13 +717,27 @@ const ShiftReportForm: React.FC<{
           }).then(...logFail('ベル通知の作成（再提出）'));
         }
       } else {
-        const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
-        if (err) {
+        // 🚨 2026-10-21 電波 段3：lib/submitOnce で1回だけ届ける（端末で作る番号・20秒まで）。
+        //    押し直したとき、届いていた報告を「同じ日付の報告がすでにあります」と出さない（自分の番号の行なら「届いていました」）
+        const fpRecord = { ...record, confirmed_at: undefined };   // 送るたびに変わる時刻は中身の比べに入れない（undefined は JSON に出ない）
+        const r = await submitOnce({
+          userId: user.id, slot: `shift_report:${applicantId}:${date}`, fingerprint: JSON.stringify(fpRecord),
+          insert: (id, signal) => supabase.from('shift_reports').insert({ id, ...record }).abortSignal(signal),
+          exists: (id, signal) => supabase.from('shift_reports').select('id').eq('id', id).abortSignal(signal),
+          onSlow: () => setSendSlow(true),
+        });
+        setSendSlow(false);
+        if (r.kind === 'unknown') { setSendWarn(sendUnstableOnceText('この内容で報告する')); setSaving(false); return; }
+        if (r.kind === 'delivered_changed') { setSendWarn(SEND_DELIVERED_CHANGED_TEXT); setSaving(false); return; }
+        if (r.kind === 'rejected') {
+          const err = r.error;
           console.error('[insert shift_reports] error:', err);
-          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : (approverOnLeaveText(err.message) ?? sendFailureText(err) ?? err.message));
+          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : (approverOnLeaveText(err.message) ?? sendFailureText(err, r.status) ?? err.message));
           setSaving(false); setShowConfirm(false);
           return;
         }
+        const newReport = { id: r.id };
+        recovered = r.recovered;
         if (!isSelfReview) {
           // 通知：レビュアーへ
           supabase.from('notifications').insert({
@@ -741,7 +766,7 @@ const ShiftReportForm: React.FC<{
       }
       if (!editTarget) clearDraft(DRAFT_KEYS.shiftReport); // 送信成功で下書きを消す（新規のみ）
       setSaving(false);
-      onSaved();
+      onSaved(recovered);
     } catch (e) {
       console.error('[handleSubmit] unexpected error:', e);
       setSaving(false);
@@ -1180,9 +1205,11 @@ const ShiftReportForm: React.FC<{
   const confirmModal = showConfirm ? (
     <ConfirmModal
       data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: noPlan, origSegs, actLoc: finalActLoc, actStart, actEnd, actSegs, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
-      onBack={() => setShowConfirm(false)}
+      onBack={() => { setShowConfirm(false); setSendWarn(null); }}
       onSubmit={handleSubmit}
       saving={saving}
+      warn={sendWarn}
+      slow={sendSlow}
     />
   ) : null;
 
@@ -1421,14 +1448,16 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       .then(({ data }) => { if (data) setGroupOptions(data.map((r: { value: string }) => r.value)); });
   }, [fetchMyReports, fetchPending, fetchReviewedReports, fetchProxyReports, fetchAllReports]);
 
-  const handleSaved = () => {
+  const handleSaved = (recovered = false) => {
     setShowForm(false); setEditTarget(null);
     setFormKey(k => k + 1);
     fetchMyReports(); fetchPending(); fetchReviewedReports(); fetchProxyReports(); fetchAllReports();
+    // 押し直して「届いていた」と分かったとき（2026-10-21 電波 段3・ユーザー確定 案A）
+    const deliveredMsg = recovered ? `${SEND_DELIVERED_TEXT}${SEND_DELIVERED_SUB}。` : null;
     if (prefill?.trip) {
       // 出張報告から出したときも、報告タブに残って次の分も出せるようにする（2026-10-14）
       const md = `${Number(prefill.date.slice(5, 7))}/${Number(prefill.date.slice(8, 10))}`;
-      setSuccessMsg(`${md} の出張の勤務変更を出しました。確認者の確認を待ちます ✓`);
+      setSuccessMsg(deliveredMsg ?? `${md} の出張の勤務変更を出しました。確認者の確認を待ちます ✓`);
       setPrefill(null);
       void fetchTripDays();
       return;
@@ -1437,11 +1466,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       // カレンダーの予定から出したときは、報告タブに残って次の分も出せるようにする
       const md = `${Number(prefill.date.slice(5, 7))}/${Number(prefill.date.slice(8, 10))}`;
       const rest = Math.max(0, todoCount - 1);
-      setSuccessMsg(rest > 0 ? `${md} の${ABSENCE_LABEL[prefill.calendarType] ?? '勤務変更'}を出しました（残り ${rest}件）` : 'カレンダーの予定はすべて出しました ✓');
+      setSuccessMsg(deliveredMsg ?? (rest > 0 ? `${md} の${ABSENCE_LABEL[prefill.calendarType] ?? '勤務変更'}を出しました（残り ${rest}件）` : 'カレンダーの予定はすべて出しました ✓'));
       setPrefill(null);
       return;
     }
-    setSuccessMsg('報告を送信しました ✓');
+    setSuccessMsg(deliveredMsg ?? '報告を送信しました ✓');
     setTab('history');
   };
   const reportedDates = useMemo(() => new Set(myReports.map(r => r.work_date)), [myReports]);

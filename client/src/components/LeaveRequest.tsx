@@ -55,7 +55,8 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
-import { sendFailureText } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { submitOnce } from '../lib/submitOnce';
 import LoadFailedNotice from './LoadFailedNotice';
 import EncouragementAnswerModal from './EncouragementAnswerModal';
 import { usualWorkplaceFor } from '../lib/overtimeShift';
@@ -414,6 +415,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [notes, setNotes] = useState(ld?.notes ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null); // 送信失敗のモーダル内インラインエラー（alert廃止）
+  // 届いたか分からない・届いていた（直した内容は送っていない）の黄色い知らせ／8秒を過ぎた灰色の案内／押し直しで届いていたと分かった（2026-10-21 電波 段3）
+  const [submitWarn, setSubmitWarn] = useState<string | null>(null);
+  const [sendSlow, setSendSlow] = useState(false);
+  const [submittedRecovered, setSubmittedRecovered] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   // 完了画面で「誰に相談すればよいか」を名前で出すため、送信した時点の申請先を控える。
@@ -725,7 +730,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
   const handleSubmit = async () => {
-    setSubmitError(null);
+    setSubmitError(null); setSubmitWarn(null); setSendSlow(false);
     setIsSubmitting(true);
     try {
       const startDate = selectedDates[0] || '';
@@ -764,7 +769,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         setIsSubmitting(false);
         return;
       }
-      const { data: newRequest, error } = await supabase.from('leave_requests').insert({
+      // 🚨 2026-10-21 電波 段3：lib/submitOnce で1回だけ届ける（端末で作る番号・20秒まで・押し直しても2件にならない）。
+      //    登録が通った時点で「申請しました」を出し、元の申請の取り消し・Slack・お知らせ・メールは裏で続ける
+      const payload = {
         user_id: user.id,
         leave_type: leaveType,
         leave_type_other: leaveType === 'その他' ? leaveTypeOther : null,
@@ -787,8 +794,24 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         status: 'pending',
         current_approver: 'first',
         approver_id: selectedApproverId,
-      }).select('id').single();
-      if (error) throw error;
+      };
+      const r = await submitOnce({
+        userId: user.id, slot: 'leave', fingerprint: JSON.stringify(payload),
+        insert: (id, signal) => supabase.from('leave_requests').insert({ id, ...payload }).abortSignal(signal),
+        exists: (id, signal) => supabase.from('leave_requests').select('id').eq('id', id).abortSignal(signal),
+        onSlow: () => setSendSlow(true),
+      });
+      setSendSlow(false);
+      if (r.kind === 'unknown') { setSubmitWarn(sendUnstableOnceText('申請する')); return; }
+      if (r.kind === 'delivered_changed') { setSubmitWarn(SEND_DELIVERED_CHANGED_TEXT); return; }
+      if (r.kind === 'rejected') throw r.error;
+      const newRequest = { id: r.id };
+      setSubmittedRecovered(r.recovered);
+      setSubmittedApproverLabel(selectedApprover?.name ?? '');
+      setSubmitted(true);
+      setShowConfirm(false);
+      clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
+      void (async () => { try {
       // 再申請の場合、元申請を取消済みにする
       if (reapplySourceId) {
         // 🚨 ここが失敗すると、元の申請が残ったまま新しい申請も並び、二重申請になる。
@@ -831,12 +854,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // 「申請先（承認者）」のときサイト通知が誰にも届いていなかった
       await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, [apprKey]: selectedApprover?.id, approver: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
       await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, [apprKey]: leaderEmail, approver: leaderEmail });
-      // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
-      setSubmittedApproverLabel(selectedApprover?.name ?? '');
-      setSubmitted(true);
-      setShowConfirm(false);
-      clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
       fetchReceivedReqs(); // 同じ日の依頼は DB のトリガーが「申請済み」にしているので、カードを読み直して消す（2026-09-26）
+      } catch (e) {
+        // 🚨 申請は届いている。お知らせで止まっても申請の失敗にしない（2026-10-20 段2 の決まり）
+        console.error('休暇申請のお知らせの送信に失敗:', e);
+      } })();
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err));
       setSubmitError(dayOffConflictText(errMsg) ?? approverOnLeaveText(errMsg) ?? sendFailureText(err) ?? ('送信に失敗しました。' + errMsg));
@@ -908,7 +930,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   if (submitted) {
     return (
       <BannerSuccess
-        message="申請しました"
+        message={submittedRecovered ? `${SEND_DELIVERED_TEXT}${SEND_DELIVERED_SUB}。` : '申請しました'}
         note={submittedApproverLabel
           ? `⚠️ このあと 申請先「${submittedApproverLabel}さん」へ直接相談してください。`
           : '⚠️ このあと 申請先へ直接相談してください。'}
@@ -2280,6 +2302,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             {submitError && (
               <div style={{ marginBottom: 12, fontSize: 13, color: '#dc3545', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6, padding: '8px 12px' }}>⚠️ {submitError}</div>
             )}
+            {submitWarn && (
+              <div style={{ marginBottom: 12, fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px' }}>{submitWarn}</div>
+            )}
             <div style={{ display: 'flex', gap: 12 }}>
               <button
                 onClick={() => setShowConfirm(false)}
@@ -2295,6 +2320,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {isSubmitting ? '送信中...' : '申請する'}
               </button>
             </div>
+            {isSubmitting && sendSlow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
           </div>
         </div>
       )}

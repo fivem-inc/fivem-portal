@@ -8,7 +8,7 @@ import AppRequestCard from '../components/AppRequestCard';
 import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
-import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure } from '../lib/netFailure';
+import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_SLOW_TEXT } from '../lib/netFailure';
 import LoadFailedNotice from '../components/LoadFailedNotice';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
@@ -761,6 +761,9 @@ const OvertimeForm: React.FC<{
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [saving, setSaving] = useState(false);
+  // 届いたか分からない・届いていた（直した内容は送っていない）の黄色い知らせ／8秒を過ぎた灰色の案内（2026-10-21 電波 段3）
+  const [sendWarn, setSendWarn] = useState('');
+  const [sendSlow, setSendSlow] = useState(false);
   // 「申請どおりに勤務しました」を押したら送るボタンまで画面を動かして光らせる（送るのは本人が押したとき）
   const submitBtnRef = useRef<HTMLButtonElement | null>(null);
   const [submitFlash, setSubmitFlash] = useState(false);
@@ -1423,8 +1426,10 @@ const OvertimeForm: React.FC<{
       }, toDbTime);
 
       // 🚨 書き込み（新規の登録／実績報告・再提出の書き換え／時間帯）は lib/overtimeSubmitApi の saveOvertimeReport（表の入力と共用）
+      setSendWarn(''); setSendSlow(false);
       const saved = await saveOvertimeReport({
         userId: user.id, record, phase,
+        onSlow: () => setSendSlow(true), buttonLabel: '送信する',
         // 終日（調整休・欠勤）は時間帯を持たない
         segments: fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments),
         edit: editTarget ? {
@@ -1447,6 +1452,9 @@ const OvertimeForm: React.FC<{
           .eq('id', draft.applicationRequestId).eq('status', 'open').select('id');
         if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
       }
+      setSendSlow(false);
+      // 届いたか分からない・届いていた（直した内容は送っていない）は、確認の窓を開いたまま黄色で出す（もう一度［送信する］を押せる）
+      if (!saved.ok && (saved.stage === 'unknown' || saved.stage === 'delivered_changed')) { setSendWarn(saved.message); setSaving(false); return; }
       if (!saved.ok) { setError(saved.message); setSaving(false); setShowConfirm(false); return; }
       const reportId = saved.reportId;
 
@@ -1517,7 +1525,8 @@ const OvertimeForm: React.FC<{
       if (!editTarget) clearDraft(DRAFT_KEYS.overtime);
       setSaving(false);
       const reviewerName = reviewers.find(r => r.id === reviewerId)?.name ?? '';
-      onSaved(gcalWarn, asPlanned ? '予定どおりなので、受理を待たずに確認済みになりました'
+      onSaved(gcalWarn, saved.recovered ? `${SEND_DELIVERED_TEXT}${SEND_DELIVERED_SUB}。`
+        : asPlanned ? '予定どおりなので、受理を待たずに確認済みになりました'
         : tripConfirmed ? 'シフト表どおりの出張のため、受理なしで確定しました'
         : trip ? `${reviewerName ? `${reviewerName}さんの` : ''}受理を待ちます${trip.reason ? `（受理が要る理由：${trip.reason}）` : ''}`
         : undefined);
@@ -2902,8 +2911,11 @@ const OvertimeForm: React.FC<{
               <TypeChips types={applicationTypes} isDark={isDark} situation={{ late_situation: lateChoice, early_situation: earlyChoice }} />
             </div>
           )}
+          {sendWarn && (
+            <div style={{ margin: '0 0 10px', fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px' }}>{sendWarn}</div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setShowConfirm(false)} disabled={saving}
+            <button onClick={() => { setShowConfirm(false); setSendWarn(''); }} disabled={saving}
               style={{ ...backBtn(isDark), flex: 1 }}>
               戻る
             </button>
@@ -2912,6 +2924,7 @@ const OvertimeForm: React.FC<{
               {saving ? '送信中…' : '送信する'}
             </button>
           </div>
+          {saving && sendSlow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
         </div>
       )}
       </>
