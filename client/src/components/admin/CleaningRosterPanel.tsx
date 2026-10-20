@@ -273,7 +273,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const ackControls = (row: CleaningRow, day: RosterDayKind, key: string) => {
     const nk = `${row.id}|${day}|${key}`;
     return (
-      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ display: 'flex', flexBasis: '100%', gap: 6, alignItems: 'center', flexWrap: 'wrap', paddingLeft: 20 }}>
         <input type="text" maxLength={200} value={ackNotes[nk] ?? ''} placeholder="理由（任意）"
           onChange={e => setAckNotes(prev => ({ ...prev, [nk]: e.target.value }))}
           style={{ ...inputStyle, fontSize: 12, padding: '2px 6px', width: 260 }} />
