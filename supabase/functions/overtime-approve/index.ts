@@ -62,7 +62,9 @@ serve(async (req) => {
     // shift_not_needed：終日（時間外調整休・振替休日・欠勤）を受理するときの「シフト調整：調整不要」（2026-10-13）
     // on_behalf：経理（管理者）が申請先の上長に代わって受理する（2026-10-14 ユーザー確定）。
     //   受理は今までどおり。足すのは ①履歴に「経理が代わりに受理」 ②元の申請先へベル（スマホなし・読めば済む）
-    const { report_id, action, comment, shift_not_needed, on_behalf } = await req.json()
+    // shift_needed：遅出・早退・勤務地変更を事前申請の受理で「シフト調整：必要」にする（2026-10-20・docs/計画-遅出早退勤務地変更のシフト調整.md）。
+    //   🚨 送られてこない（undefined）なら何もしない＝古い画面でも壊れない。true で条件に合わないときは黙って捨てずにエラーにする
+    const { report_id, action, comment, shift_not_needed, on_behalf, shift_needed } = await req.json()
     if (!report_id || !['approve', 'return', 'cancel'].includes(action)) {
       return json({ success: false, error: '不正なリクエストです' }, 400)
     }
@@ -73,7 +75,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey)
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -127,18 +129,32 @@ serve(async (req) => {
       const next: Record<string, unknown> = (isAdvance && !isFullDay)
         ? { status: 'request_confirmed', request_confirmed_at: new Date().toISOString() }
         : { status: 'confirmed', confirmed_by: caller.id, confirmed_at: new Date().toISOString() }
+      // 「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者か（休暇の受理と同じ）
+      const canShiftAdjust = async (): Promise<boolean> => {
+        if (isAdmin) return true
+        const { data: me } = await db.from('profiles').select('role_id').eq('id', caller.id).maybeSingle()
+        if (!me?.role_id) return false
+        const { data: fp } = await db.from('feature_permissions').select('enabled')
+          .eq('role_id', me.role_id).eq('feature_key', 'leave_shift_adjust').maybeSingle()
+        return fp?.enabled === true
+      }
+      // 遅出・早退・勤務地変更の事前申請を受理するときの「シフト調整：必要」（2026-10-20）。受理と同じ1回の保存で書く。
+      // 🚨 条件（DB の見張り enforce_overtime_shift_needed と同じ）：事前申請の受理・終日を含まない・遅出などを含む・事後報告でない・出張報告からでない・今日以降
+      if (shift_needed === true) {
+        const PARTIAL = ['location_change', 'late_start_adj', 'tardiness', 'early_end_adj', 'early_leave']
+        const todayJst = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
+        const okCase = isAdvance && !isFullDay && types.some(t => PARTIAL.includes(t))
+          && r.is_post_hoc !== true && !r.from_trip_date && String(r.work_date) >= todayJst
+        if (!okCase) return json({ success: false, error: 'この申請では、シフト調整を選べません（遅出・早退・勤務地変更を含む、今日以降の事前申請だけです）' }, 400)
+        if (!(await canShiftAdjust())) return json({ success: false, error: 'シフト調整の「必要」を選べるのは、シフト調整の権限がある方だけです' }, 403)
+        next.shift_adjust_needed = true
+        next.shift_adjusted_by = caller.id
+        next.shift_adjusted_at = new Date().toISOString()
+      }
       // 終日の受理で「調整不要」を選んだとき（2026-10-13）。受理と同じ1回の保存で書く（別々だと受理だけ通ることがある）。
       // 🚨 選べるのは「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者だけ（休暇の受理と同じ）
       if (isFullDay && shift_not_needed === true) {
-        let canShift = isAdmin
-        if (!canShift) {
-          const { data: me } = await db.from('profiles').select('role_id').eq('id', caller.id).maybeSingle()
-          if (me?.role_id) {
-            const { data: fp } = await db.from('feature_permissions').select('enabled')
-              .eq('role_id', me.role_id).eq('feature_key', 'leave_shift_adjust').maybeSingle()
-            canShift = fp?.enabled === true
-          }
-        }
+        const canShift = await canShiftAdjust()
         if (canShift) {
           next.shift_adjust_not_needed = true
           next.shift_adjusted_by = caller.id
