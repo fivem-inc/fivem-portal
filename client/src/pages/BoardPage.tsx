@@ -4676,7 +4676,9 @@ const BoardPage: React.FC = () => {
             <span style={{ fontSize: 11, color: subColor }}>{showOptionsExpanded ? '▲ 閉じる' : '▼ 開く'}</span>
           </button>
           {showOptionsExpanded && (
-            <div style={{ padding: '10px 12px', background: inputBg, borderRadius: '0 0 8px 8px', border: `1px solid ${border}`, borderTop: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            // 🚨 高さの上限と中のスクロール（2026-10-20）。上限が無いと、開いた中身が下の入力欄ごと画面の外へ押し出され、
+            //    期限日・送信予約・［送信］が見えなくなっていた（パソコンの低いウィンドウ・社長の実機）
+            <div style={{ padding: '10px 12px', background: inputBg, borderRadius: '0 0 8px 8px', border: `1px solid ${border}`, borderTop: 'none', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '40vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
               {/* 件名 */}
               <div>
                 <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>件名（省略可）</div>
