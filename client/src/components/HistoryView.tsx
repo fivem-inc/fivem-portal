@@ -1,19 +1,25 @@
 import React, { useState, useCallback } from 'react';
 import type { Submission, AuthUser } from '../types';
 import { groupSubmissionsByYearAndMonth, formatAmount } from '../utils';
+import LoadFailedNotice from './LoadFailedNotice';
 
 interface HistoryViewProps {
   submissions: Submission[];
   user: AuthUser | null;
   isLoading: boolean;
   onApplyTemplate: (submission: Submission) => void;
+  /** 読み込みに失敗したとき（2026-10-20）。🚨 前の一覧が残っていても、最新でないことを出す */
+  loadFailed?: boolean;
+  onRetry?: () => void;
 }
 
 const HistoryView: React.FC<HistoryViewProps> = ({ 
   submissions, 
   user, 
   isLoading, 
-  onApplyTemplate 
+  onApplyTemplate,
+  loadFailed = false,
+  onRetry,
 }) => {
   const [expandedUserYears, setExpandedUserYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
@@ -57,6 +63,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({
       }}>
         過去の申請をテンプレートとして使用できます。申請項目の「テンプレ適用」ボタンをクリックしてください。
       </p>
+      {!isLoading && loadFailed && onRetry && <LoadFailedNotice onRetry={onRetry} />}
       {isLoading ? (
         <p>読み込み中...</p>
       ) : (

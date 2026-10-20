@@ -91,7 +91,7 @@ import { usePurchaseUnconfirmedCount } from './hooks/usePurchaseUnconfirmedCount
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
 import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
 import { formatSnapshotAge } from './lib/safetyStorage';
-import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
+import { withTimeout, SAFETY_TIMEOUT_MS, BELL_LOAD_FAILED_TEXT } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
@@ -536,6 +536,8 @@ interface NotificationRow { id: string; message: string; sub_message: string | n
 
 const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useStickyState<NotificationRow[]>('bell:' + userId, []);
+  // 🚨 読めなかったときに「通知はありません」と出さない（2026-10-20・電波 段2）
+  const [bellFailed, setBellFailed] = useState(false);
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -548,7 +550,8 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const [dropRect, setDropRect] = useState<DOMRect | null>(null);
 
   const fetchNotifs = useCallback(async () => {
-    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id, event_key').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
+    const { data, error } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id, event_key').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
+    setBellFailed(!!error);
     if (data) setNotifs(data);
   }, [userId, setNotifs]);
 
@@ -668,8 +671,11 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
             <span style={{ fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知の履歴</span>
             <span style={{ fontSize: 10.5, color: '#9aa3ad' }}>既読は30日で自動削除</span>
           </div>
+          {bellFailed && (
+            <div style={{ padding: '8px 14px', borderBottom: '1px solid #f5c2c7', background: '#f8d7da', color: '#842029', fontSize: 12.5, lineHeight: 1.6 }}>{BELL_LOAD_FAILED_TEXT}</div>
+          )}
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            {notifs.length === 0 ? (
+            {notifs.length === 0 ? (bellFailed ? null :
               <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
             ) : [...notifs.filter(n => !n.read), ...notifs.filter(n => n.read)].map((n, i, arr) => (
               // 🚨 未読を上に、線で区切って既読を下に（どちらも新しい順・2026-09-30 ユーザー確定）。
@@ -2334,7 +2340,7 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
     mo.observe(el, { childList: true, subtree: true, characterData: true });
     return () => mo.disconnect();
   }, [mode]);
-  const { submissions, isLoading, fetchExpenses, rejectionNotice, clearRejectionNotice } = useExpenses(user, isAdmin);
+  const { submissions, isLoading, loadFailed: expensesLoadFailed, fetchExpenses, rejectionNotice, clearRejectionNotice } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
@@ -2591,6 +2597,8 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
           user={user}
           isLoading={isLoading}
           onApplyTemplate={handleApplyTemplate}
+          loadFailed={expensesLoadFailed}
+          onRetry={fetchExpenses}
         />
       </Suspense>
 

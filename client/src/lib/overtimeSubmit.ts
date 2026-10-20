@@ -8,6 +8,7 @@
 // 🚨 文言は1件フォームの赤い欄のハイライト（ERR_FIELD_BY_MSG）が完全一致で引いている。1文字も変えないこと。
 
 import { dayOffConflictText } from './dayOffConflictText';
+import { sendFailureText } from './netFailure';
 import { approverOnLeaveText } from './staffLeave';
 import {
   timeToMin, minToTime, formatMin,
@@ -534,5 +535,8 @@ export function friendlyOvertimeDbError(msg: string, code?: string): string {
   if (msg.includes('FURIKAE_DUP_SAME_ORIGIN')) return '振替元の日は、すでに別の振替休日の振替元になっています。同じ日を2回振り替えることはできません。';
   if (msg.includes('FURIKAE_DUP_WORKDATE')) return 'この日は振替休日の振替元として申請済みです。二重計上になるため、この日は別途申請できません。';
   if (code === '23505') return '同じ日付の申請がすでにあります（取消済みを除く）';
+  // 通信のせいなら英語の文を出さない（2026-10-20）
+  const net = sendFailureText({ message: msg, code: code ?? '' });
+  if (net) return net;
   return '保存に失敗しました: ' + msg;
 }

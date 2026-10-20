@@ -6,6 +6,8 @@ interface UseExpensesReturn {
   submissions: Submission[];
   pendingApprovals: PendingApproval[];
   isLoading: boolean;
+  /** 直近の読み込みに失敗したか（2026-10-20・電波 段2）。🚨 失敗したときは前の一覧を消さない（空にすると「消えた」と思って出し直す） */
+  loadFailed: boolean;
   fetchExpenses: () => Promise<void>;
   rejectionNotice: string | null;      // 却下通知（alert廃止・消費側でトースト表示）
   clearRejectionNotice: () => void;
@@ -15,6 +17,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [rejectionNotice, setRejectionNotice] = useState<string | null>(null);
 
   const fetchExpenses = useCallback(async () => {
@@ -23,6 +26,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
     setIsLoading(true);
     let expensesToSet: Submission[] = [];
     let pendingApprovalsToSet: PendingApproval[] = [];
+    let failed = false;
 
     try {
       if (isAdmin) {
@@ -36,6 +40,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
 
         if (allError) {
           console.error('Error fetching all expenses:', allError);
+          failed = true;
         } else {
           expensesToSet = allData || [];
           pendingApprovalsToSet = allData?.filter(s => s.status === 'pending') || [];
@@ -52,6 +57,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
 
         if (myError) {
           console.error('Error fetching your expenses:', myError);
+          failed = true;
         } else {
           expensesToSet = myData || [];
           
@@ -91,9 +97,14 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
       }
     } catch (error) {
       console.error('Unexpected error fetching expenses:', error);
+      failed = true;
     } finally {
-      setSubmissions(expensesToSet);
-      setPendingApprovals(pendingApprovalsToSet);
+      // 🚨 読めなかったときは前の一覧を残す（空で上書きしない）
+      if (!failed) {
+        setSubmissions(expensesToSet);
+        setPendingApprovals(pendingApprovalsToSet);
+      }
+      setLoadFailed(failed);
       setIsLoading(false);
     }
   }, [user, isAdmin]);
@@ -106,6 +117,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
     submissions,
     pendingApprovals,
     isLoading,
+    loadFailed,
     fetchExpenses,
     rejectionNotice,
     clearRejectionNotice: () => setRejectionNotice(null)

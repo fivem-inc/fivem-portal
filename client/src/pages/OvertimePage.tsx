@@ -8,6 +8,8 @@ import AppRequestCard from '../components/AppRequestCard';
 import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
+import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure } from '../lib/netFailure';
+import LoadFailedNotice from '../components/LoadFailedNotice';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
 import ClockInquiryResponse, { type ClockInquiryHint } from '../components/ClockInquiryResponse';
@@ -3066,7 +3068,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     //    管理者は自分の履歴を全期間見られるので、今までどおり新しい順100件
     q = isAdmin ? q.limit(100) : q.gte('pay_period_start', shiftPayPeriod(currentPeriod, -1)).limit(1000);
     const { data, error } = await q;
-    if (error) { setLoadError('履歴の読み込みに失敗しました：' + error.message); return; }
+    // 🚨 英語の文を出さない・読めなかったときに「ありません」と出さない（2026-10-20・電波 段2）
+    if (error) { console.error('[残業] 履歴を読み込めませんでした:', error.message); setLoadError(HISTORY_LOAD_FAILED_TEXT); return; }
     setLoadError('');
     setReports((data as OvertimeReport[] | null) ?? []);
   }, [user.id, isAdmin, currentPeriod]);
@@ -3081,7 +3084,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       .eq('entry_type', 'manual')
       .in('status', ['requested', 'reported'])
       .order('work_date', { ascending: true });
-    if (error) { setLoadError('確認待ちの読み込みに失敗しました：' + error.message); return; }
+    if (error) { setLoadError(isNetworkFailure(error) ? '確認待ちを読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。' : '確認待ちの読み込みに失敗しました：' + error.message); return; }
     setPendingForMe((data as OvertimeReport[] | null) ?? []);
   }, [user.id]);
 
@@ -4494,7 +4497,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   )}
 
                   {/* 履歴リスト */}
-                  {ownHistory.length === 0 && (
+                  {ownHistory.length === 0 && !loadError && (
                     <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>まだ申請・報告はありません</p>
                   )}
                   {(() => {
@@ -4836,7 +4839,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           ))}
                         </select>
                       </div>
-                      {ownHistory.length === 0 && (
+                      {ownHistory.length === 0 && !loadError && (
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
                       )}
                       {/* 📩 自分あての申請の依頼（2026-09-09）。
@@ -5264,6 +5267,7 @@ const MemberDetailView: React.FC<{
   const [rows, setRows] = useState<OvertimeReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);   // ［再読み込み］（2026-10-20）
   const [denied, setDenied] = useState(false);
   const roles = useRoles();
   const [showPropose, setShowPropose] = useState(false);
@@ -5299,13 +5303,13 @@ const MemberDetailView: React.FC<{
         .eq('pay_period_start', period)
         .order('work_date', { ascending: false });
       if (!alive) return;
-      if (error) { setLoadError('履歴の読み込みに失敗しました：' + error.message); setLoading(false); return; }
+      if (error) { console.error('[残業] 期間の履歴を読み込めませんでした:', error.message); setLoadError(HISTORY_LOAD_FAILED_TEXT); setLoading(false); return; }
       setLoadError('');
       setRows((data as OvertimeReport[] | null) ?? []);
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [userId, period]);
+  }, [userId, period, reloadKey]);
 
   const b = useMemo(() => computeBalance(rows, period), [rows, period]);
   // 取消済みは表示しない。差し戻しは表示する。
@@ -5412,10 +5416,10 @@ const MemberDetailView: React.FC<{
         />
       )}
 
-      {loadError && <p style={{ margin: '8px 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>{loadError}</p>}
+      {loadError && <LoadFailedNotice text={loadError} onRetry={() => setReloadKey(n => n + 1)} />}
       {loading ? (
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
-      ) : visible.length === 0 ? (
+      ) : visible.length === 0 ? (loadError ? null :
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>この期間の申請・報告はありません</p>
       ) : (
         <>

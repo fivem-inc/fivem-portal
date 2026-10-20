@@ -46,3 +46,34 @@ export const SAFETY_TIMEOUT_MS = 10000;
 
 /** ログイン時の在籍確認に使う上限。ここが返らないと起動画面から進めないため更に短く。 */
 export const AUTH_TIMEOUT_MS = 6000;
+
+// ---------------- 送信・読み込みに失敗したときの文（2026-10-20・電波 段2・文言はユーザー確定） ----------------
+// 🚨 ブラウザの英語（「TypeError: Load failed」など）をそのまま画面に出さない。
+//    「通信」「通信環境の良い場所で」にそろえる（アプリ全体の言い方・ユーザー確定）。安否確認の画面だけは「電波」のまま
+
+/** 通信がつながっていないと分かるとき（端末が圏外と言っている） */
+export const SEND_OFFLINE_TEXT = '通信がつながっていないため、送信できませんでした。入力した内容は残っています。通信環境の良い場所で、もう一度送信してください。';
+/** 通信が不安定で、届いたか分からないとき */
+export const SEND_UNSTABLE_TEXT = '通信が不安定なため、送信できたか確認できませんでした。入力した内容は残っています。履歴に出ていないことを確かめてから、もう一度送信してください。';
+/** 履歴を読み込めなかったとき（「ありません」と出さない） */
+export const HISTORY_LOAD_FAILED_TEXT = '履歴を読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
+/** ベルの一覧を読み込めなかったとき */
+export const BELL_LOAD_FAILED_TEXT = '通知を読み込めませんでした。通信環境の良い場所で、もう一度開いてください。';
+
+/** 通信のせいの失敗か（Supabase は通信が届かないと status 0・文の頭が「TypeError:」「AbortError:」「FetchError:」になる） */
+export function isNetworkFailure(error: unknown, status?: number | null): boolean {
+  if (!error) return false;
+  if (status === 0) return true;
+  if (status != null && (status >= 500 || status === 408 || status === 429)) return true;
+  if (status != null) return false;
+  const e = error as { name?: string; message?: string; code?: string };
+  if (e.name === 'TypeError' || e.name === 'AbortError') return true;
+  return /^(TypeError|AbortError|FetchError):/.test(String(e.message ?? '')) && !e.code;
+}
+
+/** 送信に失敗したときの文。通信のせいでなければ null（呼ぶ側の今までの文を出す） */
+export function sendFailureText(error: unknown, status?: number | null): string | null {
+  if (!isNetworkFailure(error, status)) return null;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return SEND_OFFLINE_TEXT;
+  return SEND_UNSTABLE_TEXT;
+}

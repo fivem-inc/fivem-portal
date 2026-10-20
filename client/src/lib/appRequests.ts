@@ -7,6 +7,7 @@
 //    （同じ人・同じ種類・同じ日）。画面は結び付けない。
 
 import { supabase } from './supabaseClient';
+import { isNetworkFailure } from './netFailure';
 import { insertNotification } from './notifications';
 import type { SegmentLike } from './segmentsText';
 
@@ -62,7 +63,8 @@ export async function loadReceivedAppRequests(userId: string, kind?: AppRequestK
     .order('created_at', { ascending: true });
   if (kind) q = q.eq('kind', kind);
   const { data, error } = await q;
-  if (error) return { rows: [], error: '依頼を読み込めませんでした：' + error.message };
+  // 通信のせいなら英語の文を出さない（2026-10-20・電波 段2）
+  if (error) return { rows: [], error: isNetworkFailure(error) ? '依頼を読み込めませんでした。通信環境の良い場所で、もう一度開いてください。' : '依頼を読み込めませんでした：' + error.message };
   const rows = (data ?? []) as Omit<ReceivedAppRequest, 'requester_name'>[];
   const ids = [...new Set(rows.map(r => r.requester_id))];
   const nameOf = new Map<string, string>();

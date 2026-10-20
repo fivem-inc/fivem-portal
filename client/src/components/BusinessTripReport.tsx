@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { sendFailureText } from '../lib/netFailure';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -401,7 +402,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
 
       // 終了報告 かつ チャンネルが1つ以上選択されている場合のみSlack送信
       // サイト通知・メール（ON/OFF制御あり）
-      {
+      // 🚨 ここから下は「登録は通ったあと」。通知で止まっても「送信に失敗」と出さない（出すと2回目の報告ができてしまう・2026-10-20）。
+      //    通知が送れなかったことは本人には出さず、記録（console）にだけ残す（本人にできることが無い・ユーザー確定 案1）
+      try {
         // 到着／終了で別のイベントにする（ON/OFFと宛先を別々に設定できるようにするため）。
         // 以前は終了報告にしか通知が無く、到着報告は何も送っていなかった
         const tripEventKey = reportType === '終了' ? 'trip:report_end' : 'trip:report_arrival';
@@ -420,6 +423,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
           'trip_report', inserted?.id,
         );
         await dispatchEmail(tripEventKey, tripVars, { applicant: user.email || '', ...tripMail.emails });
+      } catch (e) {
+        console.error('[出張報告] 通知の送信で止まりました（報告は登録済み）:', e);
       }
       // Slack: 申請者が画面上でチャンネルを手動選択して送信する仕組みのため、ON/OFFチェック対象外
       // 🚨 invoke は 4xx/5xx でも throw しない。error を見ないと、送れていないのに「送信しました」だけが出る（2026-10-16）
@@ -450,8 +455,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
       setSelectedChannels([]); setGps(null); setAddress(null);
       setGpsAttempted(false); setGpsUnavailable(false);
       clearDraft(DRAFT_KEYS.trip); // 送信成功で下書きを消す
-    } catch {
-      setFormError('送信に失敗しました。もう一度試してください。');
+    } catch (e) {
+      setFormError(sendFailureText(e) ?? '送信に失敗しました。もう一度試してください。');
     } finally {
       setIsSubmitting(false);
     }

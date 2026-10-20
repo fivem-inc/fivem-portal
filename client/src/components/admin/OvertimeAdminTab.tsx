@@ -396,7 +396,11 @@ const OvertimeAdminTab: React.FC = () => {
       const proxy = (r.hist ?? []).some(h => h.change_kind === 'approved');
       const who = (id: string) => id === r.applicant_id ? '自己受理（自分で確認）' : (nameMap[id] || '不明');
       const lines: ApprovedLine[] = [];
-      if (r.status === 'confirmed' && r.confirmed_by) {
+      // 🚨 打刻ズレの記録（残業なし）は、送信した時点で本人の記録として確定する（受理の手続きが無い）。
+      //    「自己受理」と出すと、一般の方が受理したように読める（2026-10-20 ユーザー確定 案C）
+      if (r.status === 'confirmed' && r.confirmed_by === r.applicant_id && (r.application_types ?? []).includes('clock_only')) {
+        lines.push({ label: '確定', name: '本人の記録（打刻ズレ）', at: r.confirmed_at });
+      } else if (r.status === 'confirmed' && r.confirmed_by) {
         lines.push({ label: '受理', name: who(r.confirmed_by) + (proxy && r.confirmed_by !== r.applicant_id ? '（経理が代わりに）' : ''), at: r.confirmed_at });
       } else if ((r.status === 'request_confirmed' || r.status === 'reported') && r.request_confirmed_at) {
         lines.push({ label: '受理', name: proxy ? '経理が代わりに' : (r.reviewer_id ? who(r.reviewer_id) : '—'), at: r.request_confirmed_at });

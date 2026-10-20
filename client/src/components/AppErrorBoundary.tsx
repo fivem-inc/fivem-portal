@@ -5,7 +5,7 @@ import { isChunkLoadError, recoverFromChunkError, isServerReachable, justReloade
 // 🚨 これが無いと、どこかで1つ落ちただけで React が画面の中身をまるごと消し、背景の黒（白）だけが残る。
 //    いちばん多いのは、新しい版を出した直後に古い画面のまま別のページを開いたとき（lib/chunkReload.ts）。
 // ・部品が読み込めなかったとき … サーバーに届けば1回だけ自動で読み込み直す（押したページが新しい版で開く）
-//   🚨 圏外・電波が弱いせいなら読み込み直さない（読み込み直すとアプリごと消える）。「電波のある所で［もう一度開く］」を出す
+//   🚨 圏外・電波が弱いせいなら読み込み直さない（読み込み直すとアプリごと消える）。「通信環境の良い場所で［もう一度開く］」を出す（文は「通信」にそろえる・2026-10-20 ユーザー確定）
 // ・それでもだめなとき・ほかの理由で落ちたとき … 案内と［更新する］を出す（行き止まりにしない）
 //
 // scope='app'   … main.tsx でアプリ全体を包む（最後の網）
@@ -59,13 +59,13 @@ class AppErrorBoundary extends React.Component<Props, State> {
             <p style={{ fontSize: 14, margin: 0 }}>{phase === 'reloading' ? '新しいバージョンを読み込んでいます…' : '読み込んでいます…'}</p>
           ) : phase === 'offline' ? (
             <>
-              <p style={{ fontSize: 15, fontWeight: 'bold', margin: '0 0 8px' }}>電波が届かないため、このページを開けませんでした</p>
+              <p style={{ fontSize: 15, fontWeight: 'bold', margin: '0 0 8px' }}>通信がつながらないため、このページを開けませんでした</p>
               <p style={{ fontSize: 13, lineHeight: 1.7, margin: '0 0 14px', color: '#555' }}>
-                電波のある所で［もう一度開く］を押してください。
+                通信環境の良い場所で［もう一度開く］を押してください。
               </p>
               {stillOffline && (
                 <p style={{ fontSize: 12.5, margin: '0 0 10px', color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '6px 8px' }}>
-                  まだ電波が届いていません。
+                  まだ通信がつながっていません。
                 </p>
               )}
               <button type="button" onClick={this.retry} disabled={retrying}

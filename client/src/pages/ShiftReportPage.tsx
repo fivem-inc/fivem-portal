@@ -3,6 +3,7 @@ import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '..
 import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { sendFailureText } from '../lib/netFailure';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, embeddedRole } from '../lib/roleAttrs';
 import type { EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -708,7 +709,7 @@ const ShiftReportForm: React.FC<{
         const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
         if (err) {
           console.error('[insert shift_reports] error:', err);
-          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : (approverOnLeaveText(err.message) ?? err.message));
+          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : (approverOnLeaveText(err.message) ?? sendFailureText(err) ?? err.message));
           setSaving(false); setShowConfirm(false);
           return;
         }

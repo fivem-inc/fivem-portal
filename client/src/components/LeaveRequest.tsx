@@ -55,6 +55,8 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
+import { sendFailureText } from '../lib/netFailure';
+import LoadFailedNotice from './LoadFailedNotice';
 import EncouragementAnswerModal from './EncouragementAnswerModal';
 import { usualWorkplaceFor } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
@@ -586,6 +588,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     window.scrollTo({ top: 0 });
   };
   const [loadingHistory, setLoadingHistory] = useState(false);
+  // 🚨 読めなかったときに「申請履歴はありません」と出さない（2026-10-20・電波 段2）。［再読み込み］は historyReload を1つ進める
+  const [historyFailed, setHistoryFailed] = useState(false);
+  const [historyReload, setHistoryReload] = useState(0);
   const [adjHistory, setAdjHistory] = useState<{ id: string; date: string; type: string; actual_time: string | null; notes: string | null; created_at: string }[]>([]);
   const [historySubTab, setHistorySubTab] = useState<'leave' | 'adjustment'>('leave');
   const [openFiscalYears, setOpenFiscalYears] = useState<Record<string, boolean>>({});
@@ -646,6 +651,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
+      setHistoryFailed(!!error);
+      if (error) console.error('[休暇] 履歴を読み込めませんでした:', error.message);
       if (!error && data) {
         const allIds = [...new Set([
           ...data.map((r: AdminLeaveRequest) => r.approver_id),
@@ -674,7 +681,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       setLoadingHistory(false);
     };
     fetchHistory();
-  }, [tab, user.id]);
+  }, [tab, user.id, historyReload]);
 
   // 各申請に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
   const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
@@ -832,7 +839,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       fetchReceivedReqs(); // 同じ日の依頼は DB のトリガーが「申請済み」にしているので、カードを読み直して消す（2026-09-26）
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err));
-      setSubmitError(dayOffConflictText(errMsg) ?? approverOnLeaveText(errMsg) ?? ('送信に失敗しました。' + errMsg));
+      setSubmitError(dayOffConflictText(errMsg) ?? approverOnLeaveText(errMsg) ?? sendFailureText(err) ?? ('送信に失敗しました。' + errMsg));
     } finally {
       setIsSubmitting(false);
     }
@@ -2048,9 +2055,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             );
           })()}
 
+          {!loadingHistory && historyFailed && <LoadFailedNotice onRetry={() => setHistoryReload(n => n + 1)} />}
           {loadingHistory ? (
             <p style={{ textAlign: 'center', color: subText }}>読み込み中...</p>
-          ) : history.length === 0 ? (
+          ) : historyFailed && history.length === 0 ? null : history.length === 0 ? (
             <p style={{ textAlign: 'center', color: subText }}>申請履歴はありません</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

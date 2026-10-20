@@ -18,6 +18,7 @@ const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ mes
 import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
+import { sendFailureText } from '../lib/netFailure';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
@@ -551,12 +552,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     setIsSubmitting(true);
     const expensesToSubmit = confirmedExpenses;
 
-    const { error } = await supabase.from('expenses').insert([
+    const { error, status } = await supabase.from('expenses').insert([
       { user_id: user.id, expenses_data: expensesToSubmit, status: 'pending' }
     ]);
 
     if (error) {
-      setFormError('登録に失敗しました: ' + error.message);
+      // 🚨 通信のせいなら英語の文を出さない（2026-10-20・lib/netFailure の sendFailureText）
+      setFormError(sendFailureText(error, status) ?? ('登録に失敗しました: ' + error.message));
       setIsSubmitting(false);
     } else {
       // 🚀 Slack通知を送信（通知設定でONの場合のみ）

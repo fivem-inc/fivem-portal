@@ -1,7 +1,38 @@
 const CACHE_NAME = 'fivem-portal-v1';
 
+// 通知のアイコンを端末に保存しておく（2026-10-20）。
+// 🚨 前は通知が届くたびにサイトから読み込んでいた（配り方は「毎回サイトに確かめる」）。電波が弱いとき・省電力のとき・
+//    グループの投稿が続いて前の通知を置き換えるときに読み込みが間に合わず、Android が代わりにサイト名の頭文字「F」を出していた。
+//    保存した画像を data: の形にして渡すので、通知のたびに通信しない。保存が無ければ今までどおりサイトから読む
+const ICON_CACHE = 'fivem-icons-v1';
+const ICON_PATH = '/icon-192.png';
+let iconDataUrl = null;
+
+async function iconSrc() {
+  if (iconDataUrl) return iconDataUrl;
+  try {
+    const cache = await caches.open(ICON_CACHE);
+    const res = await cache.match(ICON_PATH);
+    if (!res) {
+      // 保存が無ければ、今回は今までどおり URL を渡し、裏で保存しておく（次の通知から効く）。
+      // 🚨 ここで取りに行って待たない。電波が弱いと通知そのものが遅れる
+      cache.add(ICON_PATH).catch(() => {});
+      return ICON_PATH;
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    iconDataUrl = 'data:image/png;base64,' + btoa(bin);
+    return iconDataUrl;
+  } catch {
+    return ICON_PATH;
+  }
+}
+
 self.addEventListener('install', (event) => {
   self.skipWaiting();
+  // 🚨 保存に失敗しても、入れ替え（通知の仕組みそのもの）は止めない
+  event.waitUntil(caches.open(ICON_CACHE).then((c) => c.add(ICON_PATH)).catch(() => {}));
 });
 
 self.addEventListener('activate', (event) => {
@@ -18,17 +49,15 @@ self.addEventListener('push', (event) => {
     data = { title: '新しい通知', body: event.data.text() };
   }
 
-  const options = {
-    body: data.body || '',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    tag: data.tag || 'fivem-notification',
-    data: { url: data.url || '/' },
-    requireInteraction: false,
-  };
-
   event.waitUntil(
-    self.registration.showNotification(data.title || '連絡板', options)
+    iconSrc().then((icon) => self.registration.showNotification(data.title || '連絡板', {
+      body: data.body || '',
+      icon,
+      badge: icon,
+      tag: data.tag || 'fivem-notification',
+      data: { url: data.url || '/' },
+      requireInteraction: false,
+    }))
   );
 });
 
