@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { todayJstStr } from '../../lib/breakCalc';
-import { ROSTER_DAY_LABEL, compareRosterStaff, minText, normTime, prevDate, shiftDayOn, toMin, type RosterDayKind } from '../../lib/shiftRoster';
+import { ROSTER_DAY_LABEL, compareRosterStaff, mdWithWeekday, minText, normTime, prevDate, shiftDayOn, toMin, type RosterDayKind } from '../../lib/shiftRoster';
 import { useRoles } from '../../hooks/useRoles';
 import { rankOf } from '../../lib/roleAttrs';
 import { normalizeForSearch } from '../../lib/boardTemplates';
@@ -26,6 +26,13 @@ import {
 } from '../../lib/kidsShiftApi';
 import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
+import { TOGGLE_BLUE } from '../../lib/buttonStyles';
+import ShiftCellDialog from './ShiftCellDialog';
+import ShiftEditDateDialog from './ShiftEditDateDialog';
+
+/** マスを開くときに覚えておくこと（いつから変えるかを先に聞いたあとで開くため） */
+interface PendingOpen { placeId: string; d: RosterDayKind; bi: number | null; bandIdx: number[] | null; fromMin?: number | null }
+const PANEL_LABEL = { pdf: 'PDF', places: '列の一覧', kinds: '行の種類・書き添え', people: 'レッスンできる人', settings: '設定' } as const;
 
 // ⑤ こどもシフト表（2026-09-16・段階1の1回目）。設計・決めたことは docs/計画-管理画面の開放.md の 5-9〜5-9-3。
 // ・置き場所（列・校の見出し・曜日の書き添え）×曜日のマスを「いつから」で版にする（変えたマスだけ・先の版は残す）
@@ -107,6 +114,21 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const [confirming, setConfirming] = useState(false);
   // 🚨 保存の確認は表の下に出るので、開いたらそこまで動かす（2026-09-25・［保存する］が画面の外に出ないように）
   const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(confirming);
+  // ── 変える流れ（2026-10-20 ユーザー確定・docs/計画-シフト表の変え方.md）──────────────
+  // ［✏️ シフトを変更する］→「いつから変えますか？」→ 黄色い帯「M/D から変えます。変えたいマスを押してください」→ マス → 真ん中の窓。
+  // 🚨 日付は applyFrom 1つだけ（表を見る日＝保存の適用開始日）。別に持つと下書きと保存の日がずれる（レビューで決定）。
+  //    案を見ているときは日付を聞かない（案の「予定の適用開始日」を使う）
+  const [editing, setEditing] = useState(false);
+  const [dateAsk, setDateAsk] = useState<{ pending: PendingOpen | null } | null>(null);
+  // 日付を変えた直後は、その日の表を読み終えてから開く（waitFor＝読み終えるのを待つ日。null＝すぐ開く）
+  const [pendingOpen, setPendingOpen] = useState<(PendingOpen & { waitFor: string | null }) | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // いま描いている表の時刻の帯（日付を変えて読み直したあと、押した帯を開始時刻で探し直すため・描くたびに入れ直す）
+  const bandsRef = useRef<KidsBand[]>([]);
+  // 窓を開いたときの下書き（この表の分を丸ごと）。［直さずに閉じる］でここに戻す（共通の人は別の列も書き換えるため丸ごと）
+  const [openSnap, setOpenSnap] = useState<{ v: Record<string, KidsCellValue> | undefined } | null>(null);
+  // 直前に保存した日（緑の知らせに［続けて M/D から直す］を出す）
+  const [savedFrom, setSavedFrom] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
@@ -121,6 +143,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const [decideState, setDecideState] = useState<{ conflicts: { place_id: string; day_kind: string; label: string }[]; keptCount: number; changeCount: number; choices: Record<string, 'plan' | 'decided'> } | null>(null);
   const decideBoxRef = useScrollIntoViewWhen<HTMLDivElement>(decideState);
   const [guard, setGuard] = useState<{ text: string; go: () => void } | null>(null);
+  // 🚨 確かめの欄・右下のボタンで開く欄は表の下に出るので、開いたらそこまで動かす（2026-10-20・開いたのか分からなかった）
+  const guardRef = useScrollIntoViewWhen<HTMLDivElement>(guard);
+  const panelRef = useScrollIntoViewWhen<HTMLDivElement>(panel === 'none' ? null : panel, 'start');
   // 変わった所の印（ピンク・2026-10-06）。画面と PDF で別々に外せる（大きく変わったとき・初回の PDF は外す）
   const [markScreen, setMarkScreen] = useState(true);
   const [pdfMark, setPdfMark] = useState(true);
@@ -154,6 +179,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     setOther(o.data);
     setOtherErr(o.error ? `${otherName}を読み込めませんでした（表をまたぐ重なりを出せません）：${o.error}` : '');
     if (!keepDrafts) setDrafts({});
+    setLoadedFor(baseDate);
     setLoading(false);
   }, [baseDate, board, boardName, otherBoard, otherName]);
 
@@ -268,6 +294,85 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     if (dirtyCount > 0) { setGuard({ text: label, go }); return; }
     go();
   };
+
+  // ─── マスを開く・閉じる（2026-10-20）。🚨 マスを開くのは必ず openCell を通す（日付を聞く入口を抜けないように） ───
+  const doOpen = (p: PendingOpen) => {
+    const k = cellKey(p.placeId, p.d);
+    setConfirming(false); setGuard(null);
+    setOpenSnap({ v: drafts[view] });
+    setOpenKey(k); setOpenBand(p.bi); setBandFor(p.bi == null ? null : k); setBandIdx(p.bi == null ? null : p.bandIdx);
+  };
+  /** マスを開く。決定済みの表で、まだ「いつから」を決めていなければ先に聞く */
+  const openCell = (placeId: string, d: RosterDayKind, opts: { bi?: number | null; bandIdx?: number[] | null; fromMin?: number | null } = {}) => {
+    const p: PendingOpen = { placeId, d, bi: opts.bi ?? null, bandIdx: opts.bandIdx ?? null, fromMin: opts.fromMin ?? null };
+    if (!plan && !editing) { setDateAsk({ pending: p }); return; }
+    doOpen(p);
+  };
+  /** 窓を閉じる。keep＝［この内容にする］（保存してある表と同じになったマスは下書きから外す）／false＝開く前に戻す */
+  const closeCell = (keep: boolean) => {
+    if (keep) {
+      setDrafts(prev => {
+        const forView = { ...(prev[view] ?? {}) };
+        for (const k of Object.keys(forView)) {
+          const [pid, dd] = k.split('|');
+          if (cellEquals(forView[k], savedCell(pid, dd))) delete forView[k];
+        }
+        return { ...prev, [view]: forView };
+      });
+    } else if (openSnap) {
+      const snap = openSnap.v;
+      setDrafts(prev => {
+        const next = { ...prev };
+        if (snap === undefined) delete next[view]; else next[view] = snap;
+        return next;
+      });
+    }
+    setOpenKey(null); setOpenBand(null); setBandFor(null); setBandIdx(null); setOpenSnap(null);
+  };
+  /** 「いつから変えますか？」の［次へ］ */
+  const onDateNext = (date: string) => {
+    const pending = dateAsk?.pending ?? null;
+    setDateAsk(null);
+    const go = () => {
+      const reload = date !== applyFrom;
+      setApplyFrom(date); setEditing(true); setSavedFrom(null); setSaveMsg('');
+      if (pending) setPendingOpen({ ...pending, waitFor: reload ? date : null });
+    };
+    if (date !== applyFrom) guarded(`${mdWithWeekday(date)}からの表`, go); else go();
+  };
+
+  // 日付を変えたあとは、その日の表を読み終えてから開く。🚨 読み直すと帯の番号が変わるので、押した帯は開始時刻で探し直す（無ければその曜日のすべて）
+  useEffect(() => {
+    if (!pendingOpen || loading || !data) return;
+    if (loadErr) { setPendingOpen(null); return; }
+    if (pendingOpen.waitFor && loadedFor !== pendingOpen.waitFor) return;
+    const p = pendingOpen;
+    setPendingOpen(null);
+    if (!p.waitFor) { doOpen(p); return; }
+    const bands = bandsRef.current;
+    const bi = p.fromMin == null ? -1 : bands.findIndex(b => b.from === p.fromMin);
+    doOpen(bi < 0 ? { ...p, bi: null, bandIdx: null }
+      : { ...p, bi, bandIdx: shownCell(p.placeId, p.d).map((it, i) => ({ it, i })).filter(x => bandIndexOf(x.it, bands) === bi).map(x => x.i) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOpen, loading, data, loadedFor, loadErr]);
+
+  // 案に切り替えたら「変える」状態は終える（案は案の日付で直す）
+  useEffect(() => { setEditing(false); }, [view]);
+
+  // 黄色い帯が画面の上に隠れたら、同じ帯を画面の上に固定して出す（2026-10-20）。
+  // 🚨 position: sticky は使えない（管理画面の外側の箱が overflow-x: hidden で、sticky が効かない・2人共通の部品なので触らない）
+  const [bannerEl, setBannerEl] = useState<HTMLDivElement | null>(null);
+  const [bannerOut, setBannerOut] = useState<{ left: number; width: number } | null>(null);
+  useEffect(() => {
+    if (!bannerEl) { setBannerOut(null); return; }
+    const top = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-height'), 10) || 60;
+    const io = new IntersectionObserver(([e]) => {
+      const r = e.boundingClientRect;
+      setBannerOut(!e.isIntersecting && r.top < top ? { left: r.left, width: r.width } : null);
+    }, { rootMargin: `-${top}px 0px 0px 0px` });
+    io.observe(bannerEl);
+    return () => io.disconnect();
+  }, [bannerEl]);
 
   const places = useMemo(() => data?.places ?? [], [data]);
   const placeLabel = useCallback((id: string) => (data?.places ?? []).find(p => p.id === id)?.label ?? '（不明な列）', [data]);
@@ -521,6 +626,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     }
     if (!r.ok) { setSaveErr('保存できませんでした（今日より前の日付の確認が必要です）'); return; }
     setConfirming(false); setOpenKey(null);
+    // 保存したら「変える」状態は終える（同じ日付のまま気づかずに2回目を保存しないように・レビューで決定）。続けるときは緑の知らせのボタンから
+    setEditing(false); setSavedFrom(applyFrom);
     setDrafts(prev => ({ ...prev, decided: {} }));
     setSaveMsg(`保存しました（${applyFrom} から・変えたマス ${r.changed ?? 0}${r.unchanged ? `・同じ内容 ${r.unchanged}` : ''}${(r.kept_future?.length ?? 0) > 0 ? `・先の変更を残したマス ${r.kept_future?.length}` : ''}）`);
     await load(false);
@@ -698,6 +805,29 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
   const schools = [...new Set(places.filter(p => p.kind === 'column' && p.active).map(p => p.school).filter(Boolean))] as string[];
 
   const roleLabel = (k: string) => data.roleKinds.find(r => r.key === k)?.label ?? k;
+
+  // ─── 変える流れの見た目（2026-10-20） ───
+  /** 窓の中の「保存してある表に戻す」（ユーザー確定 案1：［直さずに閉じる］と区別できる名前） */
+  const revertLabel = plan ? `↩ ${plan.name}の保存した内容に戻す` : `↩ ${md(applyFrom)} の表のとおりに戻す`;
+  /** 変えている間、押せるマスに薄い青の枠（🚨 outline は開いている・未保存・違うマスで使っているので、内側の影で出す） */
+  const editHint: React.CSSProperties = plan || editing ? { boxShadow: 'inset 0 0 0 1px #90caf9' } : {};
+  /** 右下のボタン（PDF・設定など）。開いている間は選ばれた色（2026-10-20・開いたのか分からなかった） */
+  const panelBtn = (key: typeof panel): React.CSSProperties => ({
+    ...inputStyle, cursor: 'pointer',
+    ...(panel === key ? { background: TOGGLE_BLUE, color: '#fff', borderColor: TOGGLE_BLUE, fontWeight: 'bold' } : {}),
+  });
+  /** マスを直す窓（中身は今までの直す欄） */
+  const editModal = (content: React.ReactNode) => (
+    <ShiftCellDialog isDarkMode={isDarkMode} changed={!!openSnap && drafts[view] !== openSnap.v}
+      heading={(
+        <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 6, background: '#fff3cd', color: '#856404', fontSize: 12.5, marginBottom: 8 }}>
+          {plan ? `${plan.name}を直しています（予定の適用開始日 ${md(plan.apply_from)}・保存しても決定済みの表は変わりません）` : `${mdWithWeekday(applyFrom)}から変わります`}
+        </div>
+      )}
+      onCancel={() => closeCell(false)} onDone={() => closeCell(true)}>
+      {content}
+    </ShiftCellDialog>
+  );
   const kindLabel = (k: string) => k === 'role' ? '見出しの役割' : k === 'daynote' ? '曜日の書き添え'
     : data.rowKinds.find(r => r.key === k)?.label ?? k;
   /** Excel（2026-09-22・ユーザー確定 案ウ＝シートを2つに分ける）。
@@ -1007,7 +1137,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const bandStart = useBand ? normTime(minText(bands[band!].from)) : '';
     const shownCount = v.filter((_, i) => inBand(i)).length;
     return (
-      <div style={{ padding: '10px 12px', borderRadius: 10, border: '2px solid #1976d2', background: cardBg, textAlign: 'left', fontSize: 13, color: text, marginTop: 10 }}>
+      <div style={{ textAlign: 'left', fontSize: 13, color: text }}>
         <b>{place?.label}（{ROSTER_DAY_LABEL[d]}）{useBand ? ` ・${bands[band!].label} の帯` : ''}</b>
         {useBand && v.length > shownCount && (
           <button type="button" style={{ ...linkBtn, marginLeft: 8 }} onClick={() => { setOpenBand(null); setBandIdx(null); }}>この曜日のすべてを出す（{v.length}）</button>
@@ -1022,14 +1152,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                 ＋ {kd.label}
               </button>
             ))}
-            {viewDrafts[k] && <button type="button" style={linkBtn} onClick={() => revertCell(k)}>↩ 直す前に戻す</button>}
+            {viewDrafts[k] && <button type="button" style={linkBtn} onClick={() => revertCell(k)}>{revertLabel}</button>}
             {plan && (
               <button type="button" style={linkBtn}
                 onClick={() => setCell(placeId, d, (cellVersionOn(data.cells, placeId, d, plan.apply_from)?.items ?? []).map(x => ({ ...x })))}>
                 決定済みの表に戻す
               </button>
             )}
-            <button type="button" onClick={() => setOpenKey(null)} style={{ ...inputStyle, cursor: 'pointer', marginLeft: 'auto' }}>閉じる</button>
           </div>
         </div>
       </div>
@@ -1079,6 +1208,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const b = bandsOfDay(cols.map(c => ({ placeId: c.id, items: [...shownCell(c.id, day), ...studyItemsOf(c.id, day), ...(c.id === kids6F?.id ? adult6FOf(day) : [])] })), isClassItem);
     return b.length > 0 ? b : [{ from: 0, to: null, label: '' }];
   })();
+  if (!isAdult) bandsRef.current = bandsNow;
   // 共通の行。🚨 その校の 3F・5F が表に並んで出ているときだけ（並んでいないと1行にまとめられない）
   const poolNow = (() => {
     for (const pp of poolPlaces) {
@@ -1270,7 +1400,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                   const first = entries.find(e => !e.other);
                   return (
                     <td key={d}
-                      onClick={() => { if (!first) return; setViewMode('day'); setDay(d); setOpenBand(null); setBandFor(null); setOpenKey(cellKey(first.placeId, d)); }}
+                      onClick={() => { if (!first) return; setViewMode('day'); setDay(d); openCell(first.placeId, d); }}
                       style={{ padding: '4px', borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 12, color: text, cursor: first ? 'pointer' : 'default', lineHeight: 1.55 }}>
                       {head && <div style={{ fontWeight: 'bold' }}>{head}</div>}
                       {entries.map((e, i) => (
@@ -1328,7 +1458,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const ctx = poolCtxOf(d, place);
     const bands = bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem);
     return (
-      <div style={{ padding: '10px 12px', borderRadius: 10, border: '2px solid #1976d2', background: cardBg, textAlign: 'left', fontSize: 13, color: text, marginTop: 10 }}>
+      <div style={{ textAlign: 'left', fontSize: 13, color: text }}>
         <b>{place.school} 3F・5F で動ける人（{ROSTER_DAY_LABEL[d]}）</b>
         <div style={{ fontSize: 12, color: subText, margin: '4px 0 8px', lineHeight: 1.6 }}>
           その時間に 3F・5F のどちらにも入れる人を、何時から何時までいるかで入れます。
@@ -1384,10 +1514,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           })}
         </div>
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-          {viewDrafts[cellKey(placeId, d)] && <button type="button" style={linkBtn} onClick={() => revertCell(cellKey(placeId, d))}>↩ 直す前に戻す</button>}
-          <button type="button" onClick={() => setOpenKey(null)} style={{ ...inputStyle, cursor: 'pointer', marginLeft: 'auto' }}>閉じる</button>
-        </div>
+        {viewDrafts[cellKey(placeId, d)] && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button type="button" style={linkBtn} onClick={() => revertCell(cellKey(placeId, d))}>{revertLabel}</button>
+          </div>
+        )}
       </div>
     );
   };
@@ -1485,13 +1616,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     const L = adultLayout(!!openKey?.endsWith('|sun'));
     if (!L) return <p style={{ color: subText, fontSize: 13 }}>大人シフト表の列がまだありません（「列の一覧」を確かめてください）</p>;
     const { main, trip, days, bands, studyLinesAt } = L;
+    bandsRef.current = bands;
     const jrBg = isDarkMode ? '#4a4a46' : '#e4e3df';
     const jrText = isDarkMode ? '#e8e6df' : '#444441';
     const open = (pid: string, d: RosterDayKind, bi: number | null) => {
-      const k = cellKey(pid, d);
-      if (openKey === k && openBand === bi) { setOpenKey(null); return; }
-      setOpenKey(k); setOpenBand(bi); setBandFor(bi == null ? null : k);
-      setBandIdx(bi == null ? null : shownCell(pid, d).map((it, i) => ({ it, i })).filter(x => bandIndexOf(x.it, bands) === bi).map(x => x.i));
+      // 🚨 マスを開くのは openCell を通す（日付を聞く入口）。同じマスを2回押しても閉じない（2026-10-20）
+      openCell(pid, d, { bi, fromMin: bi == null ? null : bands[bi]?.from ?? null, bandIdx: bi == null ? null : shownCell(pid, d).map((it, i) => ({ it, i })).filter(x => bandIndexOf(x.it, bands) === bi).map(x => x.i) });
     };
     const lineStyle = (l: AdultLine, i: number, lines: AdultLine[]): React.CSSProperties => ({
       fontSize: l.kind === 'staff' ? 14 : l.kind === 'head' || l.kind === 'trip' ? 11.5 : l.kind === 'note' ? 11 : 12,
@@ -1559,13 +1689,13 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                       <th onClick={() => open(main.id, d, null)}
                         style={{
                           padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 12.5, color: text, cursor: 'pointer',
-                          outline: dirty ? '2px solid #e65100' : outline(cellKey(main.id, d), null), outlineOffset: -2,
+                          outline: dirty ? '2px solid #e65100' : outline(cellKey(main.id, d), null), outlineOffset: -2, ...editHint,
                         }}>
                         {ROSTER_DAY_LABEL[d]}{warn > 0 ? ' ⚠️' : ''}{diff ? ' ≠' : ''}
                       </th>
                       {trip && (
                         <th onClick={() => open(trip.id, d, null)}
-                          style={{ padding: '6px 2px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px dashed ${borderColor}`, fontSize: 11, color: subText, cursor: 'pointer', outline: outline(cellKey(trip.id, d), null), outlineOffset: -2 }}>
+                          style={{ padding: '6px 2px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px dashed ${borderColor}`, fontSize: 11, color: subText, cursor: 'pointer', outline: outline(cellKey(trip.id, d), null), outlineOffset: -2, ...editHint }}>
                           出張
                         </th>
                       )}
@@ -1591,7 +1721,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                         <td onClick={() => open(main.id, d, bi)}
                           style={{
                             padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
-                            color: text, ...changeCellStyle(changed), outline: outline(cellKey(main.id, d), bi), outlineOffset: -2,
+                            color: text, ...changeCellStyle(changed), outline: outline(cellKey(main.id, d), bi), outlineOffset: -2, ...editHint,
                           }}>
                           {cellBody(adultLines(items, nameOf), adultLines(baseItems, nameOf), changed)}
                           {study.map((l, i) => (
@@ -1603,7 +1733,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                           <td onClick={() => open(trip.id, d, bi)}
                             style={{
                               padding: '3px 2px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px dashed ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
-                              color: text, ...changeCellStyle(tChanged), outline: outline(cellKey(trip.id, d), bi), outlineOffset: -2,
+                              color: text, ...changeCellStyle(tChanged), outline: outline(cellKey(trip.id, d), bi), outlineOffset: -2, ...editHint,
                             }}>
                             {cellBody(adultLines(tItems, nameOf), adultLines(tBase, nameOf), tChanged)}
                           </td>
@@ -1621,7 +1751,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                     const changed = markScreen && !cellEquals(shownCell(dayNotePlace.id, d), baseCell(dayNotePlace.id, d));
                     return (
                       <td key={d} colSpan={trip ? 2 : 1} onClick={() => open(dayNotePlace.id, d, null)}
-                        style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 11.5, color: notes.length ? text : subText, cursor: 'pointer', ...changeCellStyle(changed), outline: outline(cellKey(dayNotePlace.id, d), null), outlineOffset: -2 }}>
+                        style={{ padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 11.5, color: notes.length ? text : subText, cursor: 'pointer', ...changeCellStyle(changed), outline: outline(cellKey(dayNotePlace.id, d), null), outlineOffset: -2, ...editHint }}>
                         {notes.join('／') || '＋'}
                       </td>
                     );
@@ -1659,10 +1789,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
             <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => open(main.id, 'sun', null)}>＋ 日曜に入れる</button>
           )}
         </div>
-        {openKey && (() => {
+        {openKey && editModal((() => {
           const [pid, d] = openKey.split('|');
           return cellEditor(pid, d as RosterDayKind, bands, openBand);
-        })()}
+        })())}
       </>
     );
   };
@@ -1764,12 +1894,49 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         </div>
       )}
 
-      {/* 日付と曜日 */}
+      {/* 変える入口（2026-10-20 ユーザー確定）：［✏️ シフトを変更する］→ いつから → 黄色い帯 → マス。案を見ているときは案の帯（上）で直す */}
+      {!plan && !editing && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button type="button" style={{ ...primaryBtn, padding: '8px 18px', fontSize: 14 }} onClick={() => setDateAsk({ pending: null })}>
+            ✏️ シフトを変更する
+          </button>
+        </div>
+      )}
+      {!plan && editing && (() => {
+        const body = (
+          <>
+            <b>{mdWithWeekday(applyFrom)}から変えます。変えたいマスを押してください。</b>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              <button type="button" style={{ ...inputStyle, cursor: 'pointer', background: '#fff', color: '#856404', borderColor: '#c9a227' }}
+                onClick={() => setDateAsk({ pending: null })}>日付を変える</button>
+              <button type="button" style={{ ...inputStyle, cursor: 'pointer', background: '#fff', color: '#856404', borderColor: '#c9a227' }}
+                onClick={() => guarded('見るだけの表', () => setEditing(false))}>やめる</button>
+            </span>
+          </>
+        );
+        const row: React.CSSProperties = { ...warnCard, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' };
+        return (
+          <>
+            <div ref={setBannerEl} style={{ ...row, marginBottom: 8 }}>{body}</div>
+            {/* 画面を下へ動かして帯が隠れたら、上に固定して出す（同じ中身） */}
+            {bannerOut && (
+              <div style={{ ...row, position: 'fixed', top: 'var(--topbar-height, 60px)', left: bannerOut.left, width: bannerOut.width, zIndex: 250, boxSizing: 'border-box', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>{body}</div>
+            )}
+          </>
+        );
+      })()}
+      {dateAsk && (
+        <ShiftEditDateDialog isDarkMode={isDarkMode} today={today} initial={editing ? applyFrom : (applyFrom < today ? today : applyFrom)}
+          onCancel={() => setDateAsk(null)} onNext={onDateNext} />
+      )}
+
+      {/* 表を見る日と曜日（🚨 変えている間は、日付は黄色い帯の［日付を変える］から＝入口を1つにする） */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
         {!plan && (
           <>
-            <span style={{ fontSize: 13, color: text }}>適用開始日</span>
-            <input type="date" value={applyFrom} style={inputStyle}
+            <span style={{ fontSize: 13, color: text }}>表を見る日</span>
+            <input type="date" value={applyFrom} style={{ ...inputStyle, opacity: editing ? 0.6 : 1 }} disabled={editing}
+              title={editing ? '変えている間は、黄色い帯の［日付を変える］から変えます' : undefined}
               onChange={e => e.target.value && guarded('別の日付', () => setApplyFrom(e.target.value))} />
           </>
         )}
@@ -1815,7 +1982,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           const mark = isRed && markScreen;
           const marked = mark ? diffLines(lines, baseCell(h.id, day).map(it => itemText(it, nameOf, roleLabel))) : null;
           return (
-            <button key={school} type="button" onClick={() => setOpenKey(o => (o === cellKey(h.id, day) ? null : cellKey(h.id, day)))}
+            <button key={school} type="button" onClick={() => openCell(h.id, day)}
               style={{ ...inputStyle, cursor: 'pointer', textAlign: 'left', color: text, ...changeCellStyle(mark) }}>
               <b>{school}</b>{marked
                 ? <>{marked.lines.map((ln, i) => <React.Fragment key={i}>{'\u3000'}{renderMarked(ln)}</React.Fragment>)}{renderRemoved(marked.removed)}</>
@@ -1840,10 +2007,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                 const diff = isDiff(c.id, day);   // 比べているときだけ true
                 const dirty = changedKeys.includes(k);
                 return (
-                  <th key={c.id} onClick={() => setOpenKey(o => (o === k ? null : k))}
+                  <th key={c.id} onClick={() => openCell(c.id, day)}
                     style={{
                       padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, fontSize: 12.5, color: text, cursor: 'pointer',
-                      outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+                      outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2, ...editHint,
                     }}>
                     {c.label}{warn > 0 ? ' ⚠️' : ''}{diff ? ' ≠' : ''}
                   </th>
@@ -1874,11 +2041,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                       const marked = changed ? diffLines(lines, linesOfItems(c.id, baseItems)) : null;
                       const inPool = withPool && !!poolNow?.ids.has(c.id);
                       return (
-                        <td key={c.id} rowSpan={withPool && !inPool ? 2 : 1} onClick={() => setOpenKey(o => (o === k ? null : k))}
+                        <td key={c.id} rowSpan={withPool && !inPool ? 2 : 1} onClick={() => openCell(c.id, day, { bi, fromMin: b.from, bandIdx: shownCell(c.id, day).map((it, i) => ({ it, i })).filter(x => bandIndexOf(x.it, bandsNow) === bi).map(x => x.i) })}
                           style={{
                             padding: '4px', borderTop: `1px solid ${borderColor}`, borderLeft: `1px solid ${borderColor}`, verticalAlign: 'top', cursor: 'pointer',
                             fontSize: 12, color: text, ...changeCellStyle(changed),
-                            outline: openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+                            outline: openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2, ...editHint,
                           }}>
                           {lines.length === 0 && bi === 0 && shownCell(c.id, day).length === 0 && <span style={{ color: subText }}>—</span>}
                           {lines.map((l, i) => <div key={i}>{marked ? renderMarked(marked.lines[i]) : l}</div>)}
@@ -1910,11 +2077,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
                         const m2 = changed ? diffLines([text2], [baseText[1]]) : null;
                         const short = pr.common.length < pr.need;
                         return (
-                          <td colSpan={poolNow.span} onClick={() => setOpenKey(o => (o === pk ? null : pk))}
+                          <td colSpan={poolNow.span} onClick={() => openCell(poolNow.place.id, day)}
                             style={{
                               padding: '4px 6px', borderTop: `1px dashed ${borderColor}`, borderLeft: `1px solid ${borderColor}`, cursor: 'pointer',
                               fontSize: 12, color: text, background: isDarkMode ? '#3a3f44' : '#f7f7f5', ...changeCellStyle(changed),
-                              outline: openKey === pk ? '2px solid #1976d2' : 'none', outlineOffset: -2,
+                              outline: openKey === pk ? '2px solid #1976d2' : 'none', outlineOffset: -2, ...editHint,
                             }}>
                             <span style={{ fontSize: 11, padding: '0 5px', borderRadius: 3, marginRight: 6, background: short ? '#fff3cd' : '#d3d1c7', color: short ? '#856404' : '#2c2c2a', border: short ? '1px solid #ffc107' : 'none' }}>
                               共通 {pr.common.length}人／要る {pr.need}{short ? `（あと ${pr.need - pr.common.length} 人）` : ''}
@@ -1943,7 +2110,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         <select style={inputStyle} value="" onChange={e => {
           if (!e.target.value) return;
           setExtraColumns(prev => new Set([...prev, `${e.target.value}|${day}`]));
-          setOpenKey(cellKey(e.target.value, day));
+          openCell(e.target.value, day);
         }}>
           <option value="">＋ 列を足す（この曜日）</option>
           {activeColumns.filter(c => !cols.some(x => x.id === c.id)).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
@@ -1952,14 +2119,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           const n = shownCell(pp.id, day).find(it => it.kind === 'pool')?.people.length ?? 0;
           return (
             <button key={pp.id} type="button" style={{ ...inputStyle, cursor: 'pointer' }}
-              onClick={() => setOpenKey(o => (o === cellKey(pp.id, day) ? null : cellKey(pp.id, day)))}>
+              onClick={() => openCell(pp.id, day)}>
               {pp.school} 3F・5F で動ける人（{ROSTER_DAY_LABEL[day]}）{n > 0 ? `：${n}人` : 'を入れる'}
             </button>
           );
         })}
         {dayNotePlace && (
           <button type="button" style={{ ...inputStyle, cursor: 'pointer' }}
-            onClick={() => setOpenKey(o => (o === cellKey(dayNotePlace.id, day) ? null : cellKey(dayNotePlace.id, day)))}>
+            onClick={() => openCell(dayNotePlace.id, day)}>
             曜日の書き添え{shownCell(dayNotePlace.id, day).length > 0 ? `：${shownCell(dayNotePlace.id, day).map(i => i.note).join('／')}` : 'を入れる'}
           </button>
         )}
@@ -1969,7 +2136,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         （社員休み）{offOfDay(day).map(s => nameOf(s.id)).join('・') || 'なし'}
       </div>
 
-      {openKey && openKey.endsWith(`|${day}`) && cellEditor(openKey.split('|')[0], day)}
+      {openKey && openKey.endsWith(`|${day}`) && editModal(cellEditor(openKey.split('|')[0], day, bandsNow, openBand))}
       </>)}
 
       {/* 追加必要・重なり */}
@@ -1979,7 +2146,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>レッスンが回るのに足りない人数です。</div>
           {shortfalls.slice(0, 12).map((s, i) => (
             <div key={i} style={{ fontSize: 12.5, color: text, marginTop: 3 }}>
-              <button type="button" style={linkBtn} onClick={() => { setDay(s.day); setOpenKey(cellKey(s.place.id, s.day)); }}>
+              <button type="button" style={linkBtn} onClick={() => { setDay(s.day); openCell(s.place.id, s.day); }}>
                 {ROSTER_DAY_LABEL[s.day]} {s.place.label} {s.item.start || ''}
               </button>
               {'\u3000あと '}{s.need} 人{s.lessonNeed > 0 ? `（うちレッスンできる人 ${s.lessonNeed} 人）` : ''}
@@ -1993,7 +2160,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
               .filter(x => x.r.show && x.r.common.length < x.r.need);
           })).map((x, i) => (
             <div key={`pool${i}`} style={{ fontSize: 12.5, color: text, marginTop: 3 }}>
-              <button type="button" style={linkBtn} onClick={() => { setDay(x.d); setOpenKey(cellKey(x.pp.id, x.d)); }}>
+              <button type="button" style={linkBtn} onClick={() => { setDay(x.d); openCell(x.pp.id, x.d); }}>
                 {ROSTER_DAY_LABEL[x.d]} {x.pp.school} 共通 {x.b.label}
               </button>
               {'\u3000あと '}{x.r.need - x.r.common.length} 人（共通 {x.r.common.length}人／要る {x.r.need}）
@@ -2042,7 +2209,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
             return (
               <div key={i} style={{ fontSize: 12.5, color: acked ? subText : text, marginTop: 3 }}>
                 <button type="button" style={linkBtn}
-                  onClick={() => { if (!isAdult) { setViewMode('day'); setDay(o.day); } setOpenBand(null); setBandFor(null); setOpenKey(cellKey(mine.placeId, o.day)); }}>
+                  onClick={() => { if (!isAdult) { setViewMode('day'); setDay(o.day); } openCell(mine.placeId, o.day); }}>
                   {o.level === 'red' ? '🔴' : '⚠️'} {ROSTER_DAY_LABEL[o.day]} {nameOf(o.userId)} {minText(o.s)}〜{minText(o.e)}
                 </button>
                 {' '}{o.kids.label} ／ {o.adult.label}
@@ -2079,7 +2246,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
             <>
               {open.slice(0, 12).map((x, n) => (
                 <div key={n} style={{ fontSize: 12.5, color: text, marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button type="button" style={linkBtn} onClick={() => { setDay(x.d); setOpenKey(cellKey(x.p.id, x.d)); }}>
+                  <button type="button" style={linkBtn} onClick={() => { setDay(x.d); openCell(x.p.id, x.d); }}>
                     {ROSTER_DAY_LABEL[x.d]} {x.p.label}
                   </button>
                   <span>{x.i.text}</span>
@@ -2108,16 +2275,26 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         )}
         {changedKeys.length > 0 && <span style={{ fontSize: 12.5, color: '#e65100' }}>未保存のマス {changedKeys.length}</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'pdf' ? 'none' : 'pdf'))}>PDF</button>
-          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'places' ? 'none' : 'places'))}>列の一覧</button>
-          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'kinds' ? 'none' : 'kinds'))}>行の種類・書き添え</button>
-          {!isAdult && <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'people' ? 'none' : 'people'))}>レッスンできる人</button>}
-          <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => setPanel(p => (p === 'settings' ? 'none' : 'settings'))}>設定</button>
+          <button type="button" style={panelBtn('pdf')} aria-pressed={panel === 'pdf'} onClick={() => setPanel(p => (p === 'pdf' ? 'none' : 'pdf'))}>PDF</button>
+          <button type="button" style={panelBtn('places')} aria-pressed={panel === 'places'} onClick={() => setPanel(p => (p === 'places' ? 'none' : 'places'))}>列の一覧</button>
+          <button type="button" style={panelBtn('kinds')} aria-pressed={panel === 'kinds'} onClick={() => setPanel(p => (p === 'kinds' ? 'none' : 'kinds'))}>行の種類・書き添え</button>
+          {!isAdult && <button type="button" style={panelBtn('people')} aria-pressed={panel === 'people'} onClick={() => setPanel(p => (p === 'people' ? 'none' : 'people'))}>レッスンできる人</button>}
+          <button type="button" style={panelBtn('settings')} aria-pressed={panel === 'settings'} onClick={() => setPanel(p => (p === 'settings' ? 'none' : 'settings'))}>設定</button>
         </span>
       </div>
 
       {saveErr && !stale && <div style={{ color: red, marginTop: 8, fontSize: 13 }}>{saveErr}</div>}
-      {saveMsg && <div style={{ ...okCard, marginTop: 8 }}>✓ {saveMsg}</div>}
+      {saveMsg && (
+        <div style={{ ...okCard, marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>✓ {saveMsg}</span>
+          {!plan && savedFrom && !editing && (
+            <button type="button" style={{ ...inputStyle, cursor: 'pointer', marginLeft: 'auto' }}
+              onClick={() => { setApplyFrom(savedFrom); setEditing(true); setSaveMsg(''); setSavedFrom(null); }}>
+              続けて {md(savedFrom)} から直す
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 保存の確認（決定済みの表） */}
       {confirming && !plan && (
@@ -2176,7 +2353,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
 
       {/* 切り替えの確認（未保存が消えないように） */}
       {guard && (
-        <div style={{ ...warnCard, marginTop: 10 }}>
+        <div ref={guardRef} style={{ ...warnCard, marginTop: 10 }}>
           未保存のマスが {dirtyCount} あります。{guard.text} に切り替えると、この直しは消えます。
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
             <button type="button" style={primaryBtn}
@@ -2192,6 +2369,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
         </div>
       )}
 
+      {/* 右下のボタンで開く欄（2026-10-20：見出しと［✕ 閉じる］・開いたらここまで画面を動かす） */}
+      <div ref={panelRef} style={{ scrollMarginTop: 'calc(var(--topbar-height, 60px) + 8px)' }}>
+      {panel !== 'none' && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12, fontSize: 13, color: text }}>
+          <b>▼ {PANEL_LABEL[panel]}</b>
+          {panel !== 'pdf' && <span style={{ fontSize: 12, color: subText }}>ここで変えた内容はすぐ保存されます（下書きにはなりません）</span>}
+          <button type="button" style={{ ...inputStyle, cursor: 'pointer', marginLeft: 'auto' }} onClick={() => setPanel('none')}>✕ 閉じる</button>
+        </div>
+      )}
       {/* PDF */}
       {panel === 'pdf' && isAdult && (
         <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, fontSize: 13, color: text }}>
@@ -2358,6 +2544,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           </div>
         </div>
       )}
+
+      </div>
 
       {panelErr && <div style={{ color: red, marginTop: 8, fontSize: 13 }}>{panelErr}</div>}
       {anyDirty && <div style={{ fontSize: 12, color: subText, marginTop: 8 }}>🚨 未保存の直しは、この画面を離れると消えます。</div>}

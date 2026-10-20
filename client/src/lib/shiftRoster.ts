@@ -305,6 +305,12 @@ export function shiftDayOn<T extends PatternRowLike>(rows: T[], dayKind: string,
   return rows.some(r => r.valid_from <= date && (r.valid_to === null || r.valid_to >= date)) ? { segments: [], note: '' } : null;
 }
 
+/** 「11/1（日）」（日付の文字列のまま計算する・シフト表の変える流れ 2026-10-20） */
+export function mdWithWeekday(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return `${m}/${d}（${'日月火水木金土'[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}）`;
+}
+
 export function prevDate(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d - 1));
