@@ -3225,10 +3225,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const ownCardRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (hlParam !== 'threshold') return;
-    if (modeParam === 'summary') { setSummaryPeriod(currentPeriod); setSummaryNameQuery(''); setThresholdGlow('summary'); }
+    if (modeParam === 'summary') {
+      setSummaryPeriod(currentPeriod); setSummaryNameQuery(''); setThresholdGlow('summary');
+      // ホームのカード（部門ごと）から来たときは、その部門で開く（2026-10-20）。カードの部門は「こども・大人」のように
+      // 2つ以上つながることがある（部門集計は1人1部門）・「その他」もある → そのときは全チームで開く。お知らせ（dept なし）は今までどおり自所属
+      const d = searchParams.get('dept');
+      if (d) setSummaryDept(d.includes('・') || d === 'その他' ? '__all__' : d);
+    }
     else { setHistoryMode('own'); setOwnCardPeriod(currentPeriod); setThresholdGlow('self'); }
     // 🚨 目印は URL から消す。残すと部門集計で人を押して戻ったときにも光る。消しておけば、同じお知らせをもう一度押したときも光る
-    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('hl'); return n; }, { replace: true });
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('hl'); n.delete('dept'); return n; }, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hlParam]);
   useEffect(() => {

@@ -496,16 +496,27 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const reqSegs = (r.req?.segments ?? []).filter(x => x.start && x.end);
     if (reqSegs.length > 0) {
       const reqLoc = requestSegmentsLocation(reqSegs);
-      setRow(r.date, {
+      fillIfStillEmpty(r.date, {
         segs: reqSegs.slice(0, 3).map(x => ({ start: x.start, end: x.end })),
         ...(r.draft.location || !reqLoc ? {} : locationPick(reqLoc, workplaces)),
       });
       return;
     }
     const segs = normalSegsOf(r.ns);
-    setRow(r.date, {
+    fillIfStillEmpty(r.date, {
       segs: segs.length > 0 ? segs : [{ start: '', end: '' }],
       ...(r.draft.location ? {} : locationPick(r.ns.location, workplaces)),
+    });
+  };
+  // 🚨 「まだ空か」は、いちばん新しい入力で確かめてから入れる（2026-10-20）。
+  //    開始の分を打ち終えると自動で終了の欄へ移り、その瞬間の onFocus がここを呼ぶ。そのとき r はまだ開始を打つ前の古い状態なので、
+  //    r だけで判定すると、シフトが休みの日（いつものシフトが空）は打ったばかりの開始を空で上書きしていた
+  //    （画面には 9:00 と出たまま中身が空になり「勤務時間を入力してください」・マネージャーの実機の報告）
+  const fillIfStillEmpty = (date: string, patch: Partial<RowDraft>) => {
+    setDrafts(prev => {
+      const cur = prev[date];
+      if (cur && cur.segs.some(x => x.start || x.end)) return prev;   // もう何か入っている＝触らない
+      return { ...prev, [date]: { ...(cur ?? initialRowDraft('new_post', null, workplaces)), ...patch } };
     });
   };
 

@@ -204,7 +204,9 @@ const OvertimeThresholdBanner: React.FC<{
             </div>
             <div style={{ marginTop: 10 }}>
               <button type="button" style={btnMain}
-                onClick={() => navigate('/overtime?tab=history&mode=summary&hl=threshold')}>
+                // 🚨 押したカードの部門を渡す（2026-10-20）。渡さないと部門集計は見ている人の所属の部門で開き、
+                //    大人・管理部のカードから押しても「こども」が開いていた（社長の実機の報告）
+                onClick={() => navigate(`/overtime?tab=history&mode=summary&hl=threshold&dept=${encodeURIComponent(team)}`)}>
                 部門集計を開く
               </button>
             </div>
