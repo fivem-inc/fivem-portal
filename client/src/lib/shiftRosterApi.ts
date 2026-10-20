@@ -5,6 +5,7 @@
 
 import { isPrehire, isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
 import { supabase } from './supabaseClient';
+import { PLACE_OPTION_FILTER, placeGroupsFromRows, type PlaceGroup } from './workPlaces';
 import type { PatternRowLike, RosterDayKind, RosterSegment, WorkArea } from './shiftRoster';
 
 export interface RosterStaff {
@@ -38,6 +39,9 @@ export interface RosterData {
   patterns: RosterPatternRow[];
   notes: PersonNoteRow[];
   workplaces: string[];
+  /** 勤務表の勤務校の選択肢（校＋出張の行き先・見出しつき・2026-10-20）。🚨 校と出張は分けたまま（ユーザー確定）。
+   *  ほかの画面（交通費・残業など）の「校」の一覧（workplaces）は変えない */
+  placeGroups: PlaceGroup[];
 }
 
 const PATTERN_COLS = 'id, user_id, day_kind, start_time, end_time, start_time2, end_time2, location, segments, note, break_minutes, labor_minutes, valid_from, valid_to';
@@ -54,7 +58,8 @@ export async function loadRosterData(sinceDate: string): Promise<{ data: RosterD
       .order('valid_from'),
     supabase.from('weekly_shift_person_notes').select('id, user_id, note, valid_from, valid_to')
       .or(`valid_to.is.null,valid_to.gte.${sinceDate}`),
-    supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
+    // 校（workplace）と出張の区分・行き先を1本で読む（lib/workPlaces の PLACE_OPTION_FILTER・勤怠カレンダーと同じ）
+    supabase.from('master_options').select('category, value, ended_at').or(PLACE_OPTION_FILTER).order('sort_order'),
   ]);
   const failed = [
     staffRes.error && 'スタッフ', areaRes.error && '部門', mainRes.error && 'メインの部門',
@@ -72,7 +77,8 @@ export async function loadRosterData(sinceDate: string): Promise<{ data: RosterD
       mainAreas,
       patterns: (patRes.data ?? []) as RosterPatternRow[],
       notes: (noteRes.data ?? []) as PersonNoteRow[],
-      workplaces: ((wpRes.data ?? []) as { value: string }[]).map(r => r.value),
+      workplaces: ((wpRes.data ?? []) as { category: string; value: string }[]).filter(r => r.category === 'workplace').map(r => r.value),
+      placeGroups: placeGroupsFromRows((wpRes.data ?? []) as { category: string; value: string; ended_at?: string | null }[]),
     },
     error: null,
   };

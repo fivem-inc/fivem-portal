@@ -186,7 +186,7 @@ export function validateDay(day: RosterDay, workplaces: string[]): string | null
   if (f.error) return f.error;
   for (const x of day.segments) {
     for (const p of x.location.split('→').map(s => s.trim())) {
-      if (!workplaces.includes(p)) return `「${p}」という校はありません`;
+      if (!workplaces.includes(p)) return `「${p}」という勤務場所はありません`;
     }
   }
   if (day.note.trim().length > 100) return '曜日の書き添えは100文字までです';

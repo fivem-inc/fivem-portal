@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { allPlaces } from '../../lib/workPlaces';
 import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { useAdminPanel } from './AdminPanelContext';
 import { useRoles } from '../../hooks/useRoles';
@@ -72,6 +73,8 @@ const ShiftManagementTab: React.FC = () => {
   const [areaFilter, setAreaFilter] = useState<string>('all');
   const [onlyDraft, setOnlyDraft] = useState(false);
   const [data, setData] = useState<RosterData | null>(null);
+  // 勤務表で選べる勤務場所（校＋出張の行き先・2026-10-20）。校は前からの一覧（workplaces）も合わせる＝今入っている校が消えない
+  const rosterPlaces = useMemo(() => [...new Set([...(data?.workplaces ?? []), ...allPlaces(data?.placeGroups ?? [])])], [data]);
   const [token, setToken] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState('');
   const [loading, setLoading] = useState(true);
@@ -246,7 +249,7 @@ const ShiftManagementTab: React.FC = () => {
   const errors = draftIds.flatMap(id => {
     const name = data?.staff.find(s => s.id === id)?.name ?? '';
     return draftChangedDays(id).map(k => {
-      const e = validateDay(drafts[id].days[k]!, data?.workplaces ?? []);
+      const e = validateDay(drafts[id].days[k]!, rosterPlaces);
       return e ? `${name}（${ROSTER_DAY_LABEL[k]}）：${e}` : null;
     }).filter((x): x is string => !!x);
   });
@@ -440,7 +443,7 @@ const ShiftManagementTab: React.FC = () => {
   const segmentEditor = (userId: string, k: RosterDayKind) => {
     const day = shownDay(userId, k);
     const f = deriveFields(day.segments);
-    const v = validateDay(day, data?.workplaces ?? []);
+    const v = validateDay(day, rosterPlaces);
     const setSegs = (segs: RosterSegment[]) => editDay(userId, k, { ...day, segments: segs });
     const mainId = mainAreaOf(userId);
     const changed = !dayEquals(day, savedDay(userId, k, applyFrom));
@@ -459,8 +462,13 @@ const ShiftManagementTab: React.FC = () => {
                   onChange={e => setSegs(day.segments.map((x, j) => j === i ? { ...x, end: e.target.value } : x))} />
                 <select value={sg.location} style={inputStyle}
                   onChange={e => setSegs(day.segments.map((x, j) => j === i ? { ...x, location: e.target.value } : x))}>
-                  {!(data?.workplaces ?? []).includes(sg.location) && <option value={sg.location}>{sg.location || '校を選ぶ'}</option>}
-                  {(data?.workplaces ?? []).map(w => <option key={w} value={w}>{w}</option>)}
+                  {!rosterPlaces.includes(sg.location) && <option value={sg.location}>{sg.location || '校を選ぶ'}</option>}
+                  {/* 校と出張の行き先を見出しで分けて並べる（2026-10-20・ユーザー確定）。出張先は管理画面「区分・行き先リスト管理」で足す */}
+                  {(data?.placeGroups ?? []).map(g => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.items.map(w => <option key={g.label + w} value={w}>{w}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
                 <select value={sg.area_id ?? ''} style={inputStyle}
                   onChange={e => setSegs(day.segments.map((x, j) => j === i ? { ...x, area_id: e.target.value || null } : x))}>
