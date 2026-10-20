@@ -9,6 +9,7 @@ import IdleLogoutSettingsSection from './IdleLogoutSettingsSection';
 // マネージャー以上に開く管理画面のタブ（2026-09-15・docs/計画-管理画面の開放.md）
 import ManagerAdminTabsSection from './ManagerAdminTabsSection';
 import NavSettingsSection from './NavSettingsSection';
+import LeaveFeatureSection from './LeaveFeatureSection';
 import SaveBar, { SaveNotice, type SaveMsg } from './SaveBar';
 
 interface Role {
@@ -1047,6 +1048,8 @@ const FeaturePermissionsTab: React.FC = () => {
       </div>
 
       <RetireeFeatureSection />
+      {/* 休職中に使える機能（2026-10-20） */}
+      <LeaveFeatureSection />
       <ManagerAdminTabsSection />
       <NavSettingsSection />
       <IdleLogoutSettingsSection />

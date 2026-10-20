@@ -5,7 +5,9 @@ import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
-import { BTN_BLUE } from './lib/buttonStyles';
+import { BTN_BLUE, backBtn } from './lib/buttonStyles';
+import { leaveAllowsPath } from './lib/staffLeave';
+import LeaveHomeNotice from './components/LeaveHomeNotice';
 import RetireChecklistBanner from './components/RetireChecklistBanner';
 import PayrollCloseBanner from './components/PayrollCloseBanner';
 import { EXPENSE_FORM_ANCHOR_ID } from './lib/payrollClose';
@@ -472,8 +474,10 @@ const AnnouncementBanner: React.FC = () => {
 
 // 保護されたルートのためのレイアウト
 const ProtectedLayout: React.FC = () => {
-  const { user, isAdmin, isFaqEditor, isRetiree } = useAuth();
+  const { user, isAdmin, isFaqEditor, isRetiree, isOnLeave, leaveFeatureKeys } = useAuth();
   const { pathname, search } = useLocation();
+  const navigateHome = useNavigate();
+  const isDarkLayout = useDarkMode();
 
   if (!user) {
     // 🚨 開こうとしていた URL（例：メールのリンク /board?openInboxId=…）を覚えてからログインへ。
@@ -498,6 +502,23 @@ const ProtectedLayout: React.FC = () => {
   const RETIREE_ALLOWED = ['/', '/expense', '/overtime', '/shift-report', '/account', '/change-password', '/change-email', '/notification-settings'];
   if (isRetiree && !RETIREE_ALLOWED.includes(pathname)) {
     return <Navigate to="/" replace />;
+  }
+
+  // 🚨 休職中の人が開ける画面も、ここ1か所で決める（2026-10-20・判定は lib/staffLeave の leaveAllowsPath）。
+  //    ナビのボタンは隠れるが、前に届いたベル・FAQ のリンク・ブックマークからは開けてしまう。
+  //    黙ってホームへ移すと「押したのに何も起きない」と見えるので、文を出す（ユーザー確定）。🚨 文に「休職」と書かない
+  if (isOnLeave && !leaveAllowsPath(pathname, leaveFeatureKeys)) {
+    return (
+      <><IdleLogout />
+        <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 16, marginBottom: 16 }}>このページは現在ご利用いただけません。</div>
+            <button type="button" onClick={() => navigateHome('/', { replace: true })}
+              style={{ ...backBtn(isDarkLayout), padding: '10px 28px' }}>ホームへ戻る</button>
+          </div>
+        </div>
+      </>
+    );
   }
 
   // 🚨 IdleLogout はログイン済みの全ページの親であるここに1つだけ置く（ページごとに置かない）
@@ -875,7 +896,7 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; canExpense?: boolean; canTripReport?: boolean; canBoard?: boolean; canRoomBooking?: boolean; canFaq?: boolean; canFaqNav?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { previewRole, setPreviewRole, user: ctxUser, retiree, previewRetiree, setPreviewRetiree } = useContext(AuthContext);
+  const { previewRole, setPreviewRole, user: ctxUser, retiree, previewRetiree, setPreviewRetiree, previewLeave, setPreviewLeave } = useContext(AuthContext);
   // 退職して申請期間中か。🚨 ここでは「読み込みを止める」ためだけに使う（機能の出し分けは can* に任せる）
   const isRetiree = !!retiree || previewRetiree;
   const realIsAdmin = ctxUser?.app_metadata?.role === 'admin' && !isRetiree;
@@ -1196,12 +1217,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         <div ref={rightRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
           {realIsAdmin && (
             <select
-              value={previewRole || ''}
+              value={previewLeave ? '__leave__' : (previewRole || '')}
               onChange={e => {
                 // 🚨 「退職者」は役職ではないので、役職プレビューとは別のスイッチに渡す。
                 //    どちらか一方しか点かないようにする（両方点くと、どちらの見え方か分からなくなる）
-                if (e.target.value === '__retiree__') { setPreviewRole(null); setPreviewRetiree(true); return; }
-                setPreviewRetiree(false);
+                if (e.target.value === '__retiree__') { setPreviewRole(null); setPreviewLeave(false); setPreviewRetiree(true); return; }
+                // 休職者（2026-10-20）：一般の役職で休職中のときの見え方（使える機能は今の基本の設定）
+                if (e.target.value === '__leave__') { setPreviewRetiree(false); setPreviewRole('一般'); setPreviewLeave(true); return; }
+                setPreviewRetiree(false); setPreviewLeave(false);
                 setPreviewRole(e.target.value || null);
               }}
               title="役職プレビュー"
@@ -1220,6 +1243,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
                   🚨 見た目だけの下見。データベース側の権限（退職者は別の役割になる）は真似できないので、
                      本当の確認は実際のアカウントで1往復する必要がある（設計書 §9-5） */}
               <option value="__retiree__">退職者</option>
+              <option value="__leave__">休職者</option>
             </select>
           )}
           {userId && <BellIcon userId={userId} />}
@@ -1240,9 +1264,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           background: '#ffc107', color: '#333', fontSize: 12, fontWeight: 'bold',
           padding: '5px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}>
-          👁️ プレビュー中：{previewRetiree ? '退職者（申請期間中）' : previewRole} として表示
-          {previewRetiree && <span style={{ fontWeight: 'normal' }}>※ 見た目だけの下見です</span>}
-          <button onClick={() => { setPreviewRole(null); setPreviewRetiree(false); }}
+          👁️ プレビュー中：{previewRetiree ? '退職者（申請期間中）' : previewLeave ? '休職者（一般の役職）' : previewRole} として表示
+          {(previewRetiree || previewLeave) && <span style={{ fontWeight: 'normal' }}>※ 見た目だけの下見です</span>}
+          <button onClick={() => { setPreviewRole(null); setPreviewRetiree(false); setPreviewLeave(false); }}
             style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
             × 終了
           </button>
@@ -2244,6 +2268,8 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
     user,
     isAdmin,
     canProcedures,
+    isOnLeave,
+    leaveFeatureKeys,
     isApprover,
     profileName,
     roleTitle,
@@ -2406,6 +2432,8 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
           <b>新しいお知らせ {homeNewItems.length}件</b>：{homeKindsText(homeNewItems)}
         </div>
       )}
+      {/* 休職中の本人（2026-10-20）：ずっと出す1行（閉じられない・「休職」と書かない） */}
+      {isOnLeave && <LeaveHomeNotice isDark={isDarkMode} featureKeys={leaveFeatureKeys} />}
       {/* 退職して申請期間中の人への案内（3段目・2026-09-20）。ここだけは退職者にも出す */}
       {isRetiree && (
         <RetireeHomeNotice

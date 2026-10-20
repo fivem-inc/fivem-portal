@@ -117,6 +117,8 @@ export interface AccessState {
   hire_date?: string | null;
   /** 退職者のとき：出してよい機能（app_settings.retiree_feature_keys） */
   feature_keys?: string[];
+  /** 在籍者で今日休職中のとき（2026-10-20）：復職日と使える機能 */
+  leave?: { return_date: string | null; keys: string[] } | null;
 }
 
 /**

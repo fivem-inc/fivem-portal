@@ -161,7 +161,9 @@ serve(async (req) => {
       // 🚨 役職名では判定しない（2026-09-10 段4）。マネージャー以上＝roles.is_manager_plus
       const { data: profile } = await supabase.from('profiles').select('is_active').eq('id', callerId).single();
       const { data: mp } = await supabase.rpc('role_is_manager_plus', { p_uid: callerId });
-      const isAuthorized = profile?.is_active && mp === true;
+      // 🚨 休職中は送れない（2026-10-20・結果を見る RLS の is_manager_plus() も休職中は false のため、送れても結果が見えない）
+      const { data: ol } = await supabase.rpc('staff_on_leave', { p_user: callerId });
+      const isAuthorized = profile?.is_active && mp === true && ol !== true;
       if (!isAuthorized) {
         return new Response(JSON.stringify({ error: '発信できるのはマネージャー以上のみです' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }

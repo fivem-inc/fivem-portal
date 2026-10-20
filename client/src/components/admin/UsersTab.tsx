@@ -15,6 +15,10 @@ import DateTimeInput from '../DateTimeInput';
 import { dateTimeProblem } from '../../lib/dateTimeValue';
 import { isPrehire } from '../../lib/staffState';
 import { useSameNameStaff } from '../../hooks/useSameNameStaff';
+import { useAuth } from '../../hooks/useAuth';
+import { attrsFor } from '../../lib/roleAttrs';
+import { type StaffLeave, LEAVE_REGISTER_OPEN, fetchOpenLeaves, leaveStateLabel, leaveStateColor, leaveStatusOf, returnFromLeave } from '../../lib/staffLeave';
+import StaffLeaveModal from './StaffLeaveModal';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -423,6 +427,15 @@ const UsersTab: React.FC = () => {
   const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, setSuccessMsg, handleRestoreUser, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
+  // ── 休職（2026-10-20・計画 docs/計画-休職と手続き.md）。登録・修正・復職は管理者だけ（DB も管理者だけ通す）──
+  const { isAdmin: canManageLeave } = useAuth();
+  const leaveRoles = useRoles();
+  const [openLeaves, setOpenLeaves] = useState<Map<string, StaffLeave>>(new Map());
+  const [leaveModalFor, setLeaveModalFor] = useState<string | null>(null);
+  const [returnConfirmFor, setReturnConfirmFor] = useState<string | null>(null);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const reloadLeaves = () => { void fetchOpenLeaves().then(setOpenLeaves); };
+  useEffect(reloadLeaves, []);
   // 退職の予約（2026-09-19・案A「道は1本」）。［退職］を押すとその行の下に入力欄が開く
   const [retireFormFor, setRetireFormFor] = useState<string | null>(null);
   const [retireDate, setRetireDate] = useState('');
@@ -620,6 +633,56 @@ const UsersTab: React.FC = () => {
               <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
             ) : (
               <div>
+                {leaveModalFor && (() => {
+                  const u = users.find(x => x.id === leaveModalFor);
+                  if (!u) return null;
+                  // 付け替え先：在籍・本人以外・今日休職中でない・受理する役職（受理者・リーダー以上・マネージャー以上・決裁者）
+                  const cands = users
+                    .filter(x => x.is_active !== false && x.id !== u.id && !isPrehire(x))
+                    .filter(x => { const l = openLeaves.get(x.id); return !(l && leaveStatusOf(l, todayJst) === 'on_leave'); })
+                    .filter(x => { const a = attrsFor(leaveRoles, x.role_title); return a.is_approver || a.is_leader_plus || a.is_manager_plus || a.is_board_approver; })
+                    .map(x => ({ id: x.id, name: x.name || x.email || '' }));
+                  return (
+                    <StaffLeaveModal
+                      isDark={isDarkMode}
+                      user={{ id: u.id, name: u.name || u.email || '', sub: [u.employment_type, u.role_title].filter(Boolean).join('・') }}
+                      leave={openLeaves.get(u.id) ?? null}
+                      candidates={cands}
+                      todayJst={todayJst}
+                      onClose={() => setLeaveModalFor(null)}
+                      onDone={(msg, isError) => { setLeaveModalFor(null); if (isError) setErrorMsg(msg); else setSuccessMsg(msg); reloadLeaves(); }}
+                    />
+                  );
+                })()}
+                {returnConfirmFor && (() => {
+                  const u = users.find(x => x.id === returnConfirmFor);
+                  const lv = openLeaves.get(returnConfirmFor);
+                  if (!u || !lv) return null;
+                  const name = u.name || u.email || '';
+                  return (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}
+                      onClick={() => { if (!leaveBusy) setReturnConfirmFor(null); }}>
+                      <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#2b3035' : '#fff', color: isDarkMode ? '#f8f9fa' : '#212529', borderRadius: 12, padding: 16, width: '100%', maxWidth: 420, boxSizing: 'border-box', textAlign: 'left' }}>
+                        <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>今日から復職にする</div>
+                        <div style={{ background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, lineHeight: 1.6 }}>
+                          {name}さんを今日から復職にします。受理者の候補・役職あてのお知らせが元に戻ります。
+                          {lv.return_date && lv.return_date > todayJst ? `（復職予定日 ${mdLabel(lv.return_date)} より早い復職です）` : ''}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                          <button style={{ ...backBtn(isDarkMode), flex: 1 }} disabled={leaveBusy} onClick={() => setReturnConfirmFor(null)}>やめる</button>
+                          <button style={{ ...primaryBtn({ disabled: leaveBusy }), flex: 2 }} disabled={leaveBusy} onClick={async () => {
+                            setLeaveBusy(true);
+                            const e = await returnFromLeave(lv.id);
+                            setLeaveBusy(false); setReturnConfirmFor(null);
+                            if (e) { setErrorMsg('復職にできませんでした：' + e); return; }
+                            setSuccessMsg(`${name}さんを今日から復職にしました。`);
+                            reloadLeaves();
+                          }}>{leaveBusy ? '保存しています…' : '復職にする'}</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {showAddModal && (
                   <AddUserModal
                     isDarkMode={isDarkMode}
@@ -657,7 +720,10 @@ const UsersTab: React.FC = () => {
                 )}
                 <div style={{ marginBottom: '20px', textAlign: 'center' }}>
                   <p style={{ color: isDarkMode ? '#fff' : '#000' }}>
-                    現役: {users.filter(u => u.is_active !== false).length}人 ／ 退職済み: {users.filter(u => u.is_active === false && !isPrehire(u)).length}人
+                    現役: {users.filter(u => u.is_active !== false).length}人{(() => {
+                      const n = users.filter(u => u.is_active !== false && openLeaves.get(u.id) && leaveStatusOf(openLeaves.get(u.id)!, todayJst) === 'on_leave').length;
+                      return n > 0 ? `（うち休職中 ${n}人）` : '';
+                    })()} ／ 退職済み: {users.filter(u => u.is_active === false && !isPrehire(u)).length}人
                   </p>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: 8 }}>
                     <button
@@ -1025,9 +1091,13 @@ const UsersTab: React.FC = () => {
                             )}
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               {/* 状態の札は lib/retire.ts の1か所（ユーザー管理・退職の手続きで共用） */}
-                              <span style={{ color: retireStateColor(user, todayJst, isDarkMode), fontWeight: 'bold', fontSize: '11px' }}>
-                                {retireStateLabel(user, todayJst)}
-                              </span>
+                              {/* 休職の予定・休職中は休職の文字（灰色・lib/staffLeave の1か所）。退職の予定・退職済みは退職の文字を優先 */}
+                              {(() => {
+                                const lv = rState === 'none' ? leaveStateLabel(openLeaves.get(user.id), todayJst) : null;
+                                return lv
+                                  ? <span style={{ color: leaveStateColor(isDarkMode), fontWeight: 'bold', fontSize: '11px' }}>{lv}</span>
+                                  : <span style={{ color: retireStateColor(user, todayJst, isDarkMode), fontWeight: 'bold', fontSize: '11px' }}>{retireStateLabel(user, todayJst)}</span>;
+                              })()}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
@@ -1039,8 +1109,24 @@ const UsersTab: React.FC = () => {
                                   <button style={{ padding: '3px 6px', background: 'transparent', color: isDarkMode ? '#90caf9' : '#1565c0', border: '1px solid #90caf9', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
                                     onClick={() => setEmailEditFor(emailEditFor === user.id ? null : user.id)}>メールを直す</button>
                                 )}
+                                {/* 休職（管理者だけ・在籍中で退職日が入っていない人・共用の管理者のアカウントには出さない）。
+                                    🚨［退職］と押し間違えないよう、白地に灰色の枠で大きめにして、［退職］は右に離す（UI/UX レビュー） */}
+                                {LEAVE_REGISTER_OPEN && canManageLeave && user.is_active !== false && !user.retire_date && user.email !== 'fivem.kyoto@gmail.com' && (() => {
+                                  const lv = openLeaves.get(user.id);
+                                  const leaveBtn: React.CSSProperties = { padding: '4px 10px', background: isDarkMode ? 'transparent' : '#fff', color: isDarkMode ? '#f8f9fa' : '#495057', border: `1px solid ${isDarkMode ? '#6c757d' : '#adb5bd'}`, borderRadius: 4, cursor: 'pointer', fontSize: 12 };
+                                  if (!lv) return <button style={leaveBtn} onClick={() => setLeaveModalFor(user.id)}>休職</button>;
+                                  return (
+                                    <>
+                                      <button style={leaveBtn} onClick={() => setLeaveModalFor(user.id)}>休職を修正</button>
+                                      {leaveStatusOf(lv, todayJst) === 'on_leave' && (
+                                        <button style={leaveBtn} onClick={() => setReturnConfirmFor(user.id)}>今日から復職にする</button>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>
+                                    <span style={{ flex: 1, minWidth: 12 }} />
                                     {/* 退職は「退職日を入れて確定」の1本だけ（2026-09-19・案A）。復活は RPC で退職日も空にする */}
                                     {/* 退職日が入っている人には、日付を直す入口を出す（2026-09-20 実機の指摘）。
                                         🚨 直しても在籍には戻さない（戻すのは［復活］） */}

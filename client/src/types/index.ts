@@ -109,6 +109,19 @@ export interface AuthContextType {
    *  （存在しない役職名を入れると、公開範囲の判定がどこもかしこも false になる） */
   previewRetiree: boolean;
   setPreviewRetiree: (v: boolean) => void;
+  /** 今日休職中の人のときだけ入る（2026-10-20・判定は DB の my_access_state）。在籍者は null */
+  onLeave: LeaveAccess | null;
+  /** 役職プレビューの「休職者」（2026-10-20・previewRole と一緒に使う＝休職前の役職として見る） */
+  previewLeave: boolean;
+  setPreviewLeave: (v: boolean) => void;
+}
+
+/** 休職中の人の情報（AuthContext が配る・DB の my_access_state の leave） */
+export interface LeaveAccess {
+  /** 復職日 "YYYY-MM-DD"（空＝未定） */
+  returnDate: string | null;
+  /** 休職中に使える機能（基本＋この人だけ足す−引く）。実際に使えるのは、これかつ役職で使えていた機能 */
+  featureKeys: string[];
 }
 
 /** 退職して申請期間中の人の情報（AuthContext が配る） */

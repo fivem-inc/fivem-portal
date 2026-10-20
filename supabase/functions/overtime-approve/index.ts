@@ -96,8 +96,18 @@ serve(async (req) => {
     // notification にぶら下げると取消がSlackに出なくなる
     let slackEventKey: string | null = null
 
+    // 🚨 休職中は、ほかの人の申請の受理・差し戻しをしない（自分の休職前の日の確定は今までどおり・2026-10-20 ユーザー確定）。
+    //    判定は DB の staff_on_leave（休職の記録は本人・マネージャー以上・管理者しか読めないため service で聞く）
+    const onLeaveBlocked = async (): Promise<boolean> => {
+      if (isAdmin || caller.id === r.applicant_id) return false
+      const { data: ol, error: olErr } = await db.rpc('staff_on_leave', { p_user: caller.id })
+      if (olErr) { console.error('[overtime-approve] 休職の確認に失敗:', olErr.message); return false }
+      return ol === true
+    }
+
     if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
+      if (await onLeaveBlocked()) return json({ success: false, error: '現在、受理はできません。' }, 403)
       if (on_behalf === true && !isAdmin) return json({ success: false, error: '代わりに受理できるのは経理（管理者）だけです' }, 403)
       // 欠勤の自己受理はマネージャー以上のみ（2026-08-21 に開放。リーダー以下は他の人の受理が必要）
       // 🚨 同じ判定が overtime_reports の RLS（overtime_insert_own）にもある。
@@ -197,6 +207,7 @@ serve(async (req) => {
       }
     } else if (action === 'return') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
+      if (await onLeaveBlocked()) return json({ success: false, error: '現在、差し戻しはできません。' }, 403)
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では差し戻せません' }, 409)
       // 受理と同じ理由で、差し戻しも件数を見る（0件なら差し戻せていないので通知を出さない）
       const { data: updated, error } = await db.from('overtime_reports')

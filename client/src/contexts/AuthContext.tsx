@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useRef } from 'react';
-import type { AuthContextType, AuthUser, RetireeAccess } from '../types';
+import type { AuthContextType, AuthUser, RetireeAccess, LeaveAccess } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
 import { bootMark } from '../lib/bootMark';
@@ -7,7 +7,25 @@ import { fetchAccessState, mdLabel } from '../lib/retire';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
-export const AuthContext = createContext<AuthContextType>({ user: null, previewRole: null, setPreviewRole: () => {}, blockedMessage: null, clearBlockedMessage: () => {}, retiree: null, previewRetiree: false, setPreviewRetiree: () => {} });
+export const AuthContext = createContext<AuthContextType>({ user: null, previewRole: null, setPreviewRole: () => {}, blockedMessage: null, clearBlockedMessage: () => {}, retiree: null, previewRetiree: false, setPreviewRetiree: () => {}, onLeave: null, previewLeave: false, setPreviewLeave: () => {} });
+
+// 休職中の情報の端末の控え（開いた直後のナビがちらつかないように・2026-10-20）。🚨 判定そのものは DB（my_access_state）
+const LEAVE_CACHE_PREFIX = 'fivem_leave_state_';
+function readLeaveCache(userId: string): LeaveAccess | null {
+  try {
+    const raw = localStorage.getItem(LEAVE_CACHE_PREFIX + userId);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as LeaveAccess;
+    return v && Array.isArray(v.featureKeys) ? v : null;
+  } catch { return null; }
+}
+function writeLeaveCache(userId: string, v: LeaveAccess | null): void {
+  try { if (v) localStorage.setItem(LEAVE_CACHE_PREFIX + userId, JSON.stringify(v)); else localStorage.removeItem(LEAVE_CACHE_PREFIX + userId); } catch { /* 容量超過など */ }
+}
+function leaveFromState(st: { leave?: { return_date: string | null; keys: string[] } | null } | null): LeaveAccess | null {
+  const l = st?.leave;
+  return l ? { returnDate: l.return_date ?? null, featureKeys: Array.isArray(l.keys) ? l.keys : [] } : null;
+}
 
 // 認証確認中に表示する起動スケルトン。index.htmlの静的スケルトンと見た目を揃え、
 // 「真っ白」を挟まずにスプラッシュ→骨組み→アプリを滑らかに繋ぐ。個人情報は含まない
@@ -31,6 +49,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 退職して申請期間中の人だけ入る（在籍者は null）。3段目・2026-09-20
   const [retiree, setRetiree] = useState<RetireeAccess | null>(null);
   const [previewRetiree, setPreviewRetiree] = useState(false);
+  // 今日休職中の人だけ入る（2026-10-20）。在籍者の確認は profiles だけなので、my_access_state は裏で1回だけ読む
+  const [onLeave, setOnLeave] = useState<LeaveAccess | null>(null);
+  const [previewLeave, setPreviewLeave] = useState(false);
+  const refreshLeave = (userId: string, st: Parameters<typeof leaveFromState>[0]) => {
+    const v = leaveFromState(st);
+    setOnLeave(v);
+    writeLeaveCache(userId, v);
+  };
   // 🚨 起動時に applySessionUser が **3回**走っていた（2026-09-12 実機の印で判明。
   //    getSession の道 ＋ onAuthStateChange の INITIAL_SESSION ＋ もう1回）。
   //    そのたびに profiles を読むので、同じ問い合わせが3本出ていた。
@@ -45,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     //    トークンが差し替わっても中身の人は同じなので、在籍の確認をやり直す意味がない
     if (appliedUserId.current === (sessionUser?.id ?? null)) return;
     appliedUserId.current = sessionUser?.id ?? null;
-    if (!sessionUser) { setUser(null); return; }
+    if (!sessionUser) { setOnLeave(null); setUser(null); return; }
     // 🚨 待ち時間の上限は必須。
     //    災害時の輻輳（繋がりにくい状態）では応答が返らないことがあり、
     //    上限が無いとこの await から戻れず setLoading(false) に到達しない＝
@@ -99,6 +125,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     setRetiree(null);
+    // 休職中か（2026-10-20）：端末の控えで先に描き、裏で DB に聞いて直す。🚨 読めなかったときは控えのまま（通信が悪いだけで機能を広げない・狭めない）
+    setOnLeave(readLeaveCache(sessionUser.id));
+    void fetchAccessState().then(st => { if (st && st.mode === 'staff') refreshLeave(sessionUser.id, st); });
     setUser(sessionUser);
   };
 
@@ -118,6 +147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lastRecheckAt.current = Date.now();
     const st = await fetchAccessState();
     if (!st) return;                                   // 分からない＝何もしない
+    // 休職の始まり・終わり（毎晩0時・管理者の［今日から復職にする］）を、画面に戻ったときに反映する（2026-10-20）
+    if (st.mode === 'staff' && appliedUserId.current) refreshLeave(appliedUserId.current, st);
     if (st.mode === 'blocked' || st.mode === 'prehire') {
       await supabase.auth.signOut();
       setRetiree(null);
@@ -215,7 +246,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, previewRole, setPreviewRole, blockedMessage, clearBlockedMessage: () => setBlockedMessage(null), retiree, previewRetiree, setPreviewRetiree }}>
+    <AuthContext.Provider value={{ user, previewRole, setPreviewRole, blockedMessage, clearBlockedMessage: () => setBlockedMessage(null), retiree, previewRetiree, setPreviewRetiree, onLeave, previewLeave, setPreviewLeave }}>
       {emailChangeMsg && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 100000, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 26px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: 340, textAlign: 'center' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>

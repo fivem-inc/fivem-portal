@@ -63,9 +63,11 @@ serve(async (req) => {
 
     const needsRoleCheck = download ? true : !isOwner;
     if (needsRoleCheck) {
-      const allowed = (!download && isQuoteFile)
+      // 🚨 休職中は役職としては見られない（2026-10-20・my_on_leave は自分のことだけを返す）
+      const onLeave = (await supabaseUser.rpc('my_on_leave')).data === true;
+      const allowed = !onLeave && ((!download && isQuoteFile)
         ? (await supabaseUser.rpc('role_is_leader_plus', { p_uid: user.id })).data === true
-        : (await supabaseUser.rpc('role_acts_as', { p_uid: user.id })).data === 'accounting';
+        : (await supabaseUser.rpc('role_acts_as', { p_uid: user.id })).data === 'accounting');
       if (!allowed) {
         return new Response(JSON.stringify({ error: download ? 'Forbidden: ダウンロードは管理者のみ可能です' : 'Forbidden: 閲覧権限がありません' }), {
           status: 403,
