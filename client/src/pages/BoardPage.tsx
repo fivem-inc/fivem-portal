@@ -1496,10 +1496,13 @@ const BoardPage: React.FC = () => {
       .filter(m => m.channel_id === channelId && !m.parent_id)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
 
+  // 🚨 自分が送ったメッセージは未読に数えない（2026-10-20・社長の実機）。上のナビの数字（DB の my_board_unread）は前から自分の分を外していて、
+  //    この一覧の数字だけが自分の送信も数えて「2」などと出ていた
   const channelUnread = (channelId: string) => {
     const seen = lastSeen[channelId];
-    if (!seen) return messages.filter(m => m.channel_id === channelId && !m.parent_id).length;
-    return messages.filter(m => m.channel_id === channelId && !m.parent_id && new Date(m.created_at) > new Date(seen)).length;
+    const others = messages.filter(m => m.channel_id === channelId && !m.parent_id && m.user_id !== user?.id);
+    if (!seen) return others.length;
+    return others.filter(m => new Date(m.created_at) > new Date(seen)).length;
   };
 
   const sortedChannels = useMemo(() =>
