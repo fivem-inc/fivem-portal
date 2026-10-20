@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense, useRef, useContext } from 'react';
 import ReactDOM from 'react-dom';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import AppErrorBoundary from './components/AppErrorBoundary';
+import { useOfflinePrep } from './hooks/useOfflinePrep';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
@@ -478,6 +480,8 @@ const ProtectedLayout: React.FC = () => {
   const { pathname, search } = useLocation();
   const navigateHome = useNavigate();
   const isDarkLayout = useDarkMode();
+  // 電波が弱いときの備え（安否確認のページを先に読む・お知らせを押したら画面の中で移る・2026-10-20）
+  useOfflinePrep(user?.id, !isRetiree);
 
   if (!user) {
     // 🚨 開こうとしていた URL（例：メールのリンク /board?openInboxId=…）を覚えてからログインへ。
@@ -522,7 +526,8 @@ const ProtectedLayout: React.FC = () => {
   }
 
   // 🚨 IdleLogout はログイン済みの全ページの親であるここに1つだけ置く（ページごとに置かない）
-  return <><IdleLogout /><Outlet /></>;
+  // 🚨 ページの部品が読めなかったとき（圏外など）は、ページの所だけで受け止める（アプリごと消さない・2026-10-20）。ページを移ったら元に戻す（key にすると、ふだんもページを移るたびに作り直しになるので resetKey）
+  return <><IdleLogout /><AppErrorBoundary scope="route" resetKey={pathname}><Outlet /></AppErrorBoundary></>;
 };
 
 // ナビゲーションバー

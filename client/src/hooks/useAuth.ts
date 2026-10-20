@@ -7,6 +7,7 @@ import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage'
 import { IDLE_CONFIG_CACHE_KEY, readIdleLogoutSetting, writeIdleLogoutSetting } from '../lib/idleLogout';
 import { readDeviceId, writeDeviceId } from '../lib/deviceInfo';
 import { recordLogout } from '../lib/loginHistory';
+import { withTimeout } from '../lib/netFailure';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -541,9 +542,13 @@ export const useAuth = (): UseAuthReturn => {
     try {
       // ログアウトの記録（2026-10-16・lib/loginHistory）。ログインが消える前に送る。失敗してもログアウトは続ける（最大1.5秒）
       await recordLogout(reason === 'idle' ? 'idle_logout' : 'logout');
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
-      if (error) { console.error('[logout] signOut error', error); return; }
-      console.log('[logout] signOut success');
+      // 🚨 圏外・電波が弱いとき signOut は先にサーバーへ取り消しを送って失敗し、端末のログインを消さない（auth-js の作り）。
+      //    前はここで return していたため、ボタンを押しても何も起きず、共用パソコンの自動ログアウトでもログインと下書きが
+      //    次の人に見えたまま残っていた（2026-10-20）。失敗・時間切れ（4秒）でも、下の片付け（localStorage.clear で
+      //    端末のログインも消える）と画面の移動は必ず続ける。サーバー側のログインは、あとで期限で切れる
+      const signOutRes = await withTimeout(supabase.auth.signOut({ scope: 'local' }), 4000, null);
+      if (!signOutRes || signOutRes.error) console.error('[logout] signOut error（端末の片付けは続ける）', signOutRes?.error ?? '時間切れ');
+      else console.log('[logout] signOut success');
       // 🚨 未送信の安否確認の回答は、localStorage.clear() の巻き添えで消してはいけない。
       //    安否の回答は「消えてよい下書き」ではないので、退避して書き戻す。
       //    （誰の回答かは中に持たせてあるので、別の人がログインしても送り違えない）

@@ -96,16 +96,45 @@ export function loadPendingQueue(userId: string): PendingQueue {
   }
 }
 
-/** 送信待ちを保存する。保存できたかを返す（容量超過を握りつぶさない）。 */
+/** 送信待ちを保存する。保存できたかを返す（容量超過を握りつぶさない）。
+ *  🚨 同じ端末の「別の人」の送信待ちは消さずに残す（2026-10-20・共用の端末で他人の回答を消していた）。
+ *     ただし入れ物の鍵は安否確認の id なので、同じ安否確認に2人が同じ端末で未送信を残すと後の人の分で上書きされる
+ *     （キー名・形を変えると、更新前の画面が読めなくなるため変えていない） */
 export function savePendingQueue(userId: string, queue: PendingQueue): boolean {
   try {
-    const tagged: PendingQueue = {};
+    const others: PendingQueue = {};
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PENDING_KEY) || '{}') as PendingQueue;
+      for (const [checkId, item] of Object.entries(parsed ?? {})) {
+        if (item && item.userId && item.userId !== userId) others[checkId] = item;
+      }
+    } catch { /* 壊れていれば読み捨てる */ }
+    const tagged: PendingQueue = { ...others };
     for (const [checkId, item] of Object.entries(queue)) tagged[checkId] = { ...item, userId };
     localStorage.setItem(PENDING_KEY, JSON.stringify(tagged));
     return true;
   } catch {
     return false;
   }
+}
+
+/** 送信待ちを「いま端末に保存されている内容」を読み直してから直す（2026-10-20）。保存できたかを返す。
+ *  🚨 送信の前に読んだ写しを、送信が終わってから丸ごと保存してはいけない。
+ *     送っている途中に本人が別の回答をする・別のタブが保存すると、その新しい回答を古い写しで消してしまう。
+ *     送り終えた1件を消すときは、必ずこれで「同じ clientKey のときだけ」消す */
+export function updatePendingQueue(userId: string, mutate: (mine: PendingQueue) => void): boolean {
+  const mine = loadPendingQueue(userId);
+  mutate(mine);
+  return savePendingQueue(userId, mine);
+}
+
+/** 回答1件ごとの番号。🚨 crypto.randomUUID は古い iPhone（iOS 15.4 より前）に無く、そこで止まると回答が消える */
+export function newClientKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch { /* 下へ */ }
+  const hex = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${hex(3)}-${hex(12)}`;
 }
 
 // ログアウトの localStorage.clear() で未送信の回答まで消えないようにするための退避用。

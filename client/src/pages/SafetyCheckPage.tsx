@@ -9,11 +9,12 @@ import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCoun
 import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
 import HelpLinkButton from '../components/HelpLinkButton';
 import {
-  loadPendingQueue, savePendingQueue, loadSafetySnapshot, formatSnapshotAge, isSnapshotOld,
+  loadPendingQueue, updatePendingQueue, newClientKey, loadSafetySnapshot, formatSnapshotAge, isSnapshotOld,
   loadQueueErrors, saveQueueErrors,
   type PendingQueue, type SafetyCheckLite,
 } from '../lib/safetyStorage';
 import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { flushSafetyQueue } from '../lib/safetyQueue';
 
 interface SafetyCheckPageProps {
   user: AuthUser;
@@ -193,14 +194,6 @@ function supportStateOf(logs: SupportLog[], targetId: string) {
   return { status, authorId, since, stale, history: mine.slice().reverse() };
 }
 
-// 送り直しても通らない失敗を、本人に分かる日本語にする。
-// 黙ってキューから消すと「答えたつもりなのに届いていない」状態になるため必ず知らせる。
-function friendlyQueueError(error: { code?: string; message?: string } | null): string {
-  if (error?.code === '42501') return 'この安否確認の対象ではないため、回答を送れませんでした';
-  if (error?.code === 'P0002') return 'この安否確認は取り消されました。回答は不要です';
-  return '保存していた回答を送れませんでした。お手数ですがもう一度回答してください';
-}
-
 // 年まで出す（後から履歴を見たときに「いつの災害か」が分かるように）
 function fmtDateTime(s: string | null): string {
   if (!s) return '';
@@ -250,11 +243,6 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   // 通信が遅いと古い応答が後から返り、新しい結果を上書きしてしまう。
   // 番号を振っておき、最新の呼び出し以外の応答は捨てる。
   const loadSeq = useRef(0);
-
-  const applyQueue = useCallback((next: PendingQueue) => {
-    savePendingQueue(user.id, next);
-    setPendingQueue({ ...next });
-  }, [user.id]);
 
   const setQueueErrors = useCallback((updater: (prev: Record<string, string>) => Record<string, string>) => {
     setQueueErrorsState(prev => {
@@ -350,56 +338,38 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   }, [searchParams, isManagerPlus, isLeader, loading, myResponses]);
 
   // ---- 端末に保存した回答の再送 ----
+  // 🚨 送る処理は lib/safetyQueue の flushSafetyQueue 1か所（アプリ全体の見張りと共用・2026-10-20）。
+  //    送り終えたら、端末に保存されている今の送信待ちと理由を読み直して画面に出す（写しを持ち回らない）
   const flushQueue = useCallback(async () => {
-    const queue = loadPendingQueue(user.id);
-    const keys = Object.keys(queue);
-    if (keys.length === 0) return;
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return; // 圏外なら試さない（電池対策）
-
-    const errors: Record<string, string> = {};
-    for (const checkId of keys) {
-      const item = queue[checkId];
-      const { data, error, status } = await supabase.rpc('submit_safety_response', {
-        p_check_id: checkId, p_choice: item.choice, p_comment: item.comment || null,
-        p_client_key: item.clientKey,
-        // 本人がボタンを押した時刻。これより新しい回答（電話での代行入力など）が
-        // すでにあれば、DB側で上書きしないようにするために渡す。
-        p_answered_at: new Date(item.savedAt).toISOString(),
-      }).abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
-
-      if (!error) {
-        delete queue[checkId];
-        if (data && (data as { applied?: boolean }).applied === false) {
-          errors[checkId] = 'あとから記録された新しい回答があるため、保存していた回答は反映されませんでした';
-        }
-        window.dispatchEvent(new CustomEvent('safety-pending-changed'));
-      } else if (isTransientFailure(status, error)) {
-        // まだ送れる見込みがある失敗。回数だけ数えておき、何度も失敗するようなら本人に知らせる
-        queue[checkId] = { ...item, attempts: (item.attempts ?? 0) + 1 };
-      } else {
-        // 送り直しても通らない失敗。永久に再送し続けても届かないのでキューから外し、理由を出す
-        delete queue[checkId];
-        errors[checkId] = friendlyQueueError(error);
-      }
-    }
-    applyQueue(queue);
-    if (Object.keys(errors).length > 0) setQueueErrors(prev => ({ ...prev, ...errors }));
-    loadAll();
-  }, [user.id, applyQueue, loadAll]);
+    const r = await flushSafetyQueue(user.id);
+    setPendingQueue(loadPendingQueue(user.id));
+    setQueueErrorsState(loadQueueErrors(user.id));
+    if (r.tried > 0) loadAll();
+  }, [user.id, loadAll]);
 
   useEffect(() => {
     flushQueue();
-    const onOnline = () => flushQueue();
+    // 🚨 電波が戻ったら、送信待ちが無くても読み直す（画面の「電波が戻ると自動で読み込みます」のとおりにする・2026-10-20）
+    const onOnline = () => { void flushQueue(); loadAll(); };
+    // 🚨 iPhone は裏にいる間タイマーが止まる。前面に戻ったときにも送る（2026-10-20）
+    const onVisible = () => { if (document.visibilityState === 'visible') void flushQueue(); };
     window.addEventListener('online', onOnline);
+    window.addEventListener('pageshow', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
     const interval = setInterval(flushQueue, 30000);
-    return () => { window.removeEventListener('online', onOnline); clearInterval(interval); };
-  }, [flushQueue]);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('pageshow', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(interval);
+    };
+  }, [flushQueue, loadAll]);
 
   // ---- 回答 ----
   const submitAnswer = async (checkId: string, choice: string, comment: string) => {
     setErrMsg('');
     setQueueErrors(prev => { const next = { ...prev }; delete next[checkId]; return next; });
-    const clientKey = crypto.randomUUID();
+    const clientKey = newClientKey();
     const { error } = await supabase.rpc('submit_safety_response', {
       p_check_id: checkId, p_choice: choice, p_comment: comment || null,
       p_client_key: clientKey, p_answered_at: new Date().toISOString(),
@@ -412,15 +382,25 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
       //    ため、災害時にいちばん起きる状況で回答が保存されず消えていた。
       //    同じ回答が2回届く可能性はあるが、DB側で1人1回答に上書きされるので実害は無い。
       //    「回答が消える」ことに比べれば桁違いに軽い。
-      const queue = loadPendingQueue(user.id);
-      queue[checkId] = { choice, comment, clientKey, savedAt: Date.now(), attempts: 0 };
-      applyQueue(queue);
+      const saved = updatePendingQueue(user.id, mine => {
+        mine[checkId] = { choice, comment, clientKey, savedAt: Date.now(), attempts: 0 };
+      });
+      setPendingQueue(loadPendingQueue(user.id));
+      if (!saved) {
+        // 🚨 端末に保存できなかったのに「保存しました」と出すと、届いていない回答を本人が届いたと思う（2026-10-20）
+        setErrMsg('回答を送信できず、この端末にも保存できませんでした。電波のある所で、もう一度回答してください。');
+        return;
+      }
       setOkMsg('回答を端末に保存しました。電波が戻ったときに送信します');
       setEditingCheckId(null);
       setTimeout(() => setOkMsg(''), 5000);
       window.dispatchEvent(new CustomEvent('safety-pending-changed'));
       return;
     }
+    // 🚨 いま届いた回答がいちばん新しい。同じ安否の古い送信待ちが残っていると、あとで古い回答を送って
+    //    「反映されませんでした」が出るので、ここで消す（2026-10-20）
+    updatePendingQueue(user.id, mine => { delete mine[checkId]; });
+    setPendingQueue(loadPendingQueue(user.id));
     setOkMsg('回答を送信しました');
     setEditingCheckId(null);
     setTimeout(() => setOkMsg(''), 4000);
