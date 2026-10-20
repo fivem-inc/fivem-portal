@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabaseClient';
 import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
 import { bootMark } from '../lib/bootMark';
 import { fetchAccessState, mdLabel } from '../lib/retire';
+import { readStoredAuthUser } from '../lib/authStorage';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
@@ -174,6 +175,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : result.error ? `失敗：${result.error.name} ${result.error.status ?? ''}`.trim()
           : session ? '合言葉あり' : '合言葉なし';
         bootMark(`boot:3 合言葉の確認が終わった（${kind}）`);
+        // 🚨 合言葉が取れなかったが、端末にはログインが残っている＝電波が弱くて確かめられなかっただけ（2026-10-20・電波 段1）。
+        //    前はここでログイン画面になっていた（本人は「ログアウトされた」と思う）。端末のログインの人で先に画面を出し、
+        //    在籍の確認は裏で続ける（applySessionUser は通信の失敗では弾かない）。電波が戻ると Supabase の部品が合言葉を取り直す。
+        //    本当に無効なら部品が端末の合言葉を消して SIGNED_OUT を出す→下の onAuthStateChange でログイン画面になる
+        const stored = !session ? readStoredAuthUser() : null;
+        if (stored) {
+          bootMark('boot:3b 電波が弱いため、端末のログインで画面を出す（確認は裏で続ける）');
+          setOnLeave(readLeaveCache(stored.id));
+          setUser(stored);
+          void applySessionUser(stored);
+          return;
+        }
         await applySessionUser(session?.user as AuthUser ?? null);
       } catch (error) {
         console.error('Error getting session:', error);
@@ -228,8 +241,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // （同一ユーザーのトークン差し替えだけなのでアプリ側の状態更新は不要）
         // 🚨 ただし「ログイン中に退職・期限切れになった人」はここで追い出す（3段目・2026-09-20）。
         //    applySessionUser は同じ人だと1行目で return するので、**別の関数**でなければ効かない
-        void recheckAccess();
+        // 🚨 まだ誰も適用していない（起動の確認が空振りした）ときは、ここでログイン済みにする（2026-10-20・電波 段1）
+        if (session && !appliedUserId.current) void applySessionUser(session.user as AuthUser);
+        else void recheckAccess();
       } else {
+        // 🚨 SIGNED_OUT 以外で「合言葉なし」が来ても、端末にログインが残っていれば通信のせいで取れなかっただけ。
+        //    ログアウト扱いにしない（電波が弱い起動でログイン画面に落ちないように・2026-10-20・電波 段1）
+        if (!session && event !== 'SIGNED_OUT' && readStoredAuthUser()) {
+          bootMark(`boot:auth ${event} は合言葉なしだが、端末にログインが残っているので画面はそのまま`);
+          return;
+        }
         applySessionUser(session?.user as AuthUser ?? null);
       }
     });
