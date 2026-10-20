@@ -270,6 +270,23 @@ serve(async (req) => {
     //   （DBマイグレーション前にこの関数だけデプロイされても壊れない）
     let deferred = 0;
     let targetSubs = subscriptions;
+    // 休職中でスマホのお知らせを「受け取らない」人には、緊急でなければ送らない（2026-10-20）。
+    // 🚨 保留（push_deferred）にはしない＝捨てる（ベルには残る）。skip_quiet_check（push-dispatch から）は向こうで判定済み。fail-open
+    let leaveDropped = 0;
+    if (!urgent && !skip_quiet_check) {
+      try {
+        const subUserIds = [...new Set(subscriptions.map((s: { user_id: string }) => s.user_id))];
+        const { data: lb, error: lbErr } = await supabase.rpc("push_leave_blocked_ids", { p_user_ids: subUserIds });
+        if (!lbErr && Array.isArray(lb) && lb.length > 0) {
+          const blocked = new Set((lb as (string | { push_leave_blocked_ids: string })[]).map((r) => (typeof r === "string" ? r : r.push_leave_blocked_ids)));
+          const before = targetSubs.length;
+          targetSubs = targetSubs.filter((s: { user_id: string }) => !blocked.has(s.user_id));
+          leaveDropped = before - targetSubs.length;
+        }
+      } catch { /* fail-open */ }
+    }
+    // 🚨 ここから下（受信時間外の保留）は、休職で外したあとの一覧（afterLeave）から始める。全員（subscriptions）から作り直すと外した人が戻る
+    const afterLeave = targetSubs;
     if (!urgent && !skip_quiet_check) {
       let mutedIds: string[] = [];
       try {
@@ -279,11 +296,11 @@ serve(async (req) => {
       } catch { /* fail-open */ }
       if (mutedIds.length > 0) {
         const mutedSet = new Set(mutedIds);
-        targetSubs = subscriptions.filter((s: { user_id: string }) => !mutedSet.has(s.user_id));
+        targetSubs = afterLeave.filter((s: { user_id: string }) => !mutedSet.has(s.user_id));
         // ミュート中の購読者は1人1行で保留（同じ人の複数端末購読があっても保存は1行でよい。
         // 配達時は send-push 経由なので全端末に届く）
         const deferRows = mutedIds
-          .filter((uid) => subscriptions.some((s: { user_id: string }) => s.user_id === uid))
+          .filter((uid) => afterLeave.some((s: { user_id: string }) => s.user_id === uid))
           .map((uid) => ({
             user_id: uid,
             payload: {
@@ -298,7 +315,7 @@ serve(async (req) => {
           if (defErr) {
             // 保留の保存に失敗したら fail-open（そのまま送る）。黙って捨てるのが最悪のため
             console.error("[send-push] push_deferred insert failed:", defErr.message);
-            targetSubs = subscriptions;
+            targetSubs = afterLeave;
             deferred = 0;
           } else {
             deferred = deferRows.length;
@@ -359,7 +376,7 @@ serve(async (req) => {
     console.log(`[send-push] sent=${sent} failed=${errors.length} deferred=${deferred}`, errors);
 
     return new Response(
-      JSON.stringify({ sent, failed: errors.length, deferred, errors, removed: expiredEndpoints.length }),
+      JSON.stringify({ sent, failed: errors.length, deferred, leaveDropped, errors, removed: expiredEndpoints.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

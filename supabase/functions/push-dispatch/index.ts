@@ -386,11 +386,15 @@ serve(async (req) => {
     // 自然に集約されて届く（statusもretry_countも変えない）。
     // 🚨 fail-open: RPCが失敗したら「誰もミュートしない」＝全部送る
     let mutedSet = new Set<string>();
+    // 休職中でスマホのお知らせを「受け取らない」人（2026-10-20）。🚨 ミュートと違い保留しない＝捨てる（ベルには残る）。fail-open
+    let leaveBlocked = new Set<string>();
     if (pendingRows.length > 0) {
       try {
         const userIds = [...new Set(pendingRows.map((r) => r.user_id))];
         const { data: muted, error: mutedErr } = await supabase.rpc("push_muted_user_ids", { p_user_ids: userIds });
         if (!mutedErr && Array.isArray(muted)) mutedSet = new Set(muted as string[]);
+        const { data: lb, error: lbErr } = await supabase.rpc("push_leave_blocked_ids", { p_user_ids: userIds });
+        if (!lbErr && Array.isArray(lb)) leaveBlocked = new Set((lb as (string | { push_leave_blocked_ids: string })[]).map((r) => (typeof r === "string" ? r : r.push_leave_blocked_ids)));
       } catch { /* fail-open */ }
     }
 
@@ -431,6 +435,11 @@ serve(async (req) => {
       // ミュート中の人の行は保留（pendingのまま次回に持ち越す）。
       // 緊急（行のurgent＝連絡板の「当日の連絡・緊急」／EVENT_MAPのurgent／safety系）は保留しない
       const isUrgent = row.urgent === true || map.urgent === true || row.event_key.startsWith("safety:");
+      // 休職中で受け取らない人：緊急・安否確認以外は送らずに片付ける（2026-10-20・ユーザー確定）
+      if (!isUrgent && leaveBlocked.has(row.user_id)) {
+        skippedIds.push(row.id);
+        continue;
+      }
       if (!isUrgent && mutedSet.has(row.user_id)) {
         held++;
         continue;
@@ -579,11 +588,19 @@ serve(async (req) => {
       if (deferred.length > 0) {
         // まだミュート中の人の分は残す
         let stillMuted = new Set<string>();
+        // 保留のあいだに休職（受け取らない）に入った人の分は捨てる（2026-10-20）
+        let defLeaveBlocked = new Set<string>();
         try {
           const defUserIds = [...new Set(deferred.map((d) => d.user_id))];
           const { data: muted, error: mutedErr } = await supabase.rpc("push_muted_user_ids", { p_user_ids: defUserIds });
           if (!mutedErr && Array.isArray(muted)) stillMuted = new Set(muted as string[]);
+          const { data: lb, error: lbErr } = await supabase.rpc("push_leave_blocked_ids", { p_user_ids: defUserIds });
+          if (!lbErr && Array.isArray(lb)) defLeaveBlocked = new Set((lb as (string | { push_leave_blocked_ids: string })[]).map((r) => (typeof r === "string" ? r : r.push_leave_blocked_ids)));
         } catch { /* fail-open（＝配達する） */ }
+        const leaveDropIds = deferred.filter((d) => defLeaveBlocked.has(d.user_id)).map((d) => d.id);
+        if (leaveDropIds.length > 0) {
+          await supabase.from("push_deferred").update({ status: "sent" }).in("id", leaveDropIds);   // 片付ける（届けない）
+        }
 
         // 同一 user×tag は「最後の1件だけ」送る。Webプッシュは同じtagで端末上書きされる
         // ため全部送っても最後の1件しか残らない（古い方は sent 扱いで片付ける）。
@@ -591,7 +608,7 @@ serve(async (req) => {
         const latestByUserTag = new Map<string, { id: string; user_id: string; payload: { title: string; body: string; url: string; tag: string } }>();
         const supersededIds: string[] = [];
         for (const d of deferred) {
-          if (stillMuted.has(d.user_id)) continue;
+          if (stillMuted.has(d.user_id) || defLeaveBlocked.has(d.user_id)) continue;
           const key = `${d.user_id}|${d.payload?.tag ?? ""}`;
           const prev = latestByUserTag.get(key);
           if (prev) supersededIds.push(prev.id); // 古い順に走査しているので、前の行は上書きされる側
