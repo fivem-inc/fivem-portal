@@ -86,10 +86,12 @@ function dow(d: string) { return DOW[new Date(d + 'T00:00:00').getDay()]; }
 // 差分の表示（+1:15 / −0:45 / 0:00）。🚨 マイナスは全角の − にする（残業の画面と同じ書き方）
 function fmtSigned(m: number) { const a = Math.abs(m); const t = `${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`; return m > 0 ? `＋${t}` : m < 0 ? `−${t}` : '0:00'; }
 function fmtMin(m: number) { const h = Math.floor(m / 60), min = m % 60; return min > 0 ? `${h}時間${min}分` : `${h}時間`; }
+// 期の名前は残業の一覧・［表で見る］と同じ「2026年11月給与分（10/16〜11/15）」（2026-10-21 ユーザー指示）
 function payPeriodLabel(s: string) {
   const d = new Date(s + 'T00:00:00');
   const nm = d.getMonth() + 2; const y = nm > 12 ? d.getFullYear() + 1 : d.getFullYear();
-  return `${y}年${((nm - 1) % 12) + 1}月給与分`;
+  const m0 = d.getMonth() + 1; const m1 = ((nm - 1) % 12) + 1;
+  return `${y}年${m1}月給与分（${m0}/16〜${m1}/15）`;
 }
 
 type StatusFilter = 'active' | 'confirmed' | 'cancelled' | 'all';
@@ -438,7 +440,8 @@ const ShiftReportsTab: React.FC = () => {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const label = csvMode === 'payperiod' ? payPeriodLabel(csvPayPeriod) : `${csvFrom}〜${csvTo}`;
+    // 🚨 ファイル名に「/」は使えないので、期の名前の（10/16〜11/15）は外す（ファイル名は今までどおり）
+    const label = csvMode === 'payperiod' ? payPeriodLabel(csvPayPeriod).replace(/（.*）$/, '') : `${csvFrom}〜${csvTo}`;
     a.href = url; a.download = `勤務変更報告_${label}.csv`; a.click();
     URL.revokeObjectURL(url);
     setCsvExporting(false); setShowCsvModal(false);

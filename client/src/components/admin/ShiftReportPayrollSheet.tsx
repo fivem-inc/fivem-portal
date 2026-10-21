@@ -109,7 +109,7 @@ const ShiftReportPayrollSheet: React.FC<{
         const absent = types.includes('absence');
         const diff = shiftReportDiff(r).diff;
         const sign = pend ? '（確認待ち）'
-          : r.confirmed_by ? (r.confirmed_by === r.applicant_id ? '自己受理（自分で確認）' : (data.names[r.confirmed_by] || '不明')) : '';
+          : r.confirmed_by ? (r.confirmed_by === r.applicant_id ? '自己受理' : (data.names[r.confirmed_by] || '不明')) : '';
         return {
           key: r.id,
           reason,
@@ -139,6 +139,9 @@ const ShiftReportPayrollSheet: React.FC<{
       people={people} personId={person?.id ?? null} onPerson={setPersonId}
       total={sheet ? sheet.sum.total : null}
       totalNote="通常シフトとの差の合計です。確認待ちは合計に入っていません"
+      plannedText={sheet && sheet.sum.planned !== sheet.sum.total
+        ? `見込み ${sheetHm(sheet.sum.planned)}（確定 ${sheetHm(sheet.sum.total)}・確認待ち ${sheetHm(sheet.sum.planned - sheet.sum.total)}）`
+        : null}
       absenceDays={sheet?.sum.absenceDays ?? 0}
       pendingText={sheet && sheet.sum.pendingCount > 0 ? `確認待ちが${sheet.sum.pendingCount}件あります。受理されると合計に入ります。` : null}
       emptyText={sheet?.empty ? 'この期間の勤務変更の報告はありません' : null}

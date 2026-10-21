@@ -5,7 +5,8 @@ import type { CalendarKind } from '../../lib/breakCalc';
 import { resolveNormalShift, normalShiftTimeText, type PatternRow, type NormalShiftSnapshot } from '../../lib/overtimeShift';
 import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
 import { computeBalance, duplicateChoseiChecker, type BalanceRow } from '../../lib/overtimeBalance';
-import { overtimeApprovedLines } from '../../lib/overtimeApproved';
+import { overtimeApprovedLines, SELF_APPROVED_TEXT } from '../../lib/overtimeApproved';
+import { plannedBreakdownRows } from '../../lib/overtimeBalance';
 import { compareEmployeeNo } from '../../lib/employeeNo';
 import { isOvertimeType, typeLabelFor } from '../../lib/overtimeTypes';
 import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, sheetMd, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
@@ -126,7 +127,7 @@ const OvertimePayrollSheet: React.FC<{
           const actual = segs.filter(s => s.phase === usePhase).sort((a, b) => a.seg_no - b.seg_no).map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join(' / ');
           const typeText = (r.application_types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, r)).join('・');
           const sign = r.entry_type === 'leave_auto' ? '自動（休暇から）'
-            : pendingLabel || overtimeApprovedLines(r, nameOf).map(l => (l.label === '確定' ? `確定：${l.name}` : l.name)).join('／');
+            : pendingLabel || overtimeApprovedLines(r, nameOf).map(l => (l.label === '確定' ? `確定：${l.name}` : l.name.replace(SELF_APPROVED_TEXT, '自己受理'))).join('／');
           const diff = r.diff_minutes ?? 0;
           return {
             key: r.id,
@@ -161,6 +162,9 @@ const OvertimePayrollSheet: React.FC<{
       people={people} personId={person?.id ?? null} onPerson={setPersonId}
       total={sheet ? sheet.balance.total : null}
       totalNote="確認待ち・実績報告待ちは合計に入っていません"
+      plannedText={sheet && sheet.balance.plannedDelta !== 0
+        ? `見込み ${sheetHm(sheet.balance.plannedTotal)}（確定 ${sheetHm(sheet.balance.total)}${plannedBreakdownRows(sheet.balance).map(([l, m]) => `・${l} ${sheetHm(m)}`).join('')}）`
+        : null}
       absenceDays={sheet?.balance.absenceDays ?? 0}
       pendingText={sheet && sheet.pending > 0 ? `確認待ち・実績報告待ちが${sheet.pending}件あります。受理され、実績が確定すると合計に入ります。` : null}
       emptyText={sheet?.empty ? 'この期間の残業・時間調整の申請はありません' : null}

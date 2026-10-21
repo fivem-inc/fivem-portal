@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import SearchableSelect from '../common/SearchableSelect';
 import { backBtn } from '../../lib/buttonStyles';
 import { payMonthLabel, payPeriodLabel, payPeriodEnd } from '../../lib/breakCalc';
@@ -26,11 +26,13 @@ const PayrollSheetView: React.FC<{
   /** 合計（呼ぶ側が計算した数字。行の足し算ではない） */
   total: number | null;
   totalNote: string;
+  /** 見込み（確認待ち・実績報告待ちも足した時間）の1行。無ければ null（2026-10-21 ユーザー指示：残業の画面と同じく見込みも出す） */
+  plannedText: string | null;
   absenceDays: number;
   pendingText: string | null;
   emptyText: string | null;
   days: SheetDay[];
-}> = ({ isDarkMode, onBack, periodOptions, period, onPeriod, loading, loadErr, onReload, people, personId, onPerson, total, totalNote, absenceDays, pendingText, emptyText, days }) => {
+}> = ({ isDarkMode, onBack, periodOptions, period, onPeriod, loading, loadErr, onReload, people, personId, onPerson, total, totalNote, plannedText, absenceDays, pendingText, emptyText, days }) => {
   const isDark = isDarkMode;
   const text = isDark ? '#e9ecef' : '#212529';
   const sub = isDark ? '#adb5bd' : '#6c757d';
@@ -40,6 +42,20 @@ const PayrollSheetView: React.FC<{
   const gray = isDark ? '#8a929a' : '#9aa0a6';
 
   const [picked, setPicked] = useState<string | null>(null);
+  // 名前の帯と表の見出しを、表を下へ動かしても上に残す（2026-10-21 ユーザー指示）。
+  // 🚨 管理画面の外側の箱が overflow-x: hidden なので、ページ全体に対する position: sticky は効かない。
+  //    表を高さの決まった箱の中で動かし（縦も横も）、その箱の中で名前の帯（上・左）と見出し（名前の帯の下）を止める
+  const nameRef = useRef<HTMLDivElement>(null);
+  const [nameH, setNameH] = useState(0);
+  useLayoutEffect(() => {
+    const el = nameRef.current;
+    if (!el) return;
+    const m = () => setNameH(el.offsetHeight);
+    m();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(m) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  });
   const [openReason, setOpenReason] = useState<Set<string>>(new Set());
   useEffect(() => { setPicked(null); setOpenReason(new Set()); }, [personId, period]);
 
@@ -90,14 +106,6 @@ const PayrollSheetView: React.FC<{
             <span style={{ fontSize: 12, color: sub }}>{idx + 1} / {people.length}人（←→ キーでも移れます）</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '4px 16px', padding: '8px 12px', marginBottom: 8, borderRadius: 8, background: isDark ? '#3a2a33' : '#fde8ee', border: `1px solid ${border}`, color: text }}>
-            <span style={{ fontSize: 13, color: sub }}>{person.employee_no ?? '番号なし'}</span>
-            <span style={{ fontSize: 16, fontWeight: 'bold' }}>{person.name}</span>
-            <span style={{ marginLeft: 'auto', fontSize: 14 }}>
-              合計時間 → <b style={{ fontSize: 17, color: total != null && total < 0 ? '#c62828' : text }}>{total == null ? '—' : sheetHm(total)}</b>
-            </span>
-            <span style={{ width: '100%', fontSize: 11.5, color: sub, textAlign: 'right' }}>{totalNote}{absenceDays > 0 ? `／欠勤 ${absenceDays}日` : ''}</span>
-          </div>
           {!person.employee_no && (
             <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>従業員番号が登録されていない方です（管理画面の「👤 ユーザー」で登録できます）</div>
           )}
@@ -106,18 +114,31 @@ const PayrollSheetView: React.FC<{
           )}
           {emptyText && <div style={{ fontSize: 12.5, color: sub, marginBottom: 6 }}>{emptyText}</div>}
 
-          <div style={{ overflowX: 'auto', border: `1px solid ${border}`, borderRadius: 8, background: cardBg }}>
+          <div style={{ overflow: 'auto', maxHeight: 'calc(100dvh - 90px)', minHeight: 320, border: `1px solid ${border}`, borderRadius: 8, background: cardBg }}>
+            <div ref={nameRef} style={{ position: 'sticky', top: 0, left: 0, zIndex: 5, display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '4px 16px', padding: '8px 12px', background: isDark ? '#3a2a33' : '#fde8ee', borderBottom: `1px solid ${border}`, color: text }}>
+              <span style={{ fontSize: 13, color: sub }}>{person.employee_no ?? '番号なし'}</span>
+              <span style={{ fontSize: 16, fontWeight: 'bold' }}>{person.name}</span>
+              <span style={{ marginLeft: 'auto', fontSize: 14 }}>
+                合計時間 → <b style={{ fontSize: 17, color: total != null && total < 0 ? '#c62828' : text }}>{total == null ? '—' : sheetHm(total)}</b>
+              </span>
+              {plannedText && <span style={{ width: '100%', fontSize: 12.5, color: text, textAlign: 'right' }}>{plannedText}</span>}
+              <span style={{ width: '100%', fontSize: 11.5, color: sub, textAlign: 'right' }}>{totalNote}{absenceDays > 0 ? `／欠勤 ${absenceDays}日` : ''}</span>
+            </div>
             <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', minWidth: 780, tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 52 }} /><col style={{ width: 32 }} /><col style={{ width: 110 }} /><col style={{ width: 92 }} />
-                <col /><col style={{ width: 120 }} /><col style={{ width: 120 }} /><col style={{ width: 72 }} />
+                <col style={{ width: 120 }} /><col style={{ width: 72 }} /><col /><col style={{ width: 120 }} />
               </colgroup>
               <thead>
                 <tr>
-                  <th style={{ ...th, position: 'sticky', left: 0, zIndex: 2 }}>日付</th>
-                  <th style={{ ...th, position: 'sticky', left: 52, zIndex: 2 }}></th>
-                  <th style={th}>通常シフト時間</th><th style={th}>労働時間(休憩)</th><th style={th}>理由</th>
-                  <th style={th}>確認サイン</th><th style={th}>変更(実務)シフト時間</th><th style={th}>時間数</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, left: 0, zIndex: 4 }}>日付</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, left: 52, zIndex: 4 }}></th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, zIndex: 3 }}>通常シフト時間</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, zIndex: 3 }}>労働時間(休憩)</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, zIndex: 3 }}>変更(実務)シフト時間</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, zIndex: 3 }}>時間数</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, zIndex: 3 }}>理由</th>
+                  <th style={{ ...th, position: 'sticky', top: nameH, zIndex: 3 }}>確認サイン</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,13 +162,13 @@ const PayrollSheetView: React.FC<{
                           {first ? (hasNs ? day.nsLines.map((t, k) => <div key={k}>{t}</div>) : day.offLabel) : ''}
                         </td>
                         <td style={c({ textAlign: 'center', color: hasNs ? text : gray })}>{first ? day.laborText : ''}</td>
-                        <td style={c({ color: mutedColor, textDecoration: en.strike ? 'line-through' : undefined })}
+                        <td style={c({ textAlign: 'center', color: mutedColor })}>{en.actual}</td>
+                        <td style={c({ textAlign: 'right', color: en.timeColor ?? mutedColor, fontVariantNumeric: 'tabular-nums', textDecoration: en.strike ? 'line-through' : undefined })}>{en.time}</td>
+                        <td style={c({ textAlign: 'left', color: mutedColor, textDecoration: en.strike ? 'line-through' : undefined })}
                           onClick={() => setOpenReason(prev => { const n = new Set(prev); if (n.has(rowKey)) n.delete(rowKey); else n.add(rowKey); return n; })}>
                           <div style={reasonOpen ? { whiteSpace: 'pre-wrap' } : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{en.reason}</div>
                         </td>
                         <td style={c({ color: mutedColor, fontSize: 11.5 })}>{en.sign}</td>
-                        <td style={c({ textAlign: 'center', color: mutedColor })}>{en.actual}</td>
-                        <td style={c({ textAlign: 'right', color: en.timeColor ?? mutedColor, fontVariantNumeric: 'tabular-nums', textDecoration: en.strike ? 'line-through' : undefined })}>{en.time}</td>
                       </tr>
                     );
                   });
