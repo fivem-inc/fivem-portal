@@ -495,6 +495,10 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
           通常シフトは自動で出ます。<b>打刻だけ</b>入力してください。<br />
           送ると、その日は締め切り後でも本人が報告できるようになります。
         </p>
+        {/* まとめて送れることを先に伝える（2026-10-21・1日ずつ送られて本人にお知らせが何回も届いていた・ユーザー確定 案1） */}
+        <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, color: isDark ? '#cfe2ff' : '#0d47a1', borderRadius: 6, padding: '6px 10px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.6 }}>
+          同じ方の日は、［＋ この日を追加］で何日分でも並べて、まとめて1回で送れます。本人へのお知らせは1回で、答えは1日ずつです。
+        </div>
 
         <div style={{ marginBottom: 10 }}>
           {label('対象者')}
@@ -513,7 +517,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
             <input type="date" value={newDate} max={todayJstStr()} onChange={e => setNewDate(e.target.value)} style={inputStyle} />
           </div>
           <button onClick={addDate} disabled={!newDate || !targetId}
-            style={{ padding: '7px 14px', borderRadius: 6, border: `1px solid ${border}`, background: innerBg, color: text, cursor: 'pointer', fontSize: 12.5 }}>
+            style={{ ...tintBtn(isDark), padding: '7px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 'bold', cursor: !newDate || !targetId ? 'default' : 'pointer' }}>
             ＋ この日を追加
           </button>
         </div>
@@ -620,6 +624,9 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
           </div>
         )}
 
+        {rows.length > 0 && (
+          <p style={{ margin: '-4px 0 12px', fontSize: 12, color: subText }}>ほかの日もあれば、上で日付を選んで［＋ この日を追加］を押してください。</p>
+        )}
         <div style={{ marginBottom: 12 }}>
           {label('一言（任意）')}
           <input value={message} onChange={e => setMessage(e.target.value)}
@@ -661,8 +668,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
 
         {!confirming ? (
           <button onClick={() => { const v = validate(); if (v) { setErr(v); return; } setErr(''); setConfirming(true); }}
-            style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: '#0d6efd', color: '#fff', cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold' }}>
-            内容を確認して送る
+            style={{ ...primaryBtn(), padding: '9px 18px', borderRadius: 8, fontSize: 13.5 }}>
+            内容を確認して送る{rows.length > 0 ? `（${rows.length}日分）` : ''}
           </button>
         ) : (
           <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px' }}>
