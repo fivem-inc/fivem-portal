@@ -547,7 +547,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at, signup_ip, signup_country, signup_city, retire_date, retiree_access_until, retired_at, hire_date, invite_scheduled_for, invite_sent_at, invite_send_count, must_change_password')
+        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at, signup_ip, signup_country, signup_city, retire_date, retiree_access_until, retired_at, hire_date, employee_no, invite_scheduled_for, invite_sent_at, invite_send_count, must_change_password')
         .order('sort_order', { ascending: true, nullsFirst: false });
       if (error) {
         console.error('ユーザー取得エラー:', error);

@@ -1816,8 +1816,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                     : null
                 }
                 {r.actual_start && (
-                  <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>
-                    変更後：{r.actual_location} {formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                  <div style={{ fontSize: 12, color: isDark ? '#e9ecef' : '#212529', marginBottom: 4 }}>
+                    {/* 2026-10-21 ユーザー確定 案A：緑をやめ、ふつうの文字の色・時刻だけ太字 */}
+                    変更後：{r.actual_location} <b>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}</b>　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                   </div>
                 )}
                 {/* 休憩が法律の最低に足りない報告（2026-10-08）。🚨 受理する人にだけ出す（事後の報告なので本人には出さない） */}
@@ -2165,8 +2166,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                                 : null
                             }
                             {r.actual_start && (
-                              <div style={{ fontSize: 11, color: isDark ? '#4ade80' : '#166534' }}>
-                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                              <div style={{ fontSize: 11, color: isDark ? '#e9ecef' : '#212529' }}>
+                                {/* 2026-10-21 ユーザー確定 案A：緑をやめ、ふつうの文字の色・時刻だけ太字 */}
+                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}<b>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}</b>　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                                 {lateMin != null && isTardiness && (
                                   <span style={{ marginLeft: 4, color: isDark ? '#c084fc' : '#7b1fa2', fontWeight: 'bold' }}>
                                     ／遅刻 {formatMin(lateMin)}

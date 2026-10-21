@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
+import { compareEmployeeNo } from '../../lib/employeeNo';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs, shiftLegalBreak, legalBreakReviewNote } from '../../lib/shiftCalc';
@@ -139,6 +140,7 @@ const ShiftReportsTab: React.FC = () => {
   const [returning, setReturning]       = useState(false);
   const [sortKey, setSortKey]           = useState<'created_at' | 'work_date' | 'applicantName'>('created_at');
   const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('desc');
+  const [empNoMap, setEmpNoMap]         = useState<Record<string, string | null>>({});
 
   const bg        = isDarkMode ? '#1e2328' : '#f8f9fa';
   const border    = isDarkMode ? '#495057' : '#dee2e6';
@@ -168,8 +170,10 @@ const ShiftReportsTab: React.FC = () => {
       ...data.map((r: ShiftReport) => r.reviewer_id).filter(Boolean),
       ...data.map((r: ShiftReport) => r.confirmed_by).filter(Boolean),
     ])] as string[];
-    const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', ids);
+    const { data: profs } = await supabase.from('profiles').select('id, name, group_names, employee_no').in('id', ids);
     const nm = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    // 名前順は従業員番号の順（給与の並び・2026-10-21 ユーザー確定）
+    setEmpNoMap(Object.fromEntries((profs || []).map((p: { id: string; employee_no: string | null }) => [p.id, p.employee_no])));
     const gm: Record<string, string[]> = {};
     (profs || []).forEach((p: { id: string; group_names?: string[] }) => { gm[p.id] = p.group_names ?? []; });
     setGroupMap(gm);
@@ -361,7 +365,11 @@ const ShiftReportsTab: React.FC = () => {
     let va = '', vb = '';
     if (sortKey === 'created_at') { va = a.created_at; vb = b.created_at; }
     else if (sortKey === 'work_date') { va = a.work_date; vb = b.work_date; }
-    else { va = a.applicantName ?? ''; vb = b.applicantName ?? ''; }
+    else {
+      // 名前順＝従業員番号の順（番号の無い人は最後・その中は名前順）。同じ人の中は対象日で並べる（下）
+      const c0 = compareEmployeeNo(empNoMap[a.applicant_id], a.applicantName, empNoMap[b.applicant_id], b.applicantName, sortDir === 'asc');
+      if (c0 !== 0) return c0;
+    }
     const c = va.localeCompare(vb);
     if (c !== 0) return dir * c;
     // 同じ値のときは対象日で並べる。
@@ -528,7 +536,7 @@ const ShiftReportsTab: React.FC = () => {
                  （一覧の列見出しは「変更前」のまま。あの列には対象日と変更前の内容が両方入る） */}
           <option value="created_at">報告日</option>
           <option value="work_date">対象日</option>
-          <option value="applicantName">報告者</option>
+          <option value="applicantName">名前順（従業員番号）</option>
         </select>
         <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
           style={{ ...btnBase, padding: '4px 10px', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: text }}>
@@ -637,19 +645,19 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 11, color: sub }}>—</div>
                         )}
                       </td>
-                      {/* 変更後 */}
+                      {/* 変更後（2026-10-21 ユーザー確定 案A：緑をやめ、ふつうの文字の色・時刻だけ太字。緑は成功の知らせだけに使う） */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
                         {r.actual_location && (
-                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_location}</div>
+                          <div style={{ fontSize: 11, color: text }}>{r.actual_location}</div>
                         )}
                         {r.actual_start && (
-                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}</div>
+                          <div style={{ fontSize: 11, color: text, fontWeight: 'bold' }}>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}</div>
                         )}
                         {r.actual_start && (
-                          <div style={{ fontSize: 11, color: '#166534' }}>休憩 {r.break_minutes ?? 0}分</div>
+                          <div style={{ fontSize: 11, color: isDarkMode ? '#ced4da' : '#495057' }}>休憩 {r.break_minutes ?? 0}分</div>
                         )}
                         {r.labor_minutes != null && r.labor_minutes > 0 && (
-                          <div style={{ fontSize: 11, color: '#166534' }}>実労働 {fmtMin(r.labor_minutes)}</div>
+                          <div style={{ fontSize: 11, color: isDarkMode ? '#ced4da' : '#495057' }}>実労働 {fmtMin(r.labor_minutes)}</div>
                         )}
                         {/* 休憩が法律の最低に足りない報告（2026-10-08・受理する人にだけ出す。文は lib/shiftCalc の legalBreakReviewNote） */}
                         {(() => { const l = shiftLegalBreak(r); return l && !l.ok ? (

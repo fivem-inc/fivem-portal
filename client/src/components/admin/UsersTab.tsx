@@ -423,6 +423,18 @@ const ymdLabel = (ymd: string): string => {
 
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
+  // 従業員番号の直し（2026-10-21）。並び順の数字と同じく、押すとその場で入力になる
+  const [editingEmpNo, setEditingEmpNo] = useState<string | null>(null);
+  const [empNoValue, setEmpNoValue] = useState('');
+  const saveEmpNo = async (userId: string) => {
+    const v = empNoValue.trim();
+    const res = await supabase.from('profiles').update({ employee_no: v || null }).eq('id', userId).select('id');
+    if (res.error?.code === '23505') { setErrorMsg(`従業員番号「${v}」は、すでに別の方に登録されています。`); return; }
+    const fail = describeUpdate(res, '従業員番号の変更', 'missing');
+    if (fail) { setErrorMsg(fail); return; }
+    setEditingEmpNo(null);
+    fetchUsers();
+  };
   const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, setSuccessMsg, handleRestoreUser, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
@@ -969,10 +981,28 @@ const UsersTab: React.FC = () => {
                                   <button onClick={handleCancelUserEdit} style={{ padding: '4px 8px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>キャンセル</button>
                                 </div>
                               ) : (
+                                <>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                   <span>{user.name || '未設定'}</span>
                                   <button onClick={() => handleEditName(user.id, user.name || '')} style={{ padding: '2px 6px', background: '#ffc107', color: '#212529', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px', marginLeft: '8px' }}>編集</button>
                                 </div>
+                                {/* 従業員番号（給与計算の番号・2026-10-21）。残業の［表で見る］と勤務変更のタブの名前順に使う */}
+                                {editingEmpNo === user.id ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                                    <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>番号</span>
+                                    <input value={empNoValue} onChange={e => setEmpNoValue(e.target.value)} autoFocus maxLength={20}
+                                      onKeyDown={e => { if (e.key === 'Enter') saveEmpNo(user.id); if (e.key === 'Escape') setEditingEmpNo(null); }}
+                                      style={{ width: 70, padding: '1px 4px', fontSize: 11, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#000' }} />
+                                    <button onClick={() => saveEmpNo(user.id)} style={{ padding: '1px 6px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✓</button>
+                                    <button onClick={() => setEditingEmpNo(null)} style={{ padding: '1px 6px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✕</button>
+                                  </div>
+                                ) : (
+                                  <span onClick={() => { setEditingEmpNo(user.id); setEmpNoValue(user.employee_no ?? ''); }} title="押して従業員番号を変更"
+                                    style={{ display: 'inline-block', marginTop: 2, fontSize: 11, color: isDarkMode ? '#adb5bd' : '#888', cursor: 'pointer' }}>
+                                    番号：{user.employee_no ?? '未登録'}
+                                  </span>
+                                )}
+                                </>
                               )}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#555', fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.email}>{user.email}</td>

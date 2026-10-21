@@ -36,6 +36,15 @@ export interface BalanceSummary {
   pendingCount: number;  // 確認待ち件数（requested/reported）
 }
 
+/**
+ * 同じ日に確定済みの leave_auto がある日の、手で出した時間外調整休（chosei_off）は数えない（二重に引かない）。
+ * computeBalance と［表で見る］（その行に「休暇の側で計上」と出す）で共用（2026-10-21）。rows は確定済みの行
+ */
+export function duplicateChoseiChecker(confirmedRows: Pick<BalanceRow, 'entry_type' | 'work_date' | 'application_types'>[]): (r: Pick<BalanceRow, 'entry_type' | 'work_date' | 'application_types'>) => boolean {
+  const autoDates = new Set(confirmedRows.filter(r => r.entry_type === 'leave_auto').map(r => r.work_date));
+  return r => r.entry_type === 'manual' && (r.application_types ?? []).includes('chosei_off') && autoDates.has(r.work_date);
+}
+
 // 合計時間数の内訳を計算する純関数。本人カード・部門集計・個人詳細で共用する。
 // allRows: 任意ユーザーの overtime_reports（複数期間を含んでよい）。period で対象期を絞る。
 export function computeBalance(allRows: BalanceRow[], period: string): BalanceSummary {
@@ -44,9 +53,7 @@ export function computeBalance(allRows: BalanceRow[], period: string): BalanceSu
 
   // 二重減算防止: 同日に確定済みの leave_auto（休暇由来の自動マイナス行）がある場合、
   // 同日の手動 chosei_off は計上しない（leave_auto を正とする）。両者は別々の部分ユニークで共存し得る。
-  const autoDates = new Set(confirmed.filter(r => r.entry_type === 'leave_auto').map(r => r.work_date));
-  const isDupChosei = (r: BalanceRow) =>
-    r.entry_type === 'manual' && (r.application_types ?? []).includes('chosei_off') && autoDates.has(r.work_date);
+  const isDupChosei = duplicateChoseiChecker(confirmed);
   const counted = confirmed.filter(r => !isDupChosei(r));
 
   // 調整休系（休みによる貸借）= 時間外調整休 / 休暇由来の自動計上 / 振替休日。

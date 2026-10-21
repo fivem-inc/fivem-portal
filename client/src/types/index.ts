@@ -206,6 +206,8 @@ export interface AdminUserProfile {
   retired_at?: string | null;
   /** 入社日。入社予定（is_active=false）の人はこの日に在籍になる（docs/計画-入社予定スタッフの登録と招待.md） */
   hire_date?: string | null;
+  /** 従業員番号（給与計算の番号・2026-10-21）。残業の表で見る・勤務変更のタブの名前順に使う */
+  employee_no?: string | null;
   /** 招待メールの送信予定（入社日の朝10時など）。null＝予定なし */
   invite_scheduled_for?: string | null;
   /** 招待メールを最後に送った時刻・回数 */
