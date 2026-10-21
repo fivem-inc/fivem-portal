@@ -10,6 +10,13 @@ type Sb = any
 
 export const ENC_REASON = '【有給奨励日】'
 export const ENC_TITLE = '有休奨励日'
+/**
+ * まとめの予定の名前（2026-10-21 ユーザー確定 案A）。もとからある「休館日、有給奨励日」の予定と見分けるため、
+ * 「取得一覧」と、休む人／送った人（対象）の人数を入れる。対象が読めないときは休む人の数だけ
+ */
+export function encSummaryTitle(total: number, targets: number | null): string {
+  return targets != null && targets > 0 ? `${ENC_TITLE} 取得一覧（${total}/${targets}名）` : `${ENC_TITLE} 取得一覧（${total}名）`
+}
 const ENC_COLOR = '4' // ふだんの有休と同じ Flamingo（ピンク）
 const ALL_TYPES = ['有休', '調整休', 'その他'] as const
 type EncType = typeof ALL_TYPES[number]
@@ -78,8 +85,11 @@ export function parseLeaveDates(v: unknown): string[] | null {
   }
 }
 
-/** まとめの予定の本文（案2・合計の下の1行は入れない＝ユーザー確定） */
-export function encDescription(groups: Record<EncType, string[]>, types: EncType[], names: boolean): { text: string; total: number } {
+/**
+ * まとめの予定の本文（案2）。
+ * 2026-10-21 ユーザー確定：合計の下に「対象 ◯名・回答 ◯名・未回答 ◯名」を1行足す（counts が読めたときだけ）
+ */
+export function encDescription(groups: Record<EncType, string[]>, types: EncType[], names: boolean, counts?: { targets: number; responded: number } | null): { text: string; total: number } {
   const lines: string[] = []
   let total = 0
   for (const t of ALL_TYPES) {
@@ -93,6 +103,7 @@ export function encDescription(groups: Record<EncType, string[]>, types: EncType
   if (total === 0) return { text: '', total: 0 }
   lines.push('')
   lines.push(`合計 ${total}人`)
+  if (counts) lines.push(`対象 ${counts.targets}名・回答 ${counts.responded}名・未回答 ${Math.max(0, counts.targets - counts.responded)}名`)
   return { text: lines.join('\n'), total }
 }
 
@@ -171,7 +182,17 @@ export async function syncEncouragementDay(ctx: EncCtx, date: string, dayId: str
   const groups: Record<EncType, string[]> = { '有休': [], '調整休': [], 'その他': [] }
   for (const l of include) groups[encTypeOf(l.leave_type)].push(nameOf.get(l.user_id) ?? '')
   for (const t of ALL_TYPES) groups[t].sort((a, b) => a.localeCompare(b, 'ja'))
-  const desc = encDescription(groups, ctx.setting.types, ctx.setting.names)
+  // 送った人（対象）と回答した人の数。読めなければ名前と説明欄に出さない（予定は今までどおり作る）
+  let counts: { targets: number; responded: number } | null = null
+  if (dayId) {
+    const [tRes, rRes] = await Promise.all([
+      sb.from('paid_leave_encouragement_targets').select('id', { count: 'exact', head: true }).eq('encouragement_day_id', dayId),
+      sb.from('paid_leave_encouragement_responses').select('id', { count: 'exact', head: true }).eq('encouragement_day_id', dayId),
+    ])
+    if (!tRes.error && !rRes.error && typeof tRes.count === 'number' && typeof rRes.count === 'number') counts = { targets: tRes.count, responded: rRes.count }
+  }
+  const desc = encDescription(groups, ctx.setting.types, ctx.setting.names, counts)
+  const title = encSummaryTitle(desc.total, counts ? counts.targets : null)
   const wantSummary = mode === 'summary' && desc.total > 0 && !!dayId
 
   let kept: typeof sumRows[number] | null = null
@@ -180,7 +201,7 @@ export async function syncEncouragementDay(ctx: EncCtx, date: string, dayId: str
     await delRow(ctx, r, wantSummary ? '重なり・連携先が変わった' : 'まとめて1件でない・休む人がいない', cnt)
   }
   if (wantSummary) {
-    const fields = { summary: ENC_TITLE, description: desc.text, colorId: ENC_COLOR }
+    const fields = { summary: title, description: desc.text, colorId: ENC_COLOR }
     if (kept) {
       ctx.ops.push(`直す：まとめ（${desc.total}人）\n${desc.text}`)
       cnt.updated++
@@ -189,7 +210,7 @@ export async function syncEncouragementDay(ctx: EncCtx, date: string, dayId: str
         if (!ok) {
           // Google 側で人が消していた：記録を消して作り直す
           await sb.from('gcal_events').delete().eq('id', kept.id)
-          const eventId = await ctx.createEvent(ctx.token, ctx.calendarId, ENC_TITLE, date, ENC_COLOR, desc.text)
+          const eventId = await ctx.createEvent(ctx.token, ctx.calendarId, title, date, ENC_COLOR, desc.text)
           await sb.from('gcal_events').insert({ source_type: 'encouragement', source_id: dayId, calendar_id: ctx.calendarId, event_id: eventId, date })
         }
       }
@@ -197,7 +218,7 @@ export async function syncEncouragementDay(ctx: EncCtx, date: string, dayId: str
       ctx.ops.push(`作る：まとめ（${desc.total}人）\n${desc.text}`)
       cnt.created++
       if (!ctx.dryRun) {
-        const eventId = await ctx.createEvent(ctx.token, ctx.calendarId, ENC_TITLE, date, ENC_COLOR, desc.text)
+        const eventId = await ctx.createEvent(ctx.token, ctx.calendarId, title, date, ENC_COLOR, desc.text)
         const { error } = await sb.from('gcal_events').insert({ source_type: 'encouragement', source_id: dayId, calendar_id: ctx.calendarId, event_id: eventId, date })
         if (error) {
           // ほかの呼び出しが先に作っていた（一意の重なり）：こちらの予定を消し、先にできた予定の中身を直す
