@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { compareEmployeeNo } from '../../lib/employeeNo';
+import { SHIFT_TYPE_INFO, type ShiftAppType } from '../../lib/shiftReportTypes';
+import { onRowPick, pickedRowBg } from '../../lib/rowPick';
+import ShiftReportPayrollSheet from './ShiftReportPayrollSheet';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs, shiftLegalBreak, legalBreakReviewNote } from '../../lib/shiftCalc';
@@ -11,7 +14,7 @@ import CorrectionNotice from '../CorrectionNotice';
 import { ApprovedByLines } from './ApprovedByLines';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 
-type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
+type AppType = ShiftAppType;
 
 interface ShiftReport {
   id: string;
@@ -60,16 +63,8 @@ const SHIFT_FIELD_LABELS: Record<string, string> = { types: '種別', work_date:
 const SHIFT_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再報告' };
 
 
-const TYPE_INFO: Record<AppType, { label: string; color: string; emoji: string }> = {
-  overtime:     { label: '残業',     color: '#1565c0', emoji: '⏰' },
-  holiday_work: { label: '休日出勤', color: '#0f766e', emoji: '🏢' },
-  early_leave:  { label: '早退',     color: '#e65100', emoji: '🏃' },
-  tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '🕐' },
-  absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
-  early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
-  location_change: { label: '勤務地変更', color: '#6d28d9', emoji: '📍' },
-  missed_clock: { label: '打刻忘れ', color: '#5a6b7d', emoji: '📋' },
-};
+// 種別の名前は lib/shiftReportTypes（［表で見る］と共用・2026-10-21）
+const TYPE_INFO = SHIFT_TYPE_INFO;
 function getTypes(r: ShiftReport): AppType[] {
   return r.application_types?.length ? r.application_types : [r.application_type];
 }
@@ -141,6 +136,10 @@ const ShiftReportsTab: React.FC = () => {
   const [sortKey, setSortKey]           = useState<'created_at' | 'work_date' | 'applicantName'>('created_at');
   const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('desc');
   const [empNoMap, setEmpNoMap]         = useState<Record<string, string | null>>({});
+  // ボタン以外を押した行に薄い色（残業の受理済み一覧と同じ・2026-10-21 ユーザー指示）
+  const [pickedRow, setPickedRow]       = useState<string | null>(null);
+  // ［表で見る］（給与計算用・2026-10-21 ユーザー確定。残業と同じ形）
+  const [sheetOpen, setSheetOpen]       = useState(false);
 
   const bg        = isDarkMode ? '#1e2328' : '#f8f9fa';
   const border    = isDarkMode ? '#495057' : '#dee2e6';
@@ -452,6 +451,14 @@ const ShiftReportsTab: React.FC = () => {
     return { date: y, time: t };
   };
 
+  if (sheetOpen) {
+    const sp = periodFilter === '__current__' ? currentPeriod : (periodFilter === 'all' ? undefined : periodFilter);
+    return (
+      <ShiftReportPayrollSheet isDarkMode={isDarkMode} initialPeriod={sp}
+        initialPerson={personFilter !== 'all' ? personFilter : undefined} onBack={() => setSheetOpen(false)} />
+    );
+  }
+
   return (
     <div style={{ background: bg, minHeight: '60vh', padding: '0 0 40px' }}>
       {confirmDialog && (
@@ -480,6 +487,11 @@ const ShiftReportsTab: React.FC = () => {
         <button onClick={() => setShowCsvModal(true)}
           style={{ ...btnBase, ...tintBtn(isDarkMode), padding: '5px 12px', fontSize: 12 }}>
           📥 CSV出力
+        </button>
+        {/* 元のスプレッドシートと同じ形（1人ずつ・1日1行・従業員番号の順）で見る（2026-10-21 ユーザー確定） */}
+        <button onClick={() => setSheetOpen(true)}
+          style={{ ...btnBase, ...tintBtn(isDarkMode), padding: '5px 12px', fontSize: 12, marginLeft: 8 }}>
+          📋 表で見る
         </button>
       </div>
 
@@ -608,7 +620,8 @@ const ShiftReportsTab: React.FC = () => {
                   <React.Fragment key={r.id}>
                     <tr
                       ref={r.id === focusId ? focusRowRef : undefined}
-                      style={{ background: r.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : rowBg, borderLeft: isPend ? '3px solid #ffc107' : undefined, transition: 'background 0.6s' }}
+                      onClick={e => onRowPick(e, r.id, pickedRow, setPickedRow)}
+                      style={{ background: r.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : pickedRow === r.id ? pickedRowBg(isDarkMode) : rowBg, borderLeft: isPend ? '3px solid #ffc107' : undefined, transition: 'background 0.6s', cursor: 'pointer' }}
                     >
                       {/* 申請日 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
