@@ -13,6 +13,8 @@ import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import CorrectionNotice from '../CorrectionNotice';
 import { ApprovedByLines } from './ApprovedByLines';
 import { useLatestCorrections } from '../../lib/correctionNotice';
+import ShiftRegWarn from '../ShiftRegWarn';
+import { useRegisteredShifts } from '../../hooks/useRegisteredShifts';
 
 type AppType = ShiftAppType;
 
@@ -361,6 +363,9 @@ const ShiftReportsTab: React.FC = () => {
     return true;
   });
 
+  // 変更前が登録シフトと違う報告の知らせ（2026-10-21 案A の③）。いま表に出ている分の人と日付で読む
+  const regOf = useRegisteredShifts(filtered);
+
   const sorted = [...filtered].sort((a, b) => {
     const dir = sortDir === 'asc' ? 1 : -1;
     let va = '', vb = '';
@@ -657,6 +662,8 @@ const ShiftReportsTab: React.FC = () => {
                         {r.original_start && (
                           <div style={{ fontSize: 11, color: sub }}>{formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div>
                         )}
+                        {/* 変更前が登録シフトと違う（2026-10-21 案A の③） */}
+                        <ShiftRegWarn reg={regOf(r.applicant_id, r.work_date)} r={r} />
                         {!r.original_location && !r.original_start && (
                           <div style={{ fontSize: 11, color: sub }}>—</div>
                         )}

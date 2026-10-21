@@ -34,6 +34,7 @@ import ShiftReportTodo from '../components/ShiftReportTodo';
 import type { TodoItem } from '../lib/shiftReportTodo';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
 import { resolveNormalShift, normalShiftBands, type PatternRow } from '../lib/overtimeShift';
+import { registeredShiftFor, registeredShiftText, matchesRegisteredShift, type RegisteredShift } from '../lib/shiftRegistered';
 
 /** 申請の画面に最初から入れておく中身。カレンダーの予定（2026-10-05）か、出張報告（2026-10-14）から */
 type ShiftPrefill = TodoItem & {
@@ -45,6 +46,8 @@ type ShiftPrefill = TodoItem & {
 };
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { useAuth } from '../hooks/useAuth';
+import ShiftRegWarn from '../components/ShiftRegWarn';
+import { useRegisteredShifts } from '../hooks/useRegisteredShifts';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -498,6 +501,44 @@ const ShiftReportForm: React.FC<{
   // 勤務地は時間帯ごとに選ぶ（午前は四条本校・午後は西陣校 のように校をまたぐ日があるため）。
   // 「その他（自由入力）」を選んだかどうかだけ別に覚え、値は各時間帯の location に直接入れる
   const [origLocOther, setOrigLocOther] = useState<boolean[]>([]);
+
+  // 登録シフト（曜日ごとのシフト）を「変更前」に入れ、違えば知らせる（2026-10-21 ユーザー確定 案A・lib/shiftRegistered）。
+  // きっかけ：変更前を手で入れていて、6:15 と打ち間違えた報告が受理され、差分 −3:00 が給与に出かけた。
+  // ・入れるのは「変更前がまだ空」か「前に自動で入れたまま（日付・人を変えた）」のときだけ。手で直した値・下書き・修正中の報告は上書きしない
+  // ・登録シフトが休みの日は何も入れない（休日出勤などはこれまでどおり）。読めなければ何もしない（知らせも出さない）
+  const [regShift, setRegShift] = useState<RegisteredShift | null>(null);
+  const autoOrigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!applicantId || !date) { setRegShift(null); return; }
+    let alive = true;
+    (async () => {
+      const [patRes, calRes] = await Promise.all([
+        supabase.from('weekly_shift_patterns').select('id, user_id, day_kind, start_time, end_time, start_time2, end_time2, location, break_minutes, labor_minutes, valid_from, valid_to').eq('user_id', applicantId),
+        supabase.from('company_calendar').select('kind').eq('date', date).maybeSingle(),
+      ]);
+      if (!alive) return;
+      if (patRes.error || calRes.error) { setRegShift(null); return; }
+      const reg = registeredShiftFor((patRes.data ?? []) as PatternRow[], date, (calRes.data?.kind ?? null) as CalendarKind | null);
+      setRegShift(reg);
+      if (editTarget) return;
+      const keyOf = (list: Seg[]) => JSON.stringify(list.map(x => [x.start, x.end, x.location ?? '']));
+      setOrigSegs(prev => {
+        const empty = prev.every(x => !x.start && !x.end);
+        const wasAuto = autoOrigRef.current != null && keyOf(prev) === autoOrigRef.current;
+        if (!empty && !wasAuto) return prev;
+        if (reg.bands.length === 0) { autoOrigRef.current = null; return wasAuto ? [{ start: '', end: '', location: prev[0]?.location ?? '' }] : prev; }
+        const next: Seg[] = reg.bands.map(b => ({ start: b.start, end: b.end, location: reg.location ?? prev[0]?.location ?? '' }));
+        autoOrigRef.current = keyOf(next);
+        return next;
+      });
+    })();
+    return () => { alive = false; };
+    // editTarget は開いたときに決まる（途中で変わらない）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applicantId, date]);
+  const origFilled = origSegs.filter(x => x.start && x.end);
+  const origDiffersFromReg = !!regShift && regShift.bands.length > 0 && origFilled.length > 0 && !matchesRegisteredShift(origFilled, regShift);
+  const origIsReg = !!regShift && regShift.bands.length > 0 && origFilled.length > 0 && !origDiffersFromReg;
   const [actLocOther, setActLocOther]   = useState<boolean[]>([]);
   // 保存済みの校が勤務地リストに無い＝「その他」で入力された値なので、自由入力欄で開く
   const isOtherLoc = (flags: boolean[], s: Seg, i: number): boolean =>
@@ -1054,6 +1095,22 @@ const ShiftReportForm: React.FC<{
                     </div>
                     );
                   })}
+                  {/* 登録シフトとの照らし合わせ（2026-10-21 案A）。止めない（その日だけシフトが違うことがある） */}
+                  {origIsReg && (
+                    <div style={{ fontSize: 12, color: subColor, margin: '-4px 0 10px' }}>登録シフトと同じです。違う日だけ直してください。</div>
+                  )}
+                  {origDiffersFromReg && regShift && (
+                    <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 10px', color: '#856404', fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 10px' }}>
+                      登録シフト（{registeredShiftText(regShift)}）と違います。この日だけシフトが違った場合は、このまま送ってください。
+                      <div style={{ marginTop: 6 }}>
+                        <button type="button" onClick={() => {
+                          const next: Seg[] = regShift.bands.map(b => ({ start: b.start, end: b.end, location: regShift.location ?? origSegs[0]?.location ?? '' }));
+                          autoOrigRef.current = JSON.stringify(next.map(x => [x.start, x.end, x.location ?? '']));
+                          setOrigSegs(next); setOrigLocOther([]); clearErr('origTime');
+                        }} style={{ ...backBtn(isDark), padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>登録シフトに戻す</button>
+                      </div>
+                    </div>
+                  )}
                   {origSegs.length < MAX_SEGS && (
                     <button type="button" onClick={() => setOrigSegs(prev => [...prev, { start: '', end: '' }])}
                       style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%' }}>
@@ -1659,6 +1716,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     return base;
   }, [histMode, myReports, reviewedReports, proxyReports, allReports, histStatusFilter, histGroupFilter, groupMap]);
 
+  // 変更前が登録シフトと違う報告に「⚠️ 登録シフトは…」（2026-10-21 案A の③・受理待ちと履歴）
+  const regRows = useMemo(() => [...pendingReports, ...histReports], [pendingReports, histReports]);
+  const regOf = useRegisteredShifts(regRows);
+
   const histGrouped = histReports.reduce<Record<string, ShiftReport[]>>((acc, r) => {
     if (!acc[r.pay_period_start]) acc[r.pay_period_start] = [];
     acc[r.pay_period_start].push(r);
@@ -1810,7 +1871,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   </span>
                 </div>
                 {r.original_start
-                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div>
+                  ? <><div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div><ShiftRegWarn reg={regOf(r.applicant_id, r.work_date)} r={r} /></>
                   : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
                     ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>変更前：もともと休みの日</div>
                     : null
@@ -2160,7 +2221,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </span>
                             </div>
                             {r.original_start
-                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div>
+                              ? <><div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div><ShiftRegWarn reg={regOf(r.applicant_id, r.work_date)} r={r} /></>
                               : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
                                 ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#bbb' }}>変更前：もともと休みの日</div>
                                 : null
