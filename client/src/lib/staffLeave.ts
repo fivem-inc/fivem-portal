@@ -7,6 +7,8 @@
  */
 import { supabase } from './supabaseClient';
 import { mdLabel } from './retire';
+import { attrsFor, type RoleRow } from './roleAttrs';
+import { isPrehire, type PrehireFields } from './staffState';
 
 export interface StaffLeave {
   id: string;
@@ -17,6 +19,8 @@ export interface StaffLeave {
   board_asked_at: string | null;
   push_on: boolean;
   push_asked_at: string | null;
+  /** スマホの通知の希望を確かめた・変えた人（本人なら「本人が設定で変更」・2026-10-21） */
+  push_asked_by: string | null;
   features_add: string[];
   features_remove: string[];
   ended_at: string | null;
@@ -27,14 +31,14 @@ export interface StaffLeave {
 
 /**
  * 管理画面のユーザー一覧に［休職］を出すか（2026-10-20）。
- * 🚨 申請先の候補から外す・残りの宛先・日付の直し忘れのベル・スマホのお知らせ・チェックリスト・シフト表がそろうまで false。
- *    そろう前に登録すると、休職中の人が候補に残る・申請が受理されないまま気づかれない、が起きるため（計画 docs/計画-休職と手続き.md）
+ * 🚨 申請先の候補から外す・残りの宛先・日付の直し忘れのベル・スマホのお知らせ・チェックリスト・シフト表がそろうまで false だった。
+ *    段5（チェックリスト）・段6（シフトの表）がそろったので true（2026-10-21・計画 docs/計画-休職-段5-段6.md）
  */
-export const LEAVE_REGISTER_OPEN = false;
+export const LEAVE_REGISTER_OPEN = true;
 
 export type LeaveStatus = 'scheduled' | 'on_leave' | 'ended' | 'cancelled';
 
-const COLS = 'id, user_id, start_date, return_date, board_opt_in, board_asked_at, push_on, push_asked_at, features_add, features_remove, ended_at, end_reason, cancelled_at, created_at';
+const COLS = 'id, user_id, start_date, return_date, board_opt_in, board_asked_at, push_on, push_asked_at, push_asked_by, features_add, features_remove, ended_at, end_reason, cancelled_at, created_at';
 
 /** 日本時間の日付 "YYYY-MM-DD"（ended_at の日付を出すため） */
 function jstDate(iso: string): string {
@@ -148,6 +152,20 @@ export function pendingItemLabel(it: PendingItem): string {
   return `${PENDING_KIND_LABEL[it.kind]}${date}${who}${detail}${second}`;
 }
 
+/**
+ * 付け替え先の候補：在籍・本人以外・今日休職中でない・受理する役職（受理者・リーダー以上・マネージャー以上・決裁者）。
+ * 🚨 ユーザー一覧と手続きの「休職」のタブの両方がこれを使う（2か所に書かない・2026-10-21）
+ */
+export function leaveReassignCandidates<T extends PrehireFields & { id: string; name?: string | null; email?: string | null; role_title?: string | null }>(
+  users: T[], openLeaves: Map<string, StaffLeave>, roles: readonly RoleRow[], excludeId: string, todayJst: string,
+): { id: string; name: string }[] {
+  return users
+    .filter(x => x.is_active !== false && x.id !== excludeId && !isPrehire(x))
+    .filter(x => { const l = openLeaves.get(x.id); return !(l && leaveStatusOf(l, todayJst) === 'on_leave'); })
+    .filter(x => { const a = attrsFor(roles, x.role_title); return a.is_approver || a.is_leader_plus || a.is_manager_plus || a.is_board_approver; })
+    .map(x => ({ id: x.id, name: x.name || x.email || '' }));
+}
+
 export interface ReassignPick { kind: PendingItem['kind']; row_id: string; col: string; to: string }
 
 export async function reassignPending(userId: string, picks: ReassignPick[]): Promise<{ moved: number; error: string | null }> {
@@ -187,6 +205,115 @@ export async function cancelLeave(id: string): Promise<string | null> {
 export async function returnFromLeave(id: string): Promise<string | null> {
   const { error } = await supabase.rpc('staff_leave_return', { p_id: id });
   return error ? error.message : null;
+}
+
+// ── スマホの通知の希望（2026-10-21・段5）──
+/** 二択の文字（手続きのカード）。true＝すべて送る */
+export const PUSH_CHOICE_LABEL = { on: 'すべて送る', off: '安否確認・緊急のみ' } as const;
+
+/**
+ * スマホの通知の希望を変える（手続きのカード＝マネージャー以上／本人の「設定」＝今日休職中の本人）。
+ * 🚨 DB の staff_leave_set_push 1本だけを通す（「確認した」日時と人も同時に入る）。失敗の文を返す
+ */
+export async function setLeavePush(leaveId: string, on: boolean): Promise<string | null> {
+  const { error } = await supabase.rpc('staff_leave_set_push', { p_leave: leaveId, p_on: on });
+  return error ? error.message : null;
+}
+
+/** 本人の終わっていない休職（「設定」の行のため・RLS で自分の行だけ読める）。読めなければ null */
+export async function fetchMyOpenLeave(userId: string): Promise<StaffLeave | null> {
+  const { data, error } = await supabase.from('staff_leaves').select(COLS)
+    .eq('user_id', userId).is('ended_at', null).is('cancelled_at', null).maybeSingle();
+  if (error) { console.error('[staffLeave] 自分の休職の読み込みに失敗:', error); return null; }
+  return (data as StaffLeave | null) ?? null;
+}
+
+// ── 休職のチェックリスト（2026-10-21・段5）──
+// 🚨 残りの数え方は DB の leave_checklist_overview 1本（自動の項目は staff_leaves.push_asked_at で済み）。画面で数え直さない
+export interface LeaveChecklistRow {
+  leave_id: string;
+  user_id: string;
+  name: string | null;
+  start_date: string;
+  return_date: string | null;
+  /** 復職の日（早く戻った日か復職日・空＝未定） */
+  return_base: string | null;
+  ended_at: string | null;
+  phase: 'start' | 'return';
+  remaining: number;
+  /** いま「残り」として数えるか（休職に入るとき＝終わっていない休職／復職するとき＝復職の日の7日前から） */
+  due: boolean;
+}
+
+export const LEAVE_PHASE_LABEL: Record<LeaveChecklistRow['phase'], string> = {
+  start: '休職に入るとき', return: '復職するとき',
+};
+
+/** マネージャー以上と管理者だけ（ほかの人は空）。読めなければ null */
+export async function fetchLeaveChecklistOverview(): Promise<LeaveChecklistRow[] | null> {
+  const { data, error } = await supabase.rpc('leave_checklist_overview');
+  if (error) { console.error('[staffLeave] 手続きの一覧の読み込みに失敗:', error); return null; }
+  return (data ?? []) as LeaveChecklistRow[];
+}
+
+/** 残っている手続き（ホームの案内・タブの人数）。due かつ残りがある行だけ */
+export function pendingLeaveRows(rows: LeaveChecklistRow[] | null): LeaveChecklistRow[] {
+  return (rows ?? []).filter(r => r.due && r.remaining > 0);
+}
+
+// ── シフトの表（2026-10-21・段6）──
+/**
+ * 基準の日から7日間のうち、休職中の日（ユーザー確定：7日間ずっと休職中なら表に出さない・一部だけなら印を付けて出す）。
+ * 🚨 判定は leaveActiveOnDay（DB の staff_leave_active_on と同じ決め方）を7日ぶん回すだけ。新しい決め方を書かない
+ */
+export function leaveWeekState(l: StaffLeave | null | undefined, baseDate: string): 'none' | 'partial' | 'all' {
+  if (!l || l.cancelled_at || !baseDate) return 'none';
+  let n = 0;
+  const d0 = new Date(baseDate + 'T00:00:00Z').getTime();
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(d0 + i * 86400000).toISOString().slice(0, 10);
+    if (leaveActiveOnDay(l, day)) n++;
+  }
+  return n === 0 ? 'none' : n === 7 ? 'all' : 'partial';
+}
+
+/** 一部だけ休職の週の印（「11/1〜休職」「3/1 復職」）。基準の日より後に始まるなら初日、そうでなければ戻る日 */
+export function leaveWeekMark(l: StaffLeave, baseDate: string): string {
+  const back = l.return_date ?? (l.ended_at ? jstDate(l.ended_at) : null);
+  if (l.start_date > baseDate) return `${mdLabel(l.start_date)}〜休職`;
+  return back ? `${mdLabel(back)} 復職` : '休職中';
+}
+
+/** 表に出していない方の1行の中身（「◯◯さん 3/1 復職予定」） */
+export function leaveHiddenLabel(name: string, l: StaffLeave): string {
+  return l.return_date ? `${name}さん ${mdLabel(l.return_date)} 復職予定` : `${name}さん 復職日未定`;
+}
+
+/** シフトの表のための休職（取消でないものを全部・数行）。マネージャー以上と管理者だけ読める。読めなければ空 */
+export async function fetchLeavesForShift(): Promise<Map<string, StaffLeave[]>> {
+  const { data, error } = await supabase.from('staff_leaves').select(COLS).is('cancelled_at', null);
+  const m = new Map<string, StaffLeave[]>();
+  if (error) { console.error('[staffLeave] シフトの表の休職の読み込みに失敗:', error); return m; }
+  for (const r of (data ?? []) as StaffLeave[]) m.set(r.user_id, [...(m.get(r.user_id) ?? []), r]);
+  return m;
+}
+
+/** 1人の休職（何回分でも）の中で、その週にかかるもの（いちばん強い状態） */
+export function leaveWeekOf(leaves: StaffLeave[] | undefined, baseDate: string): { state: 'none' | 'partial' | 'all'; leave: StaffLeave | null } {
+  let best: { state: 'none' | 'partial' | 'all'; leave: StaffLeave | null } = { state: 'none', leave: null };
+  for (const l of leaves ?? []) {
+    const st = leaveWeekState(l, baseDate);
+    if (st === 'all') return { state: 'all', leave: l };
+    if (st === 'partial' && best.state === 'none') best = { state: 'partial', leave: l };
+  }
+  return best;
+}
+
+/** その日に休職中の人の id（シフト調整の代わりの候補・全員のシフト予定から黙って外す）。読めなければ空＝外さない */
+export async function fetchLeaveIdsOn(day: string): Promise<Set<string>> {
+  const { data, error } = await supabase.rpc('leave_ids_on', { p_day: day });
+  if (error) { console.error('[staffLeave] その日の休職の読み込みに失敗:', error); return new Set(); }
+  return new Set(((data ?? []) as (string | { leave_ids_on: string })[]).map(r => (typeof r === 'string' ? r : r.leave_ids_on)));
 }
 
 // ── 申請先・宛先の候補から外す（2026-10-20・段3の4）──

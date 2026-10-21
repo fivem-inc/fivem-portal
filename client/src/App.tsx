@@ -1404,6 +1404,12 @@ const classifyNotif = (n: NotifLike) => {
       const k = n.source_type.startsWith('hire') ? 'hire' : 'retire';
       return { path: n.reference_id ? `/retire?kind=${k}&person=${n.reference_id}` : `/retire?kind=${k}`, closeOnTap: true };
     }
+    // 休職（2026-10-21・マネージャー以上と管理者・ベルだけ）：復職日が近い・初日の受理待ち・残りの手続き・すべて完了・復職日が未定。
+    // 手続きの「休職」のタブのその方のカードへ（未定の知らせは日付が入っているので人を光らせない）
+    if ((n.source_type ?? '').startsWith('staff_leave:') || n.source_type === 'leave:remind' || n.source_type === 'leave:checklist_done') {
+      const person = n.source_type === 'staff_leave:undecided' ? null : n.reference_id;
+      return { path: person ? `/retire?kind=leave&person=${person}` : '/retire?kind=leave', closeOnTap: n.source_type === 'leave:checklist_done' };
+    }
     // 入社の準備（2026-10-06）：登録したとき・◯日前・今日入社。入社のチェック表へ。済むまで残す
     if (n.source_type === 'hire:registered' || n.source_type === 'hire:remind' || n.source_type === 'staff:hired') return { path: '/retire?kind=hire', closeOnTap: false };
     // シフト・入社予定のスタッフ（2026-10-05）。勤務表はシフト管理、入社予定はユーザー管理へ

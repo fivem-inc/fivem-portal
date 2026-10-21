@@ -12,11 +12,12 @@ import { SettingsGroup, SettingsRow } from '../components/SettingsRow';
 import { useNavReorderOn } from '../hooks/useNavReorderOn';
 import { useNavRolloutOn } from '../hooks/useNavRolloutOn';
 import { TEXT_SCALES, getTextScale, textScaleSupported } from '../lib/textScale';
-import { backBtn } from '../lib/buttonStyles';
+import { backBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { fetchMyOpenLeave, setLeavePush, type StaffLeave } from '../lib/staffLeave';
 
 export default function AccountSettings() {
   const navigate = useNavigate();
-  const { user, profileName } = useAuth();
+  const { user, profileName, isOnLeave } = useAuth();
   const isDark = useDarkMode();
 
   const bg = isDark ? '#1e1e2e' : '#f8f9fa';
@@ -84,6 +85,53 @@ export default function AccountSettings() {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
+
+  // 休職中だけ：スマホに届けるお知らせの選択（2026-10-21・DB の staff_leave_set_push＝手続きのカードと同じ値）。
+  // 🚨 この画面では「休職」という言葉を使わない（画面を人に見られることがあるため・決まり）
+  const [myLeave, setMyLeave] = useState<StaffLeave | null>(null);
+  const [leavePushBusy, setLeavePushBusy] = useState(false);
+  const [leavePushErr, setLeavePushErr] = useState('');
+  useEffect(() => {
+    if (!isOnLeave || !user?.id) { setMyLeave(null); return; }
+    let alive = true;
+    void fetchMyOpenLeave(user.id).then(l => { if (alive) setMyLeave(l); });
+    return () => { alive = false; };
+  }, [isOnLeave, user?.id]);
+  const chooseLeavePush = async (on: boolean) => {
+    if (!myLeave || !user?.id) return;
+    setLeavePushBusy(true); setLeavePushErr('');
+    const err = await setLeavePush(myLeave.id, on);
+    if (err) setLeavePushErr('保存できませんでした。時間をおいてお試しください');
+    else setMyLeave(await fetchMyOpenLeave(user.id));
+    setLeavePushBusy(false);
+  };
+  const leavePushChoice = myLeave ? (
+    <div>
+      <div style={{ borderTop: `1px solid ${border}`, margin: '12px 0 8px' }} />
+      <div style={{ fontSize: 13, color: text, marginBottom: 6 }}>スマホに届けるお知らせ</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {([true, false] as const).map(on => {
+          const selected = myLeave.push_on === on;
+          return (
+            <button key={String(on)} type="button" disabled={leavePushBusy} aria-pressed={selected} onClick={() => { if (!selected) void chooseLeavePush(on); }}
+              style={{ flex: 1, minHeight: 44, borderRadius: 8, fontSize: 13, cursor: leavePushBusy ? 'default' : 'pointer',
+                border: `1px solid ${selected ? TOGGLE_BLUE : (isDark ? '#6c757d' : '#adb5bd')}`, background: selected ? TOGGLE_BLUE : (isDark ? '#3d3d55' : '#fff'), color: selected ? '#fff' : text }}>
+              {on ? 'すべて' : '安否確認・緊急のみ'}
+            </button>
+          );
+        })}
+      </div>
+      <p style={{ margin: '8px 0 0', fontSize: 12.5, color: sub, lineHeight: 1.7 }}>
+        「安否確認・緊急のみ」にすると、安否確認と、連絡板の「⚡当日の連絡・緊急」だけがスマホに届きます。ほかのお知らせは、アプリの🔔で確かめられます。管理者からのお知らせのメールも、「すべて」のときだけ届きます。
+      </p>
+      {pushStatus !== 'granted' && (
+        <div style={{ marginTop: 8, padding: '8px 10px', background: isDark ? '#3d3d55' : '#fff3cd', borderRadius: 8, fontSize: 12, color: isDark ? sub : '#856404', lineHeight: 1.7 }}>
+          {pushStatus === 'unsupported' ? 'この端末では通知を受け取れないため、どちらを選んでもこの端末には届きません。' : 'このスマホでは通知が許可されていないため、どちらを選んでもスマホには届きません。'}
+        </div>
+      )}
+      {leavePushErr && <div style={{ marginTop: 8, fontSize: 12.5, color: '#dc3545' }}>{leavePushErr}</div>}
+    </div>
+  ) : null;
 
   const handlePushToggle = async () => {
     setPushLoading(true);
@@ -175,7 +223,7 @@ export default function AccountSettings() {
         <SettingsGroup label="通知" colors={colors}>
           {pushStatus !== 'unsupported' && (
             <SettingsRow icon="🔔" title="プッシュ通知" sub="連絡板や申請のお知らせ"
-              value={pushStatus === 'granted' ? '通知ON' : pushStatus === 'denied' ? '拒否されています' : '通知OFF'}
+              value={pushStatus === 'granted' ? (myLeave && !myLeave.push_on ? '安否確認・緊急のみ' : '通知ON') : pushStatus === 'denied' ? '拒否されています' : '通知OFF'}
               colors={colors} open={openKey === 'push'} onToggle={toggle('push')}>
               <p style={{ margin: '0 0 10px', fontSize: 13, color: text, lineHeight: 1.7 }}>
                 {pushStatus === 'granted'
@@ -199,6 +247,14 @@ export default function AccountSettings() {
                   {pushLoading ? '...' : pushStatus === 'granted' ? '通知をオフにする' : '通知を許可する'}
                 </button>
               )}
+              {leavePushChoice}
+            </SettingsRow>
+          )}
+          {/* 通知に対応していない端末でも、休職中の選択は出す（ほかの端末のスマホに効くため） */}
+          {pushStatus === 'unsupported' && myLeave && (
+            <SettingsRow icon="🔔" title="スマホに届けるお知らせ" sub="ほかのスマホにも効きます"
+              value={myLeave.push_on ? 'すべて' : '安否確認・緊急のみ'} colors={colors} open={openKey === 'leavePush'} onToggle={toggle('leavePush')}>
+              {leavePushChoice}
             </SettingsRow>
           )}
           {/* プッシュ通知の受信時間（許可済みの人にだけ出る） */}

@@ -90,11 +90,12 @@ serve(async (req) => {
       await supabaseAdmin.from('announcements').update({ notified_at: null }).eq('id', id);
       return json({ error: '送る相手を読み込めませんでした' }, 500);
     }
-    // 🚨 休職中で連絡板のお知らせを「受け取らない」人には送らない（2026-10-20・ホームの帯には出る・復職後は「過去のお知らせ」で読める）
+    // 🚨 休職中でスマホの通知を「安否確認・緊急のみ」にしている人には、メールだけ送らない（2026-10-21 ユーザー確定）。
+    //    ベルは全員に届ける（スマホへの通知は push-dispatch が休職中の希望どおりに止める）
     const { data: quietRows, error: quietErr } = await supabaseAdmin.rpc('staff_on_leave_ids', { p_quiet_only: true });
-    if (quietErr) console.error('[announcement-notify] 休職中の方の読み込みに失敗（全員に送ります）:', quietErr.message);
+    if (quietErr) console.error('[announcement-notify] 休職中の方の読み込みに失敗（全員にメールを送ります）:', quietErr.message);
     const quiet = new Set(((quietRows ?? []) as (string | { staff_on_leave_ids: string })[]).map((r) => (typeof r === 'string' ? r : r.staff_on_leave_ids)));
-    const rows = ((profiles ?? []) as { id: string; email: string | null }[]).filter((p) => !quiet.has(p.id));
+    const rows = (profiles ?? []) as { id: string; email: string | null }[];
 
     let pushCount = 0;
     let pushFailed = false;
@@ -116,7 +117,7 @@ serve(async (req) => {
     }
 
     if (ann.notify_on_create_email) {
-      const emails = rows.map((p) => p.email).filter((e): e is string => !!e);
+      const emails = rows.filter((p) => !quiet.has(p.id)).map((p) => p.email).filter((e): e is string => !!e);
       for (const to of emails) {
         const { error: mailErr } = await supabaseAdmin.functions.invoke('send-email', {
           body: { to, subject: `【お知らせ】${ann.title}`, text: ann.body },

@@ -24,12 +24,14 @@ import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
 import CleaningRosterPanel from './CleaningRosterPanel';
 import KidsShiftPanel from './KidsShiftPanel';
 import AdminShiftPanel from './AdminShiftPanel';
+import LeaveHiddenLine from './LeaveHiddenLine';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
 import { cellIssues, cellValue, cellVersionOn, rosterCleaningLines, rowPlaceLabel } from '../../lib/cleaningRoster';
 import { loadCleaningData, type CleaningData } from '../../lib/cleaningRosterApi';
 import { loadKidsData, type KidsData } from '../../lib/kidsShiftApi';
 import { cellVersionOn as kidsVersionOn, kidsCellIssues } from '../../lib/kidsShift';
 import { withPersonSpans } from '../../lib/adultShift';
+import { type StaffLeave, fetchLeavesForShift, leaveWeekOf, leaveWeekMark, leaveHiddenLabel } from '../../lib/staffLeave';
 
 // シフト管理（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-1〜5-3。
 // ・表は月〜日。名前を押すと、その人の月〜日（祝・出・過去の履歴）が表の中に開く（C）
@@ -149,6 +151,11 @@ const ShiftManagementTab: React.FC = () => {
   }, [applyFrom, loadStudy]);
 
   useEffect(() => { void load(true); }, [load]);
+  // 休職（2026-10-21・段6）：取消でない休職を1回だけ読み、子の表にも渡す（それぞれ自分の基準の日で判定する）。
+  // 🚨 この画面を開けるのはマネージャー以上と管理者だけ＝staff_leaves を RLS のまま読める。読めなければ空＝だれも外さない
+  const [leavesByUser, setLeavesByUser] = useState<Map<string, StaffLeave[]>>(new Map());
+  useEffect(() => { void fetchLeavesForShift().then(setLeavesByUser); }, []);
+  const leaveWeek = (userId: string) => leaveWeekOf(leavesByUser.get(userId), applyFrom);
 
   const shortNames = useMemo(() => shortNameMap(study?.staff ?? [], cleaning?.labels ?? new Map()), [study, cleaning]);
   const cleaningRows = useMemo(() => (cleaning?.rows ?? []).filter(r => r.active).sort((a, b) => a.sort_order - b.sort_order), [cleaning]);
@@ -208,7 +215,9 @@ const ShiftManagementTab: React.FC = () => {
   }, [data, target, roles, drafts]);
 
   const draftIds = Object.keys(drafts).filter(id => draftChanged(id));
-  const visible = scoped.filter(s => (areaFilter === 'all' || mainAreaOf(s.id) === areaFilter) && (!onlyDraft || draftIds.includes(s.id)));
+  // 🚨 基準の日から7日間ずっと休職中の方は表に出さない（data.staff は絞らない＝保存の鍵と名前の引き当てが全員を前提にしている）
+  const visible = scoped.filter(s => (areaFilter === 'all' || mainAreaOf(s.id) === areaFilter) && (!onlyDraft || draftIds.includes(s.id)) && leaveWeek(s.id).state !== 'all');
+  const leaveHidden = scoped.filter(s => (areaFilter === 'all' || mainAreaOf(s.id) === areaFilter)).map(s => ({ s, w: leaveWeek(s.id) })).filter(x => x.w.state === 'all' && x.w.leave);
 
   // ─── 入力 ───
   const editDay = (userId: string, k: RosterDayKind, next: RosterDay) => {
@@ -617,7 +626,7 @@ const ShiftManagementTab: React.FC = () => {
     <>
       {visited.has('cleaning') && (
         <div style={{ display: view === 'cleaning' ? 'block' : 'none' }}>
-          <CleaningRosterPanel isDarkMode={isDarkMode} rosterDraftCount={draftIds.length} />
+          <CleaningRosterPanel isDarkMode={isDarkMode} rosterDraftCount={draftIds.length} leavesByUser={leavesByUser} />
         </div>
       )}
       {visited.has('study') && (
@@ -628,24 +637,24 @@ const ShiftManagementTab: React.FC = () => {
               勤務表に未保存の変更が{draftIds.length}人あります（変更は残っています）。勉強会の⚠️と入力のプレビューは、保存済みのシフトで判定します。
             </div>
           )}
-          <StudySessionsPanel isDarkMode={isDarkMode} isAdminUser={isAdminUser} />
+          <StudySessionsPanel isDarkMode={isDarkMode} isAdminUser={isAdminUser} leavesByUser={leavesByUser} />
         </div>
       )}
       {visited.has('kids') && (
         <div style={{ display: view === 'kids' ? 'block' : 'none' }}>
-          <KidsShiftPanel isDarkMode={isDarkMode} />
+          <KidsShiftPanel isDarkMode={isDarkMode} leavesByUser={leavesByUser} />
         </div>
       )}
       {/* 大人シフト表（2026-10-07）。こどもシフト表と同じ部品・同じ表（board='adult'）。案と決定はこどもと別々 */}
       {visited.has('adult') && (
         <div style={{ display: view === 'adult' ? 'block' : 'none' }}>
-          <KidsShiftPanel isDarkMode={isDarkMode} board="adult" />
+          <KidsShiftPanel isDarkMode={isDarkMode} board="adult" leavesByUser={leavesByUser} />
         </div>
       )}
       {/* 管理部シフト表（2026-10-16・入力しない表・勤務表から作る・docs/計画-管理部シフト表.md） */}
       {visited.has('admin') && (
         <div style={{ display: view === 'admin' ? 'block' : 'none' }}>
-          <AdminShiftPanel />
+          <AdminShiftPanel leavesByUser={leavesByUser} />
         </div>
       )}
     </>
@@ -828,6 +837,7 @@ const ShiftManagementTab: React.FC = () => {
 
       {loadErr && <p style={{ color: red }}>{loadErr}</p>}
 
+      <LeaveHiddenLine isDark={isDarkMode} labels={leaveHidden.map(x => leaveHiddenLabel(x.s.name ?? '', x.w.leave!))} />
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, color: text, minWidth: 820 }}>
           <thead>
@@ -857,6 +867,7 @@ const ShiftManagementTab: React.FC = () => {
                       style={{ position: 'sticky', left: 0, background: cardBg, padding: '5px 6px', borderBottom: `1px solid ${borderColor}`, cursor: 'pointer', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                       <span style={{ color: '#1976d2' }}>{openId === s.id ? '▼' : '▶'}</span> {s.name}
                       {s.prehire_from && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#ffc107' : '#b35900' }}>入社予定 {Number(s.prehire_from.slice(5, 7))}/{Number(s.prehire_from.slice(8, 10))}〜</span>}
+                      {(() => { const w = leaveWeek(s.id); return w.state === 'partial' && w.leave ? <span style={{ marginLeft: 6, fontSize: 11, color: subText }}>{leaveWeekMark(w.leave, applyFrom)}</span> : null; })()}
                       {dirty && <span style={{ fontSize: 10.5, color: '#e65100', marginLeft: 4 }}>未保存</span>}
                       <div style={{ fontSize: 10.5, color: subText }}>{s.role_title}{s.employment_type === 'パート' ? '・パート' : ''}</div>
                       {noteOf(s.id) && <div style={{ fontSize: 10.5, color: subText, whiteSpace: 'normal', maxWidth: 160 }}>{noteOf(s.id)}</div>}

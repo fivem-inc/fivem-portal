@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { type StaffLeave, leaveWeekOf } from '../../lib/staffLeave';
 import { todayJstStr } from '../../lib/breakCalc';
 import {
   AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_WEEK, minText, rowOnDate, rowToDay, sortSegments, toMin,
@@ -44,7 +45,9 @@ const TL_START = 8 * 60;
 const TL_END = 22 * 60;
 const pct = (m: number) => `${Math.max(0, Math.min(100, ((m - TL_START) / (TL_END - TL_START)) * 100))}%`;
 
-const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }> = ({ isDarkMode, isAdminUser }) => {
+const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean; leavesByUser?: Map<string, StaffLeave[]> }> = ({ isDarkMode, isAdminUser, leavesByUser }) => {
+  // 休職（2026-10-21・段6）：その版の基準の日から7日間ずっと休職中の方は、プレビューと選ぶ欄に出さない（inactive＝退職扱いには入れない）
+  const awayAll = (uid: string, from: string) => leaveWeekOf(leavesByUser?.get(uid), from).state === 'all';
   const text = isDarkMode ? '#f8f9fa' : '#212529';
   const subText = isDarkMode ? '#adb5bd' : '#6c757d';
   const borderColor = isDarkMode ? '#495057' : '#dee2e6';
@@ -208,7 +211,7 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
     if (!editor || !data) return null;
     const s = toMin(editor.start) ?? 0;
     const e = s + editor.duration;
-    const people = data.staff.filter(st => st.is_active).map(st => {
+    const people = data.staff.filter(st => st.is_active && !awayAll(st.id, editor.applyFrom)).map(st => {
       const rows = (rowsByUser.get(st.id) ?? []).filter(r => r.day_kind === editor.day);
       const row = rowOnDate(rows, editor.applyFrom);
       // 🚨 ほかの曜日の行があれば、この曜日は「休み」（studyIssues と同じ扱い）。1行も無ければ「未登録」
@@ -362,7 +365,7 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
                 ))}
                 <select value="" style={inputStyle} onChange={e => { if (e.target.value) addMember(e.target.value, asTeacher); }}>
                   <option value="">名前から選ぶ</option>
-                  {data.staff.filter(s => s.is_active && !editor.members.includes(s.id)).map(s => <option key={s.id} value={s.id}>{fullName(s.name)}</option>)}
+                  {data.staff.filter(s => s.is_active && !editor.members.includes(s.id) && !awayAll(s.id, editor.applyFrom)).map(s => <option key={s.id} value={s.id}>{fullName(s.name)}</option>)}
                 </select>
               </div>
             );

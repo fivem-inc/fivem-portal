@@ -16,8 +16,7 @@ import { dateTimeProblem } from '../../lib/dateTimeValue';
 import { isPrehire } from '../../lib/staffState';
 import { useSameNameStaff } from '../../hooks/useSameNameStaff';
 import { useAuth } from '../../hooks/useAuth';
-import { attrsFor } from '../../lib/roleAttrs';
-import { type StaffLeave, LEAVE_REGISTER_OPEN, fetchOpenLeaves, leaveStateLabel, leaveStateColor, leaveStatusOf, returnFromLeave } from '../../lib/staffLeave';
+import { type StaffLeave, LEAVE_REGISTER_OPEN, fetchOpenLeaves, leaveStateLabel, leaveStateColor, leaveStatusOf, returnFromLeave, leaveReassignCandidates } from '../../lib/staffLeave';
 import StaffLeaveModal from './StaffLeaveModal';
 
 // ユーザー追加モーダル
@@ -636,12 +635,8 @@ const UsersTab: React.FC = () => {
                 {leaveModalFor && (() => {
                   const u = users.find(x => x.id === leaveModalFor);
                   if (!u) return null;
-                  // 付け替え先：在籍・本人以外・今日休職中でない・受理する役職（受理者・リーダー以上・マネージャー以上・決裁者）
-                  const cands = users
-                    .filter(x => x.is_active !== false && x.id !== u.id && !isPrehire(x))
-                    .filter(x => { const l = openLeaves.get(x.id); return !(l && leaveStatusOf(l, todayJst) === 'on_leave'); })
-                    .filter(x => { const a = attrsFor(leaveRoles, x.role_title); return a.is_approver || a.is_leader_plus || a.is_manager_plus || a.is_board_approver; })
-                    .map(x => ({ id: x.id, name: x.name || x.email || '' }));
+                  // 付け替え先（決め方は lib/staffLeave の leaveReassignCandidates 1か所・手続きの「休職」のタブと同じ）
+                  const cands = leaveReassignCandidates(users, openLeaves, leaveRoles, u.id, todayJst);
                   return (
                     <StaffLeaveModal
                       isDark={isDarkMode}

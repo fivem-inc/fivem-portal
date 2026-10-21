@@ -84,6 +84,8 @@ const EVENT_GROUPS = [
       // 2026-10-17：手続きの必須がすべて済んだとき（1つの手続きに1回だけ・ベルだけ）
       { key: 'hire:checklist_done',   label: '入社の手続きがすべて済んだとき（ベルだけ）', to: '→ 最後に済みにした人には届きません' },
       { key: 'retire:checklist_done', label: '退職の手続きがすべて済んだとき（ベルだけ）', to: '→ 最後に済みにした人には届きません' },
+      // 2026-10-21：休職の手続き（休職に入るとき・復職するとき）の必須がすべて済んだとき。🚨 マネージャー以上と管理者にだけ届く（宛先を広げても DB が絞る）
+      { key: 'leave:checklist_done',  label: '休職の手続きがすべて済んだとき（ベルだけ）', to: '→ 最後に済みにした人には届きません・マネージャー以上と管理者だけ' },
     ],
   },
   {
@@ -226,6 +228,7 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'staff:hired':              '設定した役職',
   'hire:checklist_done':      '設定した役職',
   'retire:checklist_done':    '設定した役職',
+  'leave:checklist_done':     '設定した役職（マネージャー以上と管理者だけ）',
   'staff:invite_failed':      '設定した役職',
   'staff:first_login':        '設定した役職',
   'attendance:cancelled':     '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
@@ -329,7 +332,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_adjust:comment', 'shift_roster:saved', 'hire:registered', 'hire:remind', 'staff:hired', 'staff:invite_failed', 'staff:first_login', 'hire:checklist_done', 'retire:checklist_done'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_adjust:comment', 'shift_roster:saved', 'hire:registered', 'hire:remind', 'staff:hired', 'staff:invite_failed', 'staff:first_login', 'hire:checklist_done', 'retire:checklist_done', 'leave:checklist_done'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
 const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 
@@ -2259,6 +2262,7 @@ interface ReminderDaysSetting {
 const REMINDER_DAYS_EVENTS = [
   { key: 'encouragement_notify', label: '🌿 有休奨励日の未回答リマインド', help: '有休奨励日の回答期限の何日前に、未回答者へ知らせるか（0=当日）', hasDays: true },
   { key: 'remind_unread',        label: '📝 連絡板の締切未読リマインド',   help: '連絡板の投稿の締切の何日前に、未読者へ知らせるか（0=当日）', hasDays: true },
+  { key: 'leave_checklist_notify', label: '📋 休職の手続きのお知らせ',   help: '休職の初日・復職日の何日前の朝に、残っている休職の手続きを知らせるか（当日の朝は、この設定とは別に残りがあればいつも送ります・マネージャー以上と管理者だけ・ベルだけ）', hasDays: true },
   { key: 'hire_checklist_notify', label: '👤 入社の準備のお知らせ',        help: '入社日の何日前の朝に、残っている入社の確認を知らせるか（入社日の当日の「今日入社」は、この設定とは別にいつも送ります）', hasDays: true },
 ];
 

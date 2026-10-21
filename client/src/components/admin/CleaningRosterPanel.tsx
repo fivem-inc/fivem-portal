@@ -25,6 +25,8 @@ import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMa
 import { loadKidsData, type KidsData } from '../../lib/kidsShiftApi';
 import { cellVersionOn as boardVersionOn } from '../../lib/kidsShift';
 import { crossEntriesOf, placeShortName, type CrossEntry } from '../../lib/shiftCross';
+import { type StaffLeave, leaveWeekOf, leaveHiddenLabel } from '../../lib/staffLeave';
+import LeaveHiddenLine from './LeaveHiddenLine';
 
 // ④ 掃除担当表（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-8〜5-8-2。
 // ・表は行（校・階・仕事）×月〜日。マスを押すと、その場で人・時刻・書き添え・この日は無し を入れる
@@ -41,7 +43,7 @@ const VIEW_KEY = 'cleaningRosterView';
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const rowTitle = (r: Pick<CleaningRow, 'school' | 'floor' | 'task'>) => `${r.school}${r.floor ? ` ${r.floor}` : ''} ${r.task}`;
 
-const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: number }> = ({ isDarkMode, rosterDraftCount }) => {
+const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: number; leavesByUser?: Map<string, StaffLeave[]> }> = ({ isDarkMode, rosterDraftCount, leavesByUser }) => {
   const text = isDarkMode ? '#f8f9fa' : '#212529';
   const subText = isDarkMode ? '#adb5bd' : '#6c757d';
   const borderColor = isDarkMode ? '#495057' : '#dee2e6';
@@ -126,7 +128,9 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const fullNames = useMemo(() => new Map((data?.staff ?? []).map(s => [s.id, fullName(s.name)])), [data]);
   const activeRows = useMemo(() => [...(data?.rows ?? [])].filter(r => r.active).sort((a, b) => a.sort_order - b.sort_order), [data]);
   const allRows = useMemo(() => [...(data?.rows ?? [])].sort((a, b) => a.sort_order - b.sort_order), [data]);
-  const activeStaff = useMemo(() => [...(data?.staff ?? [])].filter(s => s.is_active).sort((a, b) => a.name.localeCompare(b.name, 'ja')), [data]);
+  // 休職（2026-10-21・段6）：基準の日から7日間ずっと休職中の方は選ぶ欄・人ごとの表・休みと担当なしに出さない（マスに残っていれば「ほかの方」に出る）
+  const leaveWk = useCallback((uid: string) => leaveWeekOf(leavesByUser?.get(uid), applyFrom), [leavesByUser, applyFrom]);
+  const activeStaff = useMemo(() => [...(data?.staff ?? [])].filter(s => s.is_active && leaveWk(s.id).state !== 'all').sort((a, b) => a.name.localeCompare(b.name, 'ja')), [data, leaveWk]);
 
   // ［確認した］の理由（任意・2026-10-21 ユーザー確定）。注意ごとに書きかけを持つ
   const [ackNotes, setAckNotes] = useState<Record<string, string>>({});
@@ -197,7 +201,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
 
   const footerOf = (day: RosterDayKind) => {
     const assigned = new Set(activeRows.flatMap(r => shown(r.id, day).entries.map(e => e.user_id)));
-    return offAndUnassigned(roster.staff.map(s => s.id), data.excluded, rowsByUser, day, applyFrom, assigned,
+    return offAndUnassigned(roster.staff.filter(s => leaveWk(s.id).state !== 'all').map(s => s.id), data.excluded, rowsByUser, day, applyFrom, assigned,
       id => isShiftTarget(roster.staff.find(s => s.id === id)?.employment_type ?? null, false));
   };
 
@@ -460,7 +464,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const areaOrder = (userId: string) => roster.areas.find(a => a.id === roster.mainAreas[userId])?.sort_order ?? 999;
   const inWeek = new Set(activeRows.flatMap(r => CLEANING_WEEK.flatMap(d => shown(r.id, d).entries.map(e => e.user_id))));
   const people = roster.staff
-    .filter(s => !data.excluded.has(s.id) && (rowsByUser.has(s.id) || inWeek.has(s.id)))
+    .filter(s => !data.excluded.has(s.id) && (rowsByUser.has(s.id) || inWeek.has(s.id)) && leaveWk(s.id).state !== 'all')
     .sort((a, b) => compareRosterStaff(a, b, areaOrder, t => rankOf(roles, t) ?? 99));
   // 対象外にした人・在籍していない人がマスに残っているとき（消えたように見せない）
   const others = [...inWeek].filter(id => id && !people.some(p => p.id === id));
@@ -685,6 +689,8 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
         薄い黄色のマスは、適用開始日の前日に効いている表から変わったマスです（変わった名前・時刻は濃いピンク）。<br />
         保存すると、変えたマスだけが適用開始日から切り替わります。先に登録してある変更は消えません。
       </p>
+      <LeaveHiddenLine isDark={isDarkMode} labels={roster.staff.filter(st => !data.excluded.has(st.id)).map(st => ({ st, w: leaveWk(st.id) }))
+        .filter(x => x.w.state === 'all' && x.w.leave).map(x => leaveHiddenLabel(x.st.name ?? '', x.w.leave!))} />
       {rosterDraftCount > 0 && (
         <div style={{ padding: '8px 12px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 13, marginBottom: 10 }}>
           勤務表に未保存の変更が{rosterDraftCount}人あります（変更は残っています）。掃除担当表の ⚠️ と「休み」「担当なし」は、保存済みのシフトで判定します。

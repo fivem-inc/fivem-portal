@@ -24,6 +24,8 @@ import {
   type BoardEntry, type SavedCloser, type SchoolSpan,
 } from '../../lib/adminShift';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
+import LeaveHiddenLine from './LeaveHiddenLine';
+import { type StaffLeave, leaveWeekOf, leaveWeekMark, leaveHiddenLabel } from '../../lib/staffLeave';
 import { TOGGLE_BLUE, backBtn, tintBtn } from '../../lib/buttonStyles';
 
 const ORANGE = '#e8590c';
@@ -31,7 +33,7 @@ const DAY_OF_WEEK: RosterDayKind[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 
 const dayKindOf = (date: string): RosterDayKind => DAY_OF_WEEK[new Date(`${date}T12:00:00Z`).getUTCDay()];
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
-const AdminShiftPanel: React.FC = () => {
+const AdminShiftPanel: React.FC<{ leavesByUser?: Map<string, StaffLeave[]> }> = ({ leavesByUser }) => {
   const { isDarkMode } = useAdminPanel();
   const { isAdmin, roleTitle } = useAuth();
   const roles = useRoles();
@@ -86,9 +88,13 @@ const AdminShiftPanel: React.FC = () => {
   const members = useMemo(() => {
     if (!data || !adminAreaId) return [];
     return data.staff
-      .filter(s => data.mainAreas[s.id] === adminAreaId && !s.prehire_from)
+      // 🚨 基準の日から7日間ずっと休職中の方は出さない（締めの候補からも外れる・2026-10-21）
+      .filter(s => data.mainAreas[s.id] === adminAreaId && !s.prehire_from && leaveWeekOf(leavesByUser?.get(s.id), date).state !== 'all')
       .sort((x, y) => compareRosterStaff(x, y, () => 0, t => rankOf(roles, t) ?? 99));
-  }, [data, adminAreaId, roles]);
+  }, [data, adminAreaId, roles, leavesByUser, date]);
+  const leaveHidden = useMemo(() => (data && adminAreaId ? data.staff.filter(s => data.mainAreas[s.id] === adminAreaId && !s.prehire_from) : [])
+    .map(s => ({ s, w: leaveWeekOf(leavesByUser?.get(s.id), date) })).filter(x => x.w.state === 'all' && x.w.leave)
+    .map(x => leaveHiddenLabel(x.s.name ?? '', x.w.leave!)), [data, adminAreaId, leavesByUser, date]);
   const memberIds = useMemo(() => members.map(m => m.id), [members]);
   const nameOf = useCallback((id: string) => data?.staff.find(s => s.id === id)?.name ?? '（不明）', [data]);
 
@@ -237,7 +243,7 @@ const AdminShiftPanel: React.FC = () => {
             {members.map(m => (
               <tr key={m.id}>
                 <td style={{ border: `1px solid ${border}`, padding: 6, fontWeight: 'bold', verticalAlign: 'top' }}>
-                  {m.name}{m.employment_type === 'パート' && <div style={{ fontSize: 11, color: sub, fontWeight: 'normal' }}>パート</div>}
+                  {m.name}{(() => { const w = leaveWeekOf(leavesByUser?.get(m.id), date); return w.state === 'partial' && w.leave ? <div style={{ fontSize: 11, color: sub, fontWeight: 'normal' }}>{leaveWeekMark(w.leave, date)}</div> : null; })()}{m.employment_type === 'パート' && <div style={{ fontSize: 11, color: sub, fontWeight: 'normal' }}>パート</div>}
                 </td>
                 {ROSTER_WEEK.map(k => {
                   const lines = personCellLines(spansOf(m.id, k));
@@ -320,6 +326,7 @@ const AdminShiftPanel: React.FC = () => {
         「締め」は、その曜日に{CLOSE_SCHOOL}でいちばん遅く終わる方です。
       </p>
       {err && <div style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 13 }}>{err}</div>}
+      <LeaveHiddenLine isDark={isDarkMode} labels={leaveHidden} />
       {warn && <div style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404', fontSize: 13 }}>{warn}</div>}
       {msg && <div style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 8, background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724', fontSize: 13 }}>{msg}</div>}
       {data && !adminAreaId && <div style={{ fontSize: 13, color: sub }}>部門「{ADMIN_AREA_NAME}」が見つかりません（勤務表の部門の名前を確かめてください）</div>}

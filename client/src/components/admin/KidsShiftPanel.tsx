@@ -27,6 +27,8 @@ import {
 import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
 import { TOGGLE_BLUE } from '../../lib/buttonStyles';
+import { type StaffLeave, leaveWeekOf, leaveWeekMark, leaveHiddenLabel } from '../../lib/staffLeave';
+import LeaveHiddenLine from './LeaveHiddenLine';
 import ShiftCellDialog from './ShiftCellDialog';
 import ShiftEditDateDialog from './ShiftEditDateDialog';
 
@@ -48,7 +50,7 @@ const compareBand = (isDark: boolean): React.CSSProperties => ({ background: isD
 
 // 🚨 board='adult' で大人シフト表（2026-10-07・docs/計画-大人シフト表.md §3）。案・保存・決定・比べる・⚠️ はこどもと同じ仕組みで、
 //    表の形（縦＝時刻・横＝曜日＋出張の細い列）と入れる欄（前半／後半・補助・映像）だけが違う。マスの読み書きは lib/adultShift.ts
-const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({ isDarkMode, board = 'kids' }) => {
+const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leavesByUser?: Map<string, StaffLeave[]> }> = ({ isDarkMode, board = 'kids', leavesByUser }) => {
   const isAdult = board === 'adult';
   const boardName = isAdult ? '大人シフト表' : 'こどもシフト表';
   const text = isDarkMode ? '#f8f9fa' : '#212529';
@@ -163,6 +165,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     [view, data],
   );
   const baseDate = plan ? plan.apply_from : applyFrom;
+  // 休職（2026-10-21・段6）：基準の日から7日間ずっと休職中の方は表に出さない・一部だけなら名前の横に印（画面だけ）
+  const leaveWk = useCallback((uid: string) => leaveWeekOf(leavesByUser?.get(uid), baseDate), [leavesByUser, baseDate]);
 
   const load = useCallback(async (keepDrafts: boolean) => {
     setLoading(true); setLoadErr('');
@@ -592,9 +596,18 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     if (!data) return [];
     const has = (uid: string) => !!shiftDayOn(rowsByUser.get(uid) ?? [], d, baseDate)?.segments?.length;
     // 🚨 大人の休みの行＝メインの部門が大人の人（正社員もパートも・2026-10-06 ユーザー確定）で、その曜日に勤務予定がない人
-    if (isAdult) return data.staff.filter(s => s.is_active && (s.main_area ?? '') === '大人' && !has(s.id));
-    return offStaffOfDay(data.staff, has);
-  }, [data, rowsByUser, baseDate, isAdult]);
+    const notAway = (uid: string) => leaveWk(uid).state !== 'all';
+    if (isAdult) return data.staff.filter(s => s.is_active && (s.main_area ?? '') === '大人' && !has(s.id) && notAway(s.id));
+    return offStaffOfDay(data.staff, has).filter(s => notAway(s.id));
+  }, [data, rowsByUser, baseDate, isAdult, leaveWk]);
+  // マスに入っている休職中の方（選ぶ欄から外すだけでは消えないので、黄色で知らせる・画面だけ）
+  const leaveInCells = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of KIDS_WEEK) for (const c of [...activeColumns, ...tripPlaces]) for (const it of shownCell(c.id, d)) for (const p of it.people ?? []) {
+      if (p.user_id && leaveWk(p.user_id).state !== 'none') ids.add(p.user_id);
+    }
+    return [...ids];
+  }, [activeColumns, tripPlaces, shownCell, leaveWk]);
 
   // ─── 保存 ───
   const isPast = !plan && applyFrom < today;
@@ -875,7 +888,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
     }
   };
 
-  const activeStaff = data.staff.filter(s => s.is_active);
+  const activeStaff = data.staff.filter(s => s.is_active && leaveWk(s.id).state !== 'all');
   const openPlans = data.plans.filter(p => p.status === 'open');
   const archivedPlans = data.plans.filter(p => p.status === 'archived');
 
@@ -1344,6 +1357,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
       const aid = roster.mainAreas[p.id] ?? '';
       if (personArea === 'none' ? aid !== '' : personArea !== 'all' && aid !== personArea) return false;
       if (personOwnOnly && !inThisBoard(p.id)) return false;
+      if (leaveWk(p.id).state === 'all') return false;
       if (q && !normalizeForSearch(`${nameOf(p.id)} ${p.name}`).replace(/\s/g, '').includes(q.replace(/\s/g, ''))) return false;
       return true;
     });
@@ -1389,7 +1403,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           <tbody>
             {people.map(p => (
               <tr key={p.id} style={{ borderTop: `1px solid ${borderColor}` }}>
-                <td style={{ padding: '4px', fontSize: 12.5, fontWeight: 'bold', color: text, verticalAlign: 'top', background: innerBg }}>{nameOf(p.id)}</td>
+                <td style={{ padding: '4px', fontSize: 12.5, fontWeight: 'bold', color: text, verticalAlign: 'top', background: innerBg }}>{nameOf(p.id)}{(() => { const w = leaveWk(p.id); return w.state === 'partial' && w.leave ? <div style={{ fontSize: 11, color: subText, fontWeight: 'normal' }}>{leaveWeekMark(w.leave, baseDate)}</div> : null; })()}</td>
                 {KIDS_WEEK.map(d => {
                   const cell = byUser.get(p.id)?.[d];
                   const entries = [...(cell?.entries ?? [])].sort((a, b) => a.min - b.min);
@@ -1814,6 +1828,16 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard }> = ({
           <button type="button" style={linkBtn} onClick={() => setShowArchived(v => !v)}>過去の案 ▼（{archivedPlans.length}）</button>
         )}
       </div>
+      {/* 休職（2026-10-21・画面だけ）：7日間ずっと休職中で表に出していない方／マスに入っている休職中の方 */}
+      <LeaveHiddenLine isDark={isDarkMode} labels={data.staff
+        .filter(st => st.is_active && (st.main_area ?? '') === (isAdult ? '大人' : 'こども'))
+        .map(st => ({ st, w: leaveWk(st.id) })).filter(x => x.w.state === 'all' && x.w.leave)
+        .map(x => leaveHiddenLabel(x.st.name ?? '', x.w.leave!))} />
+      {leaveInCells.length > 0 && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 13, marginBottom: 8 }}>
+          ⚠️ 休職中の日がある方がマスに入っています：{leaveInCells.map(id => { const w = leaveWk(id); return `${nameOf(id)}さん（${w.leave ? leaveWeekMark(w.leave, baseDate) : '休職中'}）`; }).join('・')}。マスを直してください。
+        </div>
+      )}
 
       {/* 比べる（2026-09-22）。🚨 印を付けるだけ。書き換えはしない */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>

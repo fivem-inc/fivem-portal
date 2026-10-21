@@ -8,6 +8,7 @@ import { formatMin, DAY_KIND_LABELS } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import { normalShiftTimeText } from '../lib/overtimeShift';
+import { fetchLeaveIdsOn } from '../lib/staffLeave';
 
 // 通常シフト（曜日パターン）1行
 interface PatternRow {
@@ -85,11 +86,13 @@ const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin, canDirectory }) => {
       if (!ok) { setLoading(false); return; }
 
       const today = todayStr();
-      const [profRes, patRes, setRes] = await Promise.all([
+      const [profRes, patRes, setRes, away] = await Promise.all([
         supabase.from('profiles').select('id, name, group_names, role_title, employment_type').eq('is_active', true).order('name'),
         // 今日有効なパターンのみ取得（一覧バッジと詳細の「未登録」判定を一致させ、転送量も抑える）
         supabase.from('weekly_shift_patterns').select('*').lte('valid_from', today).or(`valid_to.is.null,valid_to.gte.${today}`),
         supabase.from('overtime_settings').select('banner_group_names').eq('id', 1).maybeSingle(),
+        // 今日休職中の人（2026-10-21・段6・ユーザー確定：理由を出さずに黙って外す）。読めなければ空＝外さない
+        fetchLeaveIdsOn(today),
       ]);
       if (profRes.error || patRes.error) {
         setLoadError('データの読み込みに失敗しました：' + (profRes.error?.message ?? patRes.error?.message ?? ''));
@@ -97,7 +100,7 @@ const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin, canDirectory }) => {
         return;
       }
       setLoadError('');
-      setPeople((profRes.data as PersonRow[] | null) ?? []);
+      setPeople(((profRes.data as PersonRow[] | null) ?? []).filter(p => !away.has(p.id)));
       setTeamWhitelist((setRes.data?.banner_group_names as string[] | null) ?? []);
       const map = new Map<string, PatternRow[]>();
       for (const p of ((patRes.data as PatternRow[] | null) ?? [])) {

@@ -20,6 +20,7 @@ import { tintBtn } from '../lib/buttonStyles';
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { isFullDayReport } from '../lib/overtimeTypes';
 import { partialCauseLabel, slotCoverLabel } from '../lib/partialShiftAdjust';
+import { fetchLeaveIdsOn } from '../lib/staffLeave';
 
 // ───────────────────────────────────────────────────────────────
 // シフト調整の作業場（勤怠カレンダーの中のタブ）
@@ -459,6 +460,9 @@ const SlotDetail: React.FC<{
   const [busy, setBusy] = useState<BusyMap>({});
   /** 残業申請の終日の休み（時間外調整休・振替休日・欠勤）で、まだ受理されていない人。選べるが書き添える（2026-10-14 ユーザー確定 A） */
   const [pendingRest, setPendingRest] = useState<BusyMap>({});
+  // その日に休職中の人（2026-10-21・段6・ユーザー確定 案B：理由を出さずに黙って外す）。名前の表示（nameOf）は外さない
+  // 🚨 読めなければ空＝外さない（最後は DB のトリガーが出勤のお願い・決定を止める）
+  const [awayOnD, setAwayOnD] = useState<Set<string>>(new Set());
   const [candLoaded, setCandLoaded] = useState(false);
   const [candErr, setCandErr] = useState('');
   const [where, setWhere] = useState('');
@@ -695,7 +699,7 @@ const SlotDetail: React.FC<{
   const loadCandidates = useCallback(async () => {
     setCandErr('');
     const d = slot.target_date;
-    const [{ data: pat, error: patErr }, { data: att }, { data: lv }, { data: ot, error: otErr }] = await Promise.all([
+    const [{ data: pat, error: patErr }, { data: att }, { data: lv }, { data: ot, error: otErr }, away] = await Promise.all([
       // 🚨 曜日で絞らずに読む（2026-09-14）。その日に有効な行が1つも無い人＝「週のシフト未登録」を見分けるため。
       //    曜日で絞っていたので、9/16 から登録したパートが 9/15 に全員「この日は休み」と出ていた
       supabase.from('weekly_shift_patterns')
@@ -709,7 +713,9 @@ const SlotDetail: React.FC<{
         .lte('start_date', d).gte('end_date', d),
       // 🚨 2026-10-14：10/16 から調整休が残業申請に移る。残業申請の終日の休みも見る（勤怠カレンダーと同じ関数＝見る権限も同じ）
       supabase.rpc('calendar_overtime_events', { p_from: d, p_to: d }),
+      fetchLeaveIdsOn(d),
     ]);
+    setAwayOnD(away);
     if (patErr) {
       // 🚨 権限が無いと読めない。黙って0件にしない
       setCandErr('週の基本シフトを読み込めませんでした（「全員のシフト予定 閲覧」の権限が必要です）');
@@ -1158,6 +1164,7 @@ const SlotDetail: React.FC<{
   // ［調整済み（アプリ外）］を押したとき：この日の勤怠カレンダーに予定がある人を読んで、選ぶ欄を開く
   const openOutside = async () => {
     setErr(''); setOkMsg(''); setOutsidePick([]); setOutsideQuery('');
+    if (!candLoaded) void fetchLeaveIdsOn(slot.target_date).then(setAwayOnD);   // 名前で探すときも休職中の方を黙って外す
     if (calPeople !== null) return;
     const { data, error } = await supabase.from('attendance_exceptions')
       .select('user_id, type, work_segments').eq('date', slot.target_date).neq('type', 'absent');
@@ -1243,12 +1250,12 @@ const SlotDetail: React.FC<{
   // この日に勤務予定がある人：その日の校 → 役職 → 名前（2026-09-14 ユーザー確定）
   const todayPlaceOf = (uid: string): string => firstWorkplace(patterns.find(x => x.user_id === uid)?.location);
   const working = profiles
-    .filter(p => p.id !== slot.target_user_id && worksToday(p.id))
+    .filter(p => p.id !== slot.target_user_id && worksToday(p.id) && !awayOnD.has(p.id))
     .sort(byPlaceRole(todayPlaceOf));
   const workingShown = working.filter(p => inTeam(p, candTeam));
   // この日に勤務予定がない人：いつもの校 → 役職 → 名前。パートと正社員に分ける（2026-09-14 ユーザー確定）
   const resting = profiles
-    .filter(p => p.id !== slot.target_user_id && !worksToday(p.id))
+    .filter(p => p.id !== slot.target_user_id && !worksToday(p.id) && !awayOnD.has(p.id))
     .sort(byPlaceRole(usualOf));
   const restingPart = resting.filter(p => p.employment_type === 'パート');
   /** 🚨 正社員には出勤のお願いを送れない（DB が断る）。個別に連絡して「＋ 入れる」で入れてもらう */
@@ -1538,7 +1545,7 @@ const SlotDetail: React.FC<{
             const norm = (s: string) => s.replace(/[\s\u3000]/g, '');
             const q = norm(outsideQuery);
             const calIds = new Set((calPeople ?? []).map(c => c.user_id));
-            const found = q ? profiles.filter(p => p.id !== slot.target_user_id && !calIds.has(p.id) && norm(p.name ?? '').includes(q)).slice(0, 8) : [];
+            const found = q ? profiles.filter(p => p.id !== slot.target_user_id && !calIds.has(p.id) && !awayOnD.has(p.id) && norm(p.name ?? '').includes(q)).slice(0, 8) : [];
             return (
               <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: isDark ? '#3a3f44' : '#f8f9fa', textAlign: 'left' }}>
                 <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: text }}>
@@ -1838,7 +1845,7 @@ const SlotDetail: React.FC<{
                         style={{ ...sel, minWidth: 150 }}>
                         <option value="">出勤する人を選択</option>
                         {profiles
-                          .filter(p => p.id !== slot.target_user_id)
+                          .filter(p => p.id !== slot.target_user_id && (!awayOnD.has(p.id) || p.id === d.userId))
                           .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
                           .map(p => (
                             <option key={p.id} value={p.id}>
