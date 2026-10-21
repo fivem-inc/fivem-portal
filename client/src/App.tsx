@@ -2677,7 +2677,7 @@ const RetirePage: React.FC = () => {
   return (
     <div style={{ padding: '110px 16px 0', maxWidth: 760, margin: '0 auto' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
-      <h2 style={{ fontSize: 18, margin: '0 0 12px', color: isDarkMode ? '#fff' : '#212529' }}>📋 入社・退職の手続き</h2>
+      <h2 style={{ fontSize: 18, margin: '0 0 12px', color: isDarkMode ? '#fff' : '#212529' }}>📋 入社・退職・休職の手続き</h2>
       <Suspense fallback={<PageLoader />}>
         <StaffChecklistTabs isDark={isDarkMode} isAdmin={isAdmin} canEditItems={isAdmin || isManagerPlus} syncUrl />
       </Suspense>

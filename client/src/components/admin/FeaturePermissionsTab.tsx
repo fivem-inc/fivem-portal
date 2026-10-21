@@ -109,7 +109,7 @@ const FEATURES = [
   { key: 'room_booking',    icon: '🚪', label: '場所予約', note: '初期はマネージャー・社長のみ。フロア責任者は含めない', group: 'その他' as FeatureGroup, bySuperior: false },
   // 2026-10-19 追加。上のナビの「📋 手続き」（入社・退職の手続き）とホームの案内。
   // 🚨 中身の読み書き（DB の RLS）は「マネージャー以上」の役職だけなので、それ以外の役職は ON にできない（managerPlusOnly）
-  { key: 'procedures', icon: '📋', label: '手続き（入社・退職）', note: 'ナビの「📋 手続き」とホームの案内。マネージャー以上の役職だけ選べます', group: 'その他' as FeatureGroup, bySuperior: true, managerPlusOnly: true },
+  { key: 'procedures', icon: '📋', label: '手続き（入社・退職・休職）', note: 'ナビの「📋 手続き」とホームの案内。マネージャー以上の役職だけ選べます', group: 'その他' as FeatureGroup, bySuperior: true, managerPlusOnly: true },
 ] as const;
 
 /** マネージャー以上の役職だけ ON にできる行か（それ以外の役職のスイッチは OFF のまま押せない） */

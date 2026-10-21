@@ -609,7 +609,7 @@ const AdminPanelContent: React.FC = () => {
               { key: 'leader_assignments',  label: 'リーダー',      icon: '📋' },
               { key: 'feature_permissions', label: '権限管理',      icon: '🔐' },
               // 退職の手続き（2026-09-19）。管理画面では管理者だけ。マネージャー以上は /retire（スマホ可）から同じ部品を開く
-              { key: 'retire',              label: '入社・退職の手続き',  icon: '📋' },
+              { key: 'retire',              label: '入社・退職・休職の手続き',  icon: '📋' },
               { key: 'reports',             label: 'レポート',      icon: '📊' },
             ],
           },
