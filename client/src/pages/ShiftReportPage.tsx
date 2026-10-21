@@ -5,6 +5,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
 import { submitOnce } from '../lib/submitOnce';
+import PendingSubmitLine from '../components/PendingSubmitLine';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, embeddedRole } from '../lib/roleAttrs';
 import type { EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -2039,6 +2040,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               </div>
             </div>
 
+            {/* 送信できたか確認できていない勤務変更（2026-10-21 電波 段4）。［この内容で報告する］は確認の窓の中なので、入力欄の上に出す */}
+            <PendingSubmitLine userId={user.id} match={s => s.startsWith('shift_report:')} button="この内容で報告する" />
             {/* インライン申請フォーム（key で申請後リセット） */}
             <div ref={formAnchorRef} />
             {prefill?.trip && (

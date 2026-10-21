@@ -33,6 +33,8 @@ const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 const BootTiming = React.lazy(() => import('./components/BootTiming'));
 // 共有パソコンの自動ログアウト（2026-09-14）。設定 ON のパソコンでしか何もしない（lib/idleLogout.ts）
 import IdleLogout from './components/IdleLogout';
+import OfflineBand from './components/OfflineBand';
+import PendingSubmitsCard from './components/PendingSubmitsCard';
 const FaqAdminPage = React.lazy(() => import('./pages/FaqAdminPage'));
 const HelpPage = React.lazy(() => import('./pages/HelpPage'));
 const HistoryView = React.lazy(() => import('./components/HistoryView'));
@@ -527,7 +529,8 @@ const ProtectedLayout: React.FC = () => {
 
   // 🚨 IdleLogout はログイン済みの全ページの親であるここに1つだけ置く（ページごとに置かない）
   // 🚨 ページの部品が読めなかったとき（圏外など）は、ページの所だけで受け止める（アプリごと消さない・2026-10-20）。ページを移ったら元に戻す（key にすると、ふだんもページを移るたびに作り直しになるので resetKey）
-  return <><IdleLogout /><AppErrorBoundary scope="route" resetKey={pathname}><Outlet /></AppErrorBoundary></>;
+  // 🚨 OfflineBand（通信がつながっていないときの黄色い帯・2026-10-21 電波 段4）もここに1つだけ
+  return <><IdleLogout /><OfflineBand /><AppErrorBoundary scope="route" resetKey={pathname}><Outlet /></AppErrorBoundary></>;
 };
 
 // ナビゲーションバー
@@ -2462,6 +2465,8 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       )}
       {/* 給与の締め日のお知らせは退職者（申請できる期間中）にも出す（2026-10-14 ユーザー確定。中身は退職者に許した機能だけ） */}
       {isRetiree && <PayrollCloseBanner />}
+      {/* 送信できたか確認できていない申請（2026-10-21 電波 段4）。端末の番号を読むだけ。退職者も交通費・残業・勤務変更を送るので外に置く */}
+      <PendingSubmitsCard userId={user.id} />
 
       {/* 🚨 ここから下のバナーは、上長向け・全体向け・組織の情報を読むものばかり。
           退職者には**出さないだけでなく、中の読み込みごと止まる**（出さなければフックも走らない）。

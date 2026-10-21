@@ -20,6 +20,7 @@ import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
 import { submitOnce } from '../lib/submitOnce';
+import PendingSubmitLine from './PendingSubmitLine';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
@@ -1077,6 +1078,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           合計金額: {formatAmount(totalAmount.toString())}円
         </div>
 
+        {/* 送信できたか確認できていない交通費（2026-10-21 電波 段4）。ホームの中ではホームのカードが出すので、交通費のページだけ */}
+        {asPage && <PendingSubmitLine userId={user?.id} match={s => s === 'expense'} button="申請する" hidden={!!formWarn || isSubmitting} style={{ margin: '12px 0 0' }} />}
         <button type="button" onClick={handleValidateAndConfirm} disabled={isSubmitting || expenses.length === 0}
           style={{ ...primaryBtn({ disabled: isSubmitting || expenses.length === 0 }), width: '100%', marginTop: 12 }}>
           {isSubmitting ? '送信中...' : `申請する${expenses.length > 0 ? `（${expenses.length}件）` : ''}`}

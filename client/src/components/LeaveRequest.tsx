@@ -57,6 +57,7 @@ import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
 import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
 import { submitOnce } from '../lib/submitOnce';
+import PendingSubmitLine from './PendingSubmitLine';
 import LoadFailedNotice from './LoadFailedNotice';
 import EncouragementAnswerModal from './EncouragementAnswerModal';
 import { usualWorkplaceFor } from '../lib/overtimeShift';
@@ -966,6 +967,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   return (
     <div style={{ maxWidth: 600, width: '100%', margin: '20px auto', padding: '0 12px', boxSizing: 'border-box' }}>
+      {/* 送信できたか確認できていない休暇申請（2026-10-21 電波 段4）。［申請する］は確認の窓の中なので、画面の上に出す */}
+      <PendingSubmitLine userId={user?.id} match={s => s === 'leave'} button="申請する" hidden={!!submitWarn || isSubmitting} />
       {encAnswerModal}
       {encBannerList.map(d => (
         <div key={d.id} onClick={() => setEncAnsweringId(d.id)}

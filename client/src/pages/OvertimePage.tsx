@@ -28,6 +28,7 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
+import PendingSubmitLine from '../components/PendingSubmitLine';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import { checkDayOffConflict } from '../lib/dayOffConflict';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
@@ -1679,6 +1680,8 @@ const OvertimeForm: React.FC<{
 
   return (
     <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '16px 16px 20px', marginBottom: 16 }}>
+      {/* 送信できたか確認できていない残業の申請（2026-10-21 電波 段4）。日付ごとの番号（ot:日付）をまとめて出す */}
+      <PendingSubmitLine userId={user.id} match={s => s.startsWith('ot:')} button="送信する" hidden={!!sendWarn || saving} />
       {editTarget && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: text }}>

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
 import { submitOnce } from '../lib/submitOnce';
+import PendingSubmitLine from './PendingSubmitLine';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -691,6 +692,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
+      {/* 送信できたか確認できていない出張報告（2026-10-21 電波 段4）。［送信する］は確認の窓の中なので、画面の上に出す */}
+      <PendingSubmitLine userId={user?.id} match={s => s === 'trip'} button="送信する" hidden={!!sendWarn || isSubmitting} />
       {formError && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#fff5f5', border: '1px solid #f5b5b5', borderRadius: 12, padding: '16px 22px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 320 }}>
           <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>

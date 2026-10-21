@@ -63,11 +63,36 @@ function readSlot(userId: string, slot: string): SlotRecord | null {
     return r;
   } catch { return null; }
 }
+/** 「分からない」の番号が増えた・消えたときに出す合図（ホームのカード・申請の画面の1行が読み直す・2026-10-21 電波 段4） */
+export const SUBMIT_ONCE_EVENT = 'fivem-submit-once-change';
+function notifyChange(): void {
+  try { window.dispatchEvent(new Event(SUBMIT_ONCE_EVENT)); } catch { /* 何もしない */ }
+}
 function writeSlot(userId: string, slot: string, r: SlotRecord): void {
   try { localStorage.setItem(slotKey(userId, slot), JSON.stringify(r)); } catch { /* 保存できなくても送信は続ける（番号は画面の中で使う） */ }
+  notifyChange();
 }
 export function clearSubmitSlot(userId: string, slot: string): void {
   try { localStorage.removeItem(slotKey(userId, slot)); } catch { /* 何もしない */ }
+  notifyChange();
+}
+
+/** 送信できたか確認できていない申請（端末に番号が残っているもの）の一覧。古い順（2026-10-21 電波 段4）。
+ *  🚨 ここでは確かめない（読むだけ）。届いていたかは、本人が申請の画面でもう一度押したときに submitOnce が確かめる
+ *     （届いていたときの上長へのお知らせは申請の画面が送るため・ユーザー確定 案X） */
+export function listPendingSubmits(userId: string): { slot: string; at: number }[] {
+  const out: { slot: string; at: number }[] = [];
+  const prefix = `${SLOT_PREFIX}${userId}:`;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(prefix)) continue;
+      const slot = k.slice(prefix.length);
+      const r = readSlot(userId, slot);
+      if (r) out.push({ slot, at: r.at });
+    }
+  } catch { /* 読めなければ無いものとする */ }
+  return out.sort((a, b) => a.at - b.at);
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));

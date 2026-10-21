@@ -69,6 +69,13 @@ export const SEND_DELIVERED_CHANGED_TEXT = 'さきほどの申請は届いてい
 export function bulkStoppedText(button: string): string {
   return `通信が不安定なため、送信を中断しました。通信環境の良い場所で、もう一度［${button}］を押してください。`;
 }
+/** 通信がつながっていないときに、どのページでも上に出す黄色い帯（2026-10-21 電波 段4・ユーザー確定 案C-1） */
+export const OFFLINE_BAND_TEXT = '通信がつながっていません。入力した内容は残っています。通信環境の良い場所で、送信してください。';
+/** ホームのカード：送信できたか確認できていない申請（2026-10-21 電波 段4・ユーザー確定 案1） */
+export function pendingSubmitsTitle(n: number): string {
+  return `送信できたか確認できていない申請が${n}件あります`;
+}
+export const PENDING_SUBMITS_NOTE = '入力した内容は残っています。それぞれの画面を開き、通信環境の良い場所で、もう一度送信してください。同じ申請が2件届くことはありません。';
 /** 送信が8秒を過ぎたときの灰色の案内（2026-10-21 ユーザー確定） */
 export const SEND_SLOW_TEXT = '通信に時間がかかっています。画面を閉じずにお待ちください。';
 
