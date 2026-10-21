@@ -34,6 +34,7 @@ const BootTiming = React.lazy(() => import('./components/BootTiming'));
 // 共有パソコンの自動ログアウト（2026-09-14）。設定 ON のパソコンでしか何もしない（lib/idleLogout.ts）
 import IdleLogout from './components/IdleLogout';
 import OfflineBand from './components/OfflineBand';
+import LoadFailedNotice from './components/LoadFailedNotice';
 import PendingSubmitsCard from './components/PendingSubmitsCard';
 const FaqAdminPage = React.lazy(() => import('./pages/FaqAdminPage'));
 const HelpPage = React.lazy(() => import('./pages/HelpPage'));
@@ -93,7 +94,7 @@ import { usePurchaseUnconfirmedCount } from './hooks/usePurchaseUnconfirmedCount
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
 import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
 import { formatSnapshotAge } from './lib/safetyStorage';
-import { withTimeout, SAFETY_TIMEOUT_MS, BELL_LOAD_FAILED_TEXT } from './lib/netFailure';
+import { withTimeout, SAFETY_TIMEOUT_MS, BELL_LOAD_FAILED_TEXT, NOTICE_LOAD_FAILED_TEXT } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
@@ -2325,13 +2326,16 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
   // ホームの新着（2026-10-18）：開いた時点で DB の「最後に見た時刻」を今にし、その前の時刻より後に届いたものを「新しいお知らせ」として1行で出す
   const { feed: homeFeed, markSeenLocal } = useHomeFeed(user?.id);
   const [homePrevSeen, setHomePrevSeen] = useState<string | null | undefined>(undefined);
+  // 🚨 ホームを読めなかった（通信できない）ときに「新しいお知らせはありません」と言い切らない（2026-10-21 電波 段5）
+  const [homeLoadFailed, setHomeLoadFailed] = useState(false);
   useEffect(() => {
     if (mode === 'expense' || !user?.id) return;
     let alive = true;
     void (async () => {
       const { data, error } = await supabase.rpc('home_mark_seen');
       if (!alive) return;
-      if (error) { setHomePrevSeen(undefined); return; }   // 記録できなかったときは「新しいお知らせ」の1行を出さない
+      if (error) { setHomePrevSeen(undefined); setHomeLoadFailed(true); return; }   // 記録できなかったときは「新しいお知らせ」の1行を出さない
+      setHomeLoadFailed(false);
       setHomePrevSeen((data as string | null) ?? null);
       markSeenLocal();
     })();
@@ -2565,9 +2569,11 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
       )}
 
       </HomeNewContext.Provider></div>)}
-      {mode === 'home' && homeEmpty && (
+      {mode === 'home' && homeEmpty && (homeLoadFailed ? (
+        <div style={{ margin: '16px 0' }}><LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => window.location.reload()} /></div>
+      ) : (
         <p style={{ textAlign: 'center', fontSize: 14, color: isDarkMode ? '#adb5bd' : '#6c757d', margin: '24px 0' }}>新しいお知らせはありません</p>
-      )}
+      ))}
 
       {/* ── 下半分（交通費）。分けた人のホームでは出さない ── */}
       {mode !== 'home' && (<>

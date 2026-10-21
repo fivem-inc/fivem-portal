@@ -48,6 +48,7 @@ import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { useAuth } from '../hooks/useAuth';
 import ShiftRegWarn from '../components/ShiftRegWarn';
 import { useRegisteredShifts } from '../hooks/useRegisteredShifts';
+import LoadFailedNotice from '../components/LoadFailedNotice';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -1423,12 +1424,17 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [groupOptions, setGroupOptions] = useState<string[]>([]);
   const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
 
+  // 🚨 読めなかったときに「報告履歴がありません」「確認待ちの報告はありません」と出さない（2026-10-21 電波 段5）。前の一覧は残す
+  const [histFailed, setHistFailed] = useState(false);
+  const [pendingFailed, setPendingFailed] = useState(false);
   const fetchMyReports = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('shift_reports')
       .select('*')
       .eq('applicant_id', user.id)
       .order('work_date', { ascending: false });
+    if (error) { setHistFailed(true); return; }
+    setHistFailed(false);
     if (data) {
       setMyReports(data as ShiftReport[]);
       if (data.length > 0) setOpenPeriods(new Set([data[0].pay_period_start]));
@@ -1437,12 +1443,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const fetchPending = useCallback(async () => {
     if (!isApprover) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('shift_reports')
       .select('*')
       .eq('reviewer_id', user.id)
       .in('status', ['pending', 'resubmitted'])
       .order('work_date', { ascending: false });
+    if (error) { setPendingFailed(true); return; }
+    setPendingFailed(false);
     if (!data || data.length === 0) { setPendingReports([]); return; }
     // profiles を別クエリで取得（FK がないため）
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
@@ -1459,7 +1467,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const fetchReviewedReports = useCallback(async () => {
     if (!isApprover) return;
-    const { data } = await supabase.from('shift_reports').select('*').eq('reviewer_id', user.id).order('work_date', { ascending: false });
+    const { data, error } = await supabase.from('shift_reports').select('*').eq('reviewer_id', user.id).order('work_date', { ascending: false });
+    if (error) { setHistFailed(true); return; }
     if (!data || data.length === 0) { setReviewedReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
@@ -1469,7 +1478,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const fetchProxyReports = useCallback(async () => {
     if (!isApprover) return;
-    const { data } = await supabase.from('shift_reports').select('*').eq('submitted_by', user.id).neq('applicant_id', user.id).order('work_date', { ascending: false });
+    const { data, error } = await supabase.from('shift_reports').select('*').eq('submitted_by', user.id).neq('applicant_id', user.id).order('work_date', { ascending: false });
+    if (error) { setHistFailed(true); return; }
     if (!data || data.length === 0) { setProxyReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
@@ -1479,7 +1489,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const fetchAllReports = useCallback(async () => {
     if (!canSeeAll) return;
-    const { data } = await supabase.from('shift_reports').select('*').order('work_date', { ascending: false });
+    const { data, error } = await supabase.from('shift_reports').select('*').order('work_date', { ascending: false });
+    if (error) { setHistFailed(true); return; }
     if (!data || data.length === 0) { setAllReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
     const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', ids);
@@ -1856,7 +1867,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, padding: '2px 8px', fontWeight: 'bold' }}>{pendingReports.length}件</span>
             )}
           </div>
-          {pendingReports.length === 0 ? (
+          {pendingReports.length === 0 && pendingFailed ? (
+            <LoadFailedNotice onRetry={() => void fetchPending()} />
+          ) : pendingReports.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>確認待ちの報告はありません</div>
           ) : pendingReports.map(r => {
             const isFocused = highlightId === r.id;
@@ -2299,9 +2312,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 )}
               </div>
             ))}
-            {Object.keys(histGrouped).length === 0 && (
+            {Object.keys(histGrouped).length === 0 && (histFailed ? (
+              <LoadFailedNotice onRetry={() => { void fetchMyReports(); void fetchReviewedReports(); void fetchProxyReports(); void fetchAllReports(); }} />
+            ) : (
               <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>報告履歴がありません</div>
-            )}
+            ))}
           </div>
         )}
       </div>

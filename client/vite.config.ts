@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 // ビルドするたびに変わる番号。
@@ -29,6 +29,11 @@ export default defineConfig({
       },
       closeBundle() {
         writeFileSync(resolve(outDir, 'version.json'), JSON.stringify({ buildId: BUILD_ID }))
+        // この版の部品の一覧（2026-10-21 電波 段5）。sw.js がこれを見て「今の版と1つ前の版」に無い部品だけを端末の保存から消す
+        // 🚨 件数の上限で古い順に消すと、版が変わっても名前が同じ部品（xlsx など）が先に消え、圏外のときだけ開けなくなる
+        const assetsDir = resolve(outDir, 'assets')
+        const assets = existsSync(assetsDir) ? readdirSync(assetsDir).map(f => `/assets/${f}`) : []
+        writeFileSync(resolve(outDir, 'sw-assets.json'), JSON.stringify({ buildId: BUILD_ID, assets }))
       },
     },
   ],

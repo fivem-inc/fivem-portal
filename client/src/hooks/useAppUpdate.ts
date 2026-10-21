@@ -37,6 +37,11 @@ export const useAppUpdate = () => {
   const check = useCallback(async (isLaunch = false) => {
     if (checking.current) return;
     checking.current = true;
+    // sw.js の新しい版（止める版も含む）もこのとき確かめる（2026-10-21 電波 段5）。
+    // 🚨 iPhone のホーム画面アプリは裏から戻るだけだと sw.js を何日も確かめないことがある。失敗しても何もしない
+    try {
+      void navigator.serviceWorker?.getRegistration().then(r => r?.update().then(null, () => {}), () => {});
+    } catch { /* serviceWorker が使えない環境 */ }
     try {
       // キャッシュを使わず必ずサーバーに聞く（?t= は念のための二重の保険）
       const res = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' });

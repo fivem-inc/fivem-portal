@@ -81,6 +81,9 @@ export const SEND_SLOW_TEXT = '通信に時間がかかっています。画面�
 
 /** 履歴を読み込めなかったとき（「ありません」と出さない） */
 export const HISTORY_LOAD_FAILED_TEXT = '履歴を読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
+/** ホーム・連絡板で、読めなかったのに「ありません」と出さないための文（2026-10-21 電波 段5・HISTORY と同じ形で名詞だけ違う） */
+export const NOTICE_LOAD_FAILED_TEXT = 'お知らせを読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
+export const BOARD_LOAD_FAILED_TEXT = 'グループ・DMを読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
 /** ベルの一覧を読み込めなかったとき */
 export const BELL_LOAD_FAILED_TEXT = '通知を読み込めませんでした。通信環境の良い場所で、もう一度開いてください。';
 

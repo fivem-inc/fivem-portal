@@ -27,6 +27,8 @@ import { AuthContext } from '../contexts/AuthContext.tsx';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { subscribe as subscribeRefresh } from '../lib/refreshBus';
 import { TOPICS_BOARD } from '../lib/badgeTopics';
+import LoadFailedNotice from '../components/LoadFailedNotice';
+import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT } from '../lib/netFailure';
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
 const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
 
@@ -752,15 +754,19 @@ const BoardPage: React.FC = () => {
   // ── Load ────────────────────────────────────────────────────────
 
   // opts.silent … 前面に戻ったときの読み直し用。一覧を一瞬消さない（setLoadingData を触らない）
+  // グループ・DMの一覧を読めなかった（2026-10-21 電波 段5・読めないのに「ありません」と出さない）
+  const [channelsFailed, setChannelsFailed] = useState(false);
   const loadAll = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user) return;
     if (!opts?.silent) setLoadingData(true);
 
     // My channel IDs
-    const { data: myMem } = await supabase
+    const { data: myMem, error: myMemErr } = await supabase
       .from('board_channel_members')
       .select('channel_id')
       .eq('user_id', user.id);
+    // 🚨 読めなかったときに「グループがありません」「DMがありません」と出さない（2026-10-21 電波 段5）。前の一覧は残す
+    if (myMemErr) { console.error('グループ・DMの読み込みに失敗:', myMemErr.code, myMemErr.message); setChannelsFailed(true); setLoadingData(false); return; }
     const cids = (myMem || []).map((m: { channel_id: string }) => m.channel_id);
 
     if (cids.length === 0) {
@@ -789,6 +795,8 @@ const BoardPage: React.FC = () => {
     if (canManageRes.error) console.error('グループ編集権限の確認に失敗:', canManageRes.error.code, canManageRes.error.message);
     setCanManageGroups(canManageRes.data === true);
 
+    if (chRes.error) { console.error('グループ・DMの読み込みに失敗:', chRes.error.code, chRes.error.message); setChannelsFailed(true); setLoadingData(false); return; }
+    setChannelsFailed(false);
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
     const now = new Date().toISOString();
@@ -1070,6 +1078,8 @@ const BoardPage: React.FC = () => {
   const inboxLoadSeq = useRef(0);
   const localReadRef = useRef<Set<string>>(new Set());
   const [inboxLoaded, setInboxLoaded] = useState(false); // 初回の読み込みが終わるまで「お知らせはありません」を出さない
+  // 🚨 読めなかったときに「お知らせはありません」と出さない（2026-10-21 電波 段5・圏外でアプリが開けるようになるため）
+  const [inboxFailed, setInboxFailed] = useState(false);
 
   const loadInbox = useCallback(async () => {
     if (!user) return;
@@ -1085,9 +1095,9 @@ const BoardPage: React.FC = () => {
       .eq('hidden', false);
     if (!isLatest()) return;
     // 🚨 失敗したら空で上書きしない（通信断で「お知らせはありません」と出て、削除と区別が付かなくなる）
-    if (recErr) { console.error('受信トレイの読み込みに失敗:', recErr.code, recErr.message); setInboxLoaded(true); return; }
+    if (recErr) { console.error('受信トレイの読み込みに失敗:', recErr.code, recErr.message); setInboxFailed(true); setInboxLoaded(true); return; }
     const msgIds = (recData || []).map((r: any) => r.message_id);
-    if (msgIds.length === 0) { setInboxMessages([]); setInboxLoaded(true); return; }
+    if (msgIds.length === 0) { setInboxMessages([]); setInboxFailed(false); setInboxLoaded(true); return; }
 
     // メッセージ・既読・カウントを並行取得してフラッシュを防ぐ
     // 🚨 msgIds には「お知らせへの返信」のIDも入っている（返信も宛先の行を作るため）。
@@ -1106,13 +1116,14 @@ const BoardPage: React.FC = () => {
         .in('id', msgIds).not('parent_id', 'is', null).is('channel_id', null).neq('user_id', user.id),
     ]);
     if (!isLatest()) return;
-    if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); setInboxLoaded(true); return; }
+    if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); setInboxFailed(true); setInboxLoaded(true); return; }
 
     // status='scheduled'（未送信）は受信トレイに出さない。cronがstatus='sent'に切り替えるまで非表示
     // ※クライアント時計とscheduled_atの比較ではなく、DBが確定させたstatusで判定する（送信時刻の表示崩れ・表示タイミングのズレを防ぐ）
     setInboxMessages((msgData || [])
       .filter((m: any) => m.status !== 'scheduled')
       .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+    setInboxFailed(false);
     setInboxLoaded(true);
     if (!readErr) setInboxReadIds(new Set([...(readData || []).map((r: any) => r.message_id as string), ...localReadRef.current]));
     const rc: Record<string, number> = {};
@@ -3534,7 +3545,9 @@ const BoardPage: React.FC = () => {
                 {expandGroups ? '▲ 閉じる' : `▼ あと${groupChannels.length - 3}件`}
               </button>
             )}
-            {groupChannels.length === 0 && (
+            {channelsFailed && groupChannels.length === 0 && dmChannels.length === 0 ? (
+              <div style={{ padding: '8px 12px' }}><LoadFailedNotice text={BOARD_LOAD_FAILED_TEXT} onRetry={() => void loadAll()} /></div>
+            ) : groupChannels.length === 0 && (
               <div style={{ padding: '8px 16px', fontSize: 12, color: subColor }}>グループがありません</div>
             )}
 
@@ -3553,7 +3566,7 @@ const BoardPage: React.FC = () => {
                 {expandDMs ? '▲ 閉じる' : `▼ あと${dmChannels.length - 3}件`}
               </button>
             )}
-            {dmChannels.length === 0 && (
+            {dmChannels.length === 0 && !channelsFailed && (
               <div style={{ padding: '8px 16px', fontSize: 12, color: subColor }}>DMがありません</div>
             )}
           </>
@@ -3835,6 +3848,8 @@ const BoardPage: React.FC = () => {
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>お知らせを開いています…</div>
             ) : !inboxLoaded && inboxFilter !== 'archived' ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>読み込んでいます…</div>
+            ) : inboxFailed && filteredInbox.length === 0 ? (
+              <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => { setInboxFailed(false); void loadInbox(); }} />
             ) : filteredInbox.length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
                 {inboxFilter === 'all' ? 'お知らせはありません' : inboxFilter === 'unread' ? '未読のお知らせはありません' : '該当するお知らせはありません'}
