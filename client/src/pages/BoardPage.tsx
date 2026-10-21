@@ -770,6 +770,7 @@ const BoardPage: React.FC = () => {
     const cids = (myMem || []).map((m: { channel_id: string }) => m.channel_id);
 
     if (cids.length === 0) {
+      setChannelsFailed(false);
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
@@ -3849,7 +3850,7 @@ const BoardPage: React.FC = () => {
             ) : !inboxLoaded && inboxFilter !== 'archived' ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>読み込んでいます…</div>
             ) : inboxFailed && filteredInbox.length === 0 ? (
-              <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => { setInboxFailed(false); void loadInbox(); }} />
+              <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => { setInboxLoaded(false); setInboxFailed(false); void loadInbox(); }} />
             ) : filteredInbox.length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
                 {inboxFilter === 'all' ? 'お知らせはありません' : inboxFilter === 'unread' ? '未読のお知らせはありません' : '該当するお知らせはありません'}

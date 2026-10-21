@@ -1,5 +1,6 @@
 import React from 'react';
 import { isChunkLoadError, recoverFromChunkError, isServerReachable, justReloaded } from '../lib/chunkReload';
+import { reloadFromNetwork } from '../lib/reloadFromNetwork';
 
 // 画面の「受け止める網」（2026-10-16・2026-10-20 に圏外の扱いを足した）。
 // 🚨 これが無いと、どこかで1つ落ちただけで React が画面の中身をまるごと消し、背景の黒（白）だけが残る。
@@ -41,7 +42,7 @@ class AppErrorBoundary extends React.Component<Props, State> {
 
   private retry = async () => {
     this.setState({ retrying: true, stillOffline: false });
-    if (await isServerReachable()) { window.location.reload(); return; }
+    if (await isServerReachable()) { reloadFromNetwork(); return; }
     this.setState({ retrying: false, stillOffline: true });
   };
 
@@ -85,7 +86,7 @@ class AppErrorBoundary extends React.Component<Props, State> {
               <p style={{ fontSize: 13, lineHeight: 1.7, margin: '0 0 14px', color: '#555' }}>
                 新しいバージョンに切り替わった直後などに起きます。［更新する］を押してください。
               </p>
-              <button type="button" onClick={() => window.location.reload()}
+              <button type="button" onClick={() => reloadFromNetwork()}
                 style={{ display: 'block', width: '100%', padding: '10px', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                 更新する
               </button>

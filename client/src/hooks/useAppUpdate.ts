@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { reloadFromNetwork } from '../lib/reloadFromNetwork';
 
 // アプリの新しい版が出ていないかを見張る
 //
@@ -55,7 +56,8 @@ export const useAppUpdate = () => {
         try { alreadyTried = sessionStorage.getItem(AUTO_RELOAD_KEY) === '1'; } catch { /* 読めない環境ではバナーに倒す */ }
         if (isLaunch && !alreadyTried) {
           try { sessionStorage.setItem(AUTO_RELOAD_KEY, '1'); } catch { /* 保存できなくてもリロード自体はする */ }
-          window.location.reload();
+          // 印つきで開き直す（sw.js が古い写しに逃げず、新しい版を最後まで待つ・2026-10-21 電波 段5）
+          reloadFromNetwork();
           return;
         }
         setUpdateAvailable(true);

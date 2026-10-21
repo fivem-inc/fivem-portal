@@ -29,16 +29,21 @@ async function iconSrc() {
   }
 }
 
-// ───────── 圏外でも開ける（2026-10-21 電波 段5・docs/計画-電波が弱いとき.md の 6.・2体でレビュー） ─────────
-// 🚨 止める版（キルスイッチ）：OFFLINE_SHELL を false にして push すると、次に開いたときから
+// ───────── 圏外でも開ける（2026-10-21 電波 段5・docs/計画-電波が弱いとき.md の 6.・2体で設計・別の2体で再確認） ─────────
+// 🚨 止める版（キルスイッチ）：OFFLINE_SHELL を false にして push すると、次に通信して開いたときから
 //    ①fetch の処理そのものを登録しない（すべて今までどおり素通し）②画面の保存（shell・assets）を消す。
 //    通知・アイコンの保存（fivem-icons-v1）は触らない。sw.js は毎回サイトに確かめる配り方なので、すぐ切り替わる
+//    （圏外の端末には届かないので「次に通信がつながったとき」から効く。手順は計画書の 6.）
+const SW_VERSION = '2026-10-21-offline-1';  // 本番に出たか・止めたかの照合用（直したら変える）
 const OFFLINE_SHELL = true;
 const SHELL_CACHE = 'fivem-shell-v1';   // index.html の写しと、版ごとの部品の一覧（今・1つ前）
 const ASSET_CACHE = 'fivem-assets-v1';  // /assets/ の部品（名前に版の印がある・中身は変わらない）
 const SHELL_KEY = '/index.html';
 const NAV_TIMEOUT_MS = 6000;            // これより遅ければ写しで開く（通信は続け、届いたら写しを新しくする）
 const PRECACHE_TIMEOUT_MS = 15000;      // 入れ替えの準備はこれ以上待たない（準備で止まると止める版も配れなくなる）
+// 新しい版へ読み込み直すときの印（lib/reloadFromNetwork）。この印があるときは時間切れで写しに逃げず、通信を最後まで待つ
+// 🚨 印が無いと、電波が遅いときに新しい版が出ると「読み込み直す→6秒切れで古い写し」を繰り返して抜けられない
+const NET_PARAM = '_net';
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
@@ -48,26 +53,26 @@ function isGoodHtml(res) {
     && (res.headers.get('content-type') || '').includes('text/html');
 }
 /**
- * 保存してよい部品の応答か。
+ * 保存してよい部品の応答か。拡張子ごとに許す種類を決める（それ以外の拡張子は保存しない）。
  * 🚨 無いファイルを読むと Vercel は index.html を「成功（200）」で返す（しかも1年保存してよいの印つき）。
  *    これを JS として保存すると、通信があっても毎回画面が壊れる。種類（Content-Type）を必ず確かめる
  */
+const ASSET_TYPES = [
+  [/\.m?js$/, 'javascript'], [/\.css$/, 'css'],
+  [/\.(png|jpe?g|gif|webp|svg|ico)$/, 'image/'], [/\.(woff2?|ttf|otf)$/, 'font'], [/\.json$/, 'json'],
+];
 function isGoodAsset(res, pathname) {
   if (!res || !res.ok || res.status !== 200 || res.type !== 'basic' || res.redirected) return false;
-  const ct = res.headers.get('content-type') || '';
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
   if (ct.includes('text/html')) return false;
-  if (pathname.endsWith('.js') || pathname.endsWith('.mjs')) return ct.includes('javascript');
-  if (pathname.endsWith('.css')) return ct.includes('css');
-  return true;
-}
-
-async function putShell(res) {
-  try { const c = await caches.open(SHELL_CACHE); await c.put(SHELL_KEY, res); } catch { /* 容量などで保存できなくても開くのは止めない */ }
+  const rule = ASSET_TYPES.find(([re]) => re.test(pathname));
+  if (!rule) return false;
+  return rule[1] === 'font' ? (ct.includes('font') || ct.includes('octet-stream')) : ct.includes(rule[1]);
 }
 
 /** 版ごとの部品の一覧（sw-assets.json）を読み、今の版と1つ前の版に無い部品を消す。版が同じなら何もしない */
 async function refreshAssetList() {
-  const res = await fetch('/sw-assets.json', { cache: 'no-store' });
+  const res = await withTimeout(fetch('/sw-assets.json', { cache: 'no-store' }), 10000);
   if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return;
   const next = await res.json();
   if (!next || typeof next.buildId !== 'string' || !Array.isArray(next.assets)) return;
@@ -84,44 +89,55 @@ async function refreshAssetList() {
   }
 }
 
+/**
+ * トップページの写しを新しくする。🚨 先にその HTML が読む部品（/assets/…）を保存し、全部そろってから写しを置き換える。
+ * 写しだけ先に新しくすると、新しい版の部品が無いまま圏外で開いて真っ白になる（React が動く前なので案内も出ない）。
+ * 1つでも保存できなければ、写しは前のまま（前の版の部品はそろっている）
+ */
+async function saveShellWithAssets(res) {
+  const html = await res.clone().text();
+  const paths = [...new Set((html.match(/\/assets\/[A-Za-z0-9._-]+/g) || []))];
+  const cache = await caches.open(ASSET_CACHE);
+  for (const p of paths) {
+    if (await cache.match(p)) continue;
+    const r = await fetch(p);
+    if (!isGoodAsset(r, p)) return; // そろわない＝写しを置き換えない
+    await cache.put(p, r);
+  }
+  const shell = await caches.open(SHELL_CACHE);
+  await shell.put(SHELL_KEY, res);
+  await refreshAssetList().catch(() => {});
+}
+
 /** 入れ替えの準備：トップページの写しと、そこで読む部品を保存しておく（端末にあればほぼ通信しない） */
 async function precacheShell() {
   const res = await fetch(SHELL_KEY, { cache: 'no-cache' });
   if (!isGoodHtml(res)) return;
-  const html = await res.clone().text();
-  await putShell(res);
-  const paths = [...new Set((html.match(/\/assets\/[A-Za-z0-9._-]+/g) || []))];
-  const cache = await caches.open(ASSET_CACHE);
-  for (const p of paths) {
-    try {
-      if (await cache.match(p)) continue;
-      const r = await fetch(p);
-      if (isGoodAsset(r, p)) await cache.put(p, r);
-    } catch { /* 1件取れなくても続ける */ }
-  }
-  await refreshAssetList().catch(() => {});
+  await saveShellWithAssets(res);
 }
 
-/** ページを開く：まず通信。圏外・時間切れのときだけ写しで開く */
-async function handleNavigate(event) {
+async function cachedShell() {
+  try { return (await (await caches.open(SHELL_CACHE)).match(SHELL_KEY)) || null; } catch { return null; }
+}
+
+/**
+ * ページを開く：まず通信。圏外・時間切れ・サイトの不調（5xx）のときだけ写しで開く。
+ * 届いた HTML はすぐ画面に渡し、写しの保存は裏で（event.waitUntil）。
+ * 新しい版へ読み込み直すとき（?_net=1）は時間切れで写しに逃げず、通信を最後まで待つ（圏外のときだけ写し）
+ */
+async function handleNavigate(event, waitForNet) {
   const req = event.request;
-  const net = fetch(req).then((res) => {
-    if (isGoodHtml(res)) {
-      const copy = res.clone();
-      return putShell(copy).then(() => refreshAssetList().catch(() => {})).then(() => res);
-    }
-    return res;
-  });
-  // 写しで開いたあとも通信は続け、届いたら写しを新しくする（次に開いたときは最新）
-  event.waitUntil(net.then(() => {}, () => {}));
+  const net = fetch(req);
+  // 写しの保存は裏で。写しで開いたあとも通信は続け、届いたら写しを新しくする（次に開いたときは最新）
+  event.waitUntil(net.then((res) => (isGoodHtml(res) ? saveShellWithAssets(res.clone()).catch(() => {}) : undefined), () => {}));
   const first = await Promise.race([
     net.then((r) => ({ r }), (e) => ({ e })),
-    new Promise((resolve) => setTimeout(() => resolve('timeout'), NAV_TIMEOUT_MS)),
+    ...(waitForNet ? [] : [new Promise((resolve) => setTimeout(() => resolve('timeout'), NAV_TIMEOUT_MS))]),
   ]);
-  if (first !== 'timeout' && first.r) return first.r;
-  let cached = null;
-  try { cached = await (await caches.open(SHELL_CACHE)).match(SHELL_KEY); } catch { cached = null; }
+  if (first !== 'timeout' && first.r && first.r.status < 500) return first.r;
+  const cached = await cachedShell();
   if (cached) return cached;
+  if (first !== 'timeout' && first.r) return first.r; // 5xx で写しも無い：そのまま見せる
   return net; // 写しが無ければ今までどおり（通信を待つ・失敗ならブラウザのエラー）
 }
 
@@ -146,7 +162,7 @@ if (OFFLINE_SHELL) {
     if (url.origin !== self.location.origin) return;
     if (req.mode === 'navigate') {
       if (url.pathname.includes('.')) return;
-      event.respondWith(handleNavigate(event).catch(() => fetch(req)));
+      event.respondWith(handleNavigate(event, url.searchParams.has(NET_PARAM)).catch(() => fetch(req)));
       return;
     }
     if (url.pathname.startsWith('/assets/')) {

@@ -1,4 +1,5 @@
 // 新しい版を出したあと、古い画面のまま別のページを開くと「真っ黒」になる件の対策（2026-10-16）
+import { reloadFromNetwork } from './reloadFromNetwork';
 //
 // 【何が起きていたか】
 // ・各ページは別々の部品ファイル（assets/〇〇-ハッシュ.js）に分かれていて、初めて開くときに読み込む
@@ -54,7 +55,8 @@ export function reloadOnceForChunkError(): boolean {
     return false;
   }
   reloadStarted = true;
-  window.location.reload();
+  // 印つきで開き直す（sw.js が古い写しに逃げず、新しい版を最後まで待つ・2026-10-21 電波 段5）
+  reloadFromNetwork();
   return true;
 }
 

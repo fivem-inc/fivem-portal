@@ -94,12 +94,13 @@ import { usePurchaseUnconfirmedCount } from './hooks/usePurchaseUnconfirmedCount
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
 import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
 import { formatSnapshotAge } from './lib/safetyStorage';
-import { withTimeout, SAFETY_TIMEOUT_MS, BELL_LOAD_FAILED_TEXT, NOTICE_LOAD_FAILED_TEXT } from './lib/netFailure';
+import { withTimeout, SAFETY_TIMEOUT_MS, BELL_LOAD_FAILED_TEXT, NOTICE_LOAD_FAILED_TEXT, isNetworkFailure } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 import { logFail } from './lib/logFail';
 import { isEncouragementText } from './lib/encouragementDay';
 import EncouragementAnswerModal from './components/EncouragementAnswerModal';
 import { countMyOpenClockInquiries } from './lib/clockInquiry';
+import { reloadFromNetwork } from './lib/reloadFromNetwork';
 
 // ページ遷移のたびにスクロールをトップへ戻す
 const ScrollToTop: React.FC = () => {
@@ -2332,9 +2333,10 @@ const Dashboard: React.FC<{ view?: 'expense' }> = ({ view }) => {
     if (mode === 'expense' || !user?.id) return;
     let alive = true;
     void (async () => {
-      const { data, error } = await supabase.rpc('home_mark_seen');
+      const { data, error, status } = await supabase.rpc('home_mark_seen');
       if (!alive) return;
-      if (error) { setHomePrevSeen(undefined); setHomeLoadFailed(true); return; }   // 記録できなかったときは「新しいお知らせ」の1行を出さない
+      // 通信のせいで読めなかったときだけ「読み込めませんでした」（ほかの失敗は今までどおり「ありません」）
+      if (error) { setHomePrevSeen(undefined); setHomeLoadFailed(isNetworkFailure(error, status)); return; }   // 記録できなかったときは「新しいお知らせ」の1行を出さない
       setHomeLoadFailed(false);
       setHomePrevSeen((data as string | null) ?? null);
       markSeenLocal();
@@ -2946,7 +2948,7 @@ const AppUpdateBanner: React.FC = () => {
         <div style={{ fontSize: 12.5, color: '#e3f2fd', lineHeight: 1.7, marginBottom: 10 }}>
           更新しないと不具合が出る場合があります。更新をお願いします。
         </div>
-        <button type="button" onClick={() => window.location.reload()}
+        <button type="button" onClick={() => reloadFromNetwork()}
           style={{ display: 'block', width: '100%', padding: '10px', borderRadius: 8, border: 'none', background: '#fff', color: '#1565c0', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
           更新する
         </button>

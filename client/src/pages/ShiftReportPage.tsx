@@ -1425,7 +1425,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
 
   // 🚨 読めなかったときに「報告履歴がありません」「確認待ちの報告はありません」と出さない（2026-10-21 電波 段5）。前の一覧は残す
-  const [histFailed, setHistFailed] = useState(false);
+  // 履歴は4つの読み込みでできているので、どれが読めなかったかを別々に持つ（1つが通っても、ほかが読めていなければ赤い枠のまま）
+  const [histFailMap, setHistFailMap] = useState<Record<string, boolean>>({});
+  const setHistFailed = useCallback((key: string, v: boolean) => setHistFailMap(prev => (prev[key] === v ? prev : { ...prev, [key]: v })), []);
+  const histFailed = Object.values(histFailMap).some(Boolean);
   const [pendingFailed, setPendingFailed] = useState(false);
   const fetchMyReports = useCallback(async () => {
     const { data, error } = await supabase
@@ -1433,13 +1436,13 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       .select('*')
       .eq('applicant_id', user.id)
       .order('work_date', { ascending: false });
-    if (error) { setHistFailed(true); return; }
-    setHistFailed(false);
+    if (error) { setHistFailed('my', true); return; }
+    setHistFailed('my', false);
     if (data) {
       setMyReports(data as ShiftReport[]);
       if (data.length > 0) setOpenPeriods(new Set([data[0].pay_period_start]));
     }
-  }, [user.id]);
+  }, [user.id, setHistFailed]);
 
   const fetchPending = useCallback(async () => {
     if (!isApprover) return;
@@ -1468,29 +1471,32 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const fetchReviewedReports = useCallback(async () => {
     if (!isApprover) return;
     const { data, error } = await supabase.from('shift_reports').select('*').eq('reviewer_id', user.id).order('work_date', { ascending: false });
-    if (error) { setHistFailed(true); return; }
+    if (error) { setHistFailed('reviewed', true); return; }
+    setHistFailed('reviewed', false);
     if (!data || data.length === 0) { setReviewedReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
     const nm = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
     setReviewedReports(data.map((r: ShiftReport) => ({ ...r, applicant: { name: nm[r.applicant_id] ?? '不明' } })));
-  }, [isApprover, user.id]);
+  }, [isApprover, user.id, setHistFailed]);
 
   const fetchProxyReports = useCallback(async () => {
     if (!isApprover) return;
     const { data, error } = await supabase.from('shift_reports').select('*').eq('submitted_by', user.id).neq('applicant_id', user.id).order('work_date', { ascending: false });
-    if (error) { setHistFailed(true); return; }
+    if (error) { setHistFailed('proxy', true); return; }
+    setHistFailed('proxy', false);
     if (!data || data.length === 0) { setProxyReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
     const nm = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
     setProxyReports(data.map((r: ShiftReport) => ({ ...r, applicant: { name: nm[r.applicant_id] ?? '不明' } })));
-  }, [isApprover, user.id]);
+  }, [isApprover, user.id, setHistFailed]);
 
   const fetchAllReports = useCallback(async () => {
     if (!canSeeAll) return;
     const { data, error } = await supabase.from('shift_reports').select('*').order('work_date', { ascending: false });
-    if (error) { setHistFailed(true); return; }
+    if (error) { setHistFailed('all', true); return; }
+    setHistFailed('all', false);
     if (!data || data.length === 0) { setAllReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
     const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', ids);
@@ -1499,7 +1505,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     (profs || []).forEach((p: { id: string; group_names?: string[] }) => { gm[p.id] = p.group_names ?? []; });
     setGroupMap(gm);
     setAllReports(data.map((r: ShiftReport) => ({ ...r, applicant: { name: nm[r.applicant_id] ?? '不明' } })));
-  }, [canSeeAll, user.id]);
+  }, [canSeeAll, user.id, setHistFailed]);
 
   useEffect(() => {
     fetchMyReports();
