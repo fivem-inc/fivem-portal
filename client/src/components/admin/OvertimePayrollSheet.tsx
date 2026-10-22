@@ -9,7 +9,7 @@ import { overtimeApprovedLines, SELF_APPROVED_TEXT } from '../../lib/overtimeApp
 import { plannedBreakdownRows } from '../../lib/overtimeBalance';
 import { compareEmployeeNo } from '../../lib/employeeNo';
 import { isOvertimeType, typeLabelFor } from '../../lib/overtimeTypes';
-import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, sheetMd, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
+import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, sheetMd, type PersonSheet, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
 import PayrollSheetView from './PayrollSheetView';
 
 /**
@@ -100,7 +100,9 @@ const OvertimePayrollSheet: React.FC<{
   useEffect(() => { if (people.length && (!personId || !people.some(p => p.id === personId))) setPersonId(people[0].id); }, [people, personId]);
   const person = people.find(p => p.id === personId) ?? null;
 
-  const sheet = useMemo(() => {
+  // 1人分の表（1人ずつ・並べて見る・Excel が同じものを使う・2026-10-22）
+  const sheetFor = useCallback((id: string): PersonSheet | null => {
+    const person = people.find(p => p.id === id);
     if (!data || !person) return null;
     const nameOf = (id: string) => data.names[id] || '不明';
     const reps = data.reps.filter(r => r.applicant_id === person.id && r.status !== 'returned' && r.status !== 'cancelled');
@@ -138,9 +140,10 @@ const OvertimePayrollSheet: React.FC<{
             muted: r.status !== 'confirmed' || dup,
             strike: dup,
             timeColor: r.status === 'confirmed' && !dup && diff < 0 ? '#c62828' : undefined,
+            minutes: r.status === 'confirmed' && !dup ? diff : null,
           };
         }),
-        ...dayChecks.map((c): SheetEntry => ({ key: `dc-${c.id}`, reason: '定時', sign: '定時', actual: '', time: '0:00', muted: false, strike: false })),
+        ...dayChecks.map((c): SheetEntry => ({ key: `dc-${c.id}`, reason: '定時', sign: '定時', actual: '', time: '0:00', muted: false, strike: false, minutes: 0 })),
       ];
       const furikaeTo = data.furikae.get(`${person.id}|${d}`);
       if (furikaeTo) entries.unshift({ key: `fk-${d}`, reason: `振替元（${sheetMd(furikaeTo)}の振替休日で計上）`, sign: '', actual: '', time: '', muted: true, strike: false });
@@ -152,23 +155,25 @@ const OvertimePayrollSheet: React.FC<{
         entries,
       };
     });
-    return { balance, pending, days, empty: reps.length === 0 && checks.length === 0 };
-  }, [data, person, period]);
+    return {
+      total: balance.total,
+      totalNote: '確認待ち・実績報告待ちは合計に入っていません',
+      plannedText: balance.plannedDelta !== 0
+        ? `見込み ${sheetHm(balance.plannedTotal)}（確定 ${sheetHm(balance.total)}${plannedBreakdownRows(balance).map(([l, m]) => `・${l} ${sheetHm(m)}`).join('')}）`
+        : null,
+      absenceDays: balance.absenceDays,
+      pendingText: pending > 0 ? `確認待ち・実績報告待ちが${pending}件あります。受理され、実績が確定すると合計に入ります。` : null,
+      emptyText: reps.length === 0 && checks.length === 0 ? 'この期間の残業・時間調整の申請はありません' : null,
+      days,
+    };
+  }, [data, people, period]);
 
   return (
     <PayrollSheetView isDarkMode={isDarkMode} onBack={onBack}
       periodOptions={periodOptions} period={period} onPeriod={setPeriod}
       loading={loading || !data} loadErr={loadErr} onReload={load}
       people={people} personId={person?.id ?? null} onPerson={setPersonId}
-      total={sheet ? sheet.balance.total : null}
-      totalNote="確認待ち・実績報告待ちは合計に入っていません"
-      plannedText={sheet && sheet.balance.plannedDelta !== 0
-        ? `見込み ${sheetHm(sheet.balance.plannedTotal)}（確定 ${sheetHm(sheet.balance.total)}${plannedBreakdownRows(sheet.balance).map(([l, m]) => `・${l} ${sheetHm(m)}`).join('')}）`
-        : null}
-      absenceDays={sheet?.balance.absenceDays ?? 0}
-      pendingText={sheet && sheet.pending > 0 ? `確認待ち・実績報告待ちが${sheet.pending}件あります。受理され、実績が確定すると合計に入ります。` : null}
-      emptyText={sheet?.empty ? 'この期間の残業・時間調整の申請はありません' : null}
-      days={sheet?.days ?? []} />
+      kindLabel="残業" sheetFor={sheetFor} />
   );
 };
 

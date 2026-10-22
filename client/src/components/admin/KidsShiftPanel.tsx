@@ -24,9 +24,9 @@ import { adultGridSheet, buildAdultPrintHtml, type AdultPrintOptions } from '../
 import {
   ackKidsIssue, decidePlan, loadKidsData, setTripShortLabel, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
-  loadPlanTerms, savePlanTerms, termsPayload, assignTemp, createTemp, deleteTemp, saveWeeklyTarget, type KidsSaveResult,
+  loadPlanTerms, savePlanTerms, termsPayload, assignTemp, createTemp, deleteTemp, saveWeeklyTarget, setPlanMemo, type KidsSaveResult,
 } from '../../lib/kidsShiftApi';
-import { DEFAULT_WEEKLY_TARGET, planBlocks, remainText, weekSummary, type DayInput, type DutySpan } from '../../lib/shiftWeekSummary';
+import { DEFAULT_WEEKLY_TARGET, planBlocks, remainText, weekSummary, type DayInput, type DutySpan, type PlanDayBase } from '../../lib/shiftWeekSummary';
 import ShiftWeekView, { type WeekRow, type WeekSuggestion } from './ShiftWeekView';
 import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
@@ -76,6 +76,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
   const today = todayJstStr();
   const [applyFrom, setApplyFrom] = useState(today);
   const [view, setView] = useState<string>('decided');      // 'decided' か 案のID
+  // 案のメモ（2026-10-22）。null＝直していない。［メモを直す］で入力欄にする（押した瞬間には保存しない）
+  const [memoDraft, setMemoDraft] = useState<string | null>(null);
+  const [memoErr, setMemoErr] = useState('');
+  const [memoBusy, setMemoBusy] = useState(false);
+  useEffect(() => { setMemoDraft(null); setMemoErr(''); }, [view]);
   const [day, setDay] = useState<RosterDayKind>('mon');
   const [data, setData] = useState<KidsData | null>(null);
   const [roster, setRoster] = useState<RosterData | null>(null);
@@ -669,10 +674,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
     return out;
   }, []);
 
-  /** 週のまとめの行。mode：決定済みの表（勤務表で数える）か案（担当から組み立てる） */
+  /**
+   * 週のまとめの行。mode：決定済みの表（勤務表で数える）か案。
+   * 案（2026-10-22 ユーザー確定）：時間の元は今の勤務表。人・曜日ごとに担当を決定済みの表（baseOwnCell＝その案の予定の適用開始日）と比べ、
+   * 同じなら勤務表のまま／変わったら勤務表のまま数えて出勤・退勤を変えるか聞く／無くなったら休み／勤務表に無い日は担当の前後で数える
+   */
   const weekRowsOf = useCallback((
     mode: 'decided' | 'plan', ownCellOf: (pid: string, d: string) => KidsCellValue,
     terms: { people: KidsPlanPerson[]; days: KidsPlanPersonDay[] }, withTemps: boolean,
+    baseOwnCell: ((pid: string, d: string) => KidsCellValue) | null = null,
   ): WeekRow[] => {
     if (!data || !roster) return [];
     const set = { pre: data.settings.pre_minutes, post: data.settings.post_minutes, gap: data.settings.gap_split_minutes };
@@ -681,8 +691,16 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       for (const v of versionsOnDate(studyVersions, baseDate).filter(x => x.day_kind === d)) {
         for (const u of v.members) study.set(u, [...(study.get(u) ?? []), { s: studyStartMin(v), e: studyEndMin(v), lesson: false, source: 'study' }]);
       }
-      return { d, own: dutyOfDay(board, data, ownCellOf, d), oth: dutyOfDay(otherBoard, other, (pid, dd) => otherCellOf(pid, dd), d), study };
+      return {
+        d, own: dutyOfDay(board, data, ownCellOf, d), oth: dutyOfDay(otherBoard, other, (pid, dd) => otherCellOf(pid, dd), d), study,
+        // 比べる元＝決定済みの表（相手の表もいつも決定済み）
+        baseOwn: mode === 'plan' && baseOwnCell ? dutyOfDay(board, data, baseOwnCell, d) : null,
+        baseOth: mode === 'plan' && baseOwnCell ? dutyOfDay(otherBoard, other, (pid, dd) => otherCellOf(pid, dd, true), d) : null,
+      };
     });
+    // 担当の中身を比べるための文字（時刻・どの表か・レッスンか・時刻の無い担当）
+    const dutySig = (list: ({ spans: DutySpan[]; timeless: boolean } | undefined)[]) =>
+      list.flatMap(v => v?.spans ?? []).map(x => `${x.s}-${x.e}-${x.source}-${x.lesson ? 1 : 0}`).sort().join(',') + (list.some(v => v?.timeless) ? '|t' : '');
     const area = isAdult ? '大人' : 'こども';
     const keys = new Set<string>();
     for (const s of data.staff) if (s.is_active && (s.main_area ?? '') === area && leaveWk(s.id).state !== 'all') keys.add(s.id);
@@ -719,6 +737,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
         const td = tDays.find(y => y.day_kind === x.d);
         const office = (td?.office ?? []).map(o => ({ s: toMin(o.start) ?? 0, e: toMin(o.end) ?? 0 })).filter(o => o.e > o.s);
         const rd = rosterDay(x.d);
+        let base: PlanDayBase = null;
+        if (mode === 'plan' && x.baseOwn && x.baseOth && !temp && rosterRows.length > 0) {
+          const hasRosterDay = (rd?.segments.length ?? 0) > 0;
+          const hasDuty = spans.length > 0 || !!own?.timeless || !!oth?.timeless;
+          const same = dutySig([own, oth]) === dutySig([x.baseOwn.get(k), x.baseOth.get(k)]);
+          if (same) base = hasRosterDay ? 'same' : null;
+          else if (hasRosterDay) base = hasDuty ? 'changed' : 'off';
+          else base = hasDuty ? 'new' : null;
+        }
         const input: DayInput = {
           spans,
           // 時刻の無い担当（校の役割だけ）は案のときだけ出勤日に数える（決定済みの表は勤務表で数える）
@@ -727,6 +754,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           startAt: td?.start ? toMin(td.start) : null,
           endAt: td?.end ? toMin(td.end) : null,
           roster: rd ? rd.segments.map(g => ({ s: toMin(normTime(g.start)) ?? 0, e: toMin(normTime(g.end)) ?? 0 })) : null,
+          base,
         };
         inputs[x.d] = input;
         const ab = planBlocks({ ...input, startAt: null, endAt: null }, set);
@@ -750,16 +778,17 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
     });
   }, [data, roster, studyVersions, baseDate, dutyOfDay, board, otherBoard, other, otherCellOf, isAdult, leaveWk, roles, rowsByUser, nameOf]);
 
-  const weekRows = useMemo(() => (viewMode === 'week' ? weekRowsOf(plan ? 'plan' : 'decided', shownCell, planTerms, !!plan) : []),
-    [viewMode, weekRowsOf, plan, shownCell, planTerms]);
+  const weekRows = useMemo(() => (viewMode === 'week' ? weekRowsOf(plan ? 'plan' : 'decided', shownCell, planTerms, !!plan, plan ? baseCell : null) : []),
+    [viewMode, weekRowsOf, plan, shownCell, planTerms, baseCell]);
   const compareWeekRows = useMemo(() => {
     if (viewMode !== 'week' || !compareWith || compareErr) return null;
     const p = data?.plans.find(x => x.id === compareWith);
     return {
       name: compareWith === 'decided' ? '決定済みの表' : p?.name ?? '比べる案',
-      rows: weekRowsOf(compareWith === 'decided' ? 'decided' : 'plan', compareCell, compareTerms, compareWith !== 'decided'),
+      rows: weekRowsOf(compareWith === 'decided' ? 'decided' : 'plan', compareCell, compareTerms, compareWith !== 'decided',
+        compareWith === 'decided' || !data ? null : (pid, d) => cellVersionOn(data.cells, pid, d, p?.apply_from ?? applyFrom)?.items ?? []),
     };
-  }, [viewMode, compareWith, compareErr, data, weekRowsOf, compareCell, compareTerms]);
+  }, [viewMode, compareWith, compareErr, data, weekRowsOf, compareCell, compareTerms, applyFrom]);
   const shortByDay = useMemo(() => {
     const m = Object.fromEntries(KIDS_WEEK.map(d => [d, 0])) as Record<RosterDayKind, number>;
     for (const s of shortfalls) m[s.day] += s.need;
@@ -1076,7 +1105,26 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
   };
 
   const activeStaff = data.staff.filter(s => s.is_active && leaveWk(s.id).state !== 'all');
-  const openPlans = data.plans.filter(p => p.status === 'open');
+  // 案のボタンは番号の順（名前の先頭の「案◯」）・番号の無い案は後ろ（2026-10-22 ユーザー指示：使った順だと並びが毎回変わって見にくい）
+  const planNo = (name: string) => { const m = /^案\s*(\d+)/.exec(name.trim()); return m ? Number(m[1]) : null; };
+  const openPlans = data.plans.filter(p => p.status === 'open').sort((a, b) => {
+    const x = planNo(a.name), y = planNo(b.name);
+    if (x != null && y != null) return x - y;
+    if (x != null || y != null) return x != null ? -1 : 1;
+    return a.name.localeCompare(b.name, 'ja');
+  });
+  /** ボタンの文字：番号のある案は「案1」だけ（名前とメモは選んだときの黄色い帯と、マウスを乗せたときに出す） */
+  const planShort = (p: KidsPlan) => { const n = planNo(p.name); return n != null ? `案${n}` : `${p.name}（${md(p.apply_from)}〜）`; };
+  const saveMemo = async (p: KidsPlan) => {
+    if (memoDraft == null) return;
+    if (memoDraft.trim().length > 500) { setMemoErr('メモは500字までにしてください'); return; }
+    setMemoBusy(true); setMemoErr('');
+    const e = await setPlanMemo(p.id, memoDraft);
+    setMemoBusy(false);
+    if (e) { setMemoErr(e); return; }
+    setMemoDraft(null);
+    await load(true);
+  };
   const archivedPlans = data.plans.filter(p => p.status === 'archived');
 
   // ─── 週のまとめの保存（2026-10-22）。🚨 案の前提はすぐ保存する（マスの下書きとは別。案の revision が1つ上がる） ───
@@ -2078,8 +2126,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
         <button type="button" style={toggle(view === 'decided')} onClick={() => guarded('決定済みの表', () => setView('decided'))}>決定済みの表</button>
         {openPlans.map(p => (
-          <button key={p.id} type="button" style={toggle(view === p.id)} onClick={() => guarded(p.name, () => setView(p.id))}>
-            {p.name}（{md(p.apply_from)}〜）
+          <button key={p.id} type="button" style={toggle(view === p.id)} onClick={() => guarded(p.name, () => setView(p.id))}
+            title={`${p.name}（${md(p.apply_from)}〜）${p.memo ? `\n${p.memo}` : ''}`}>
+            {planShort(p)}
           </button>
         ))}
         <button type="button" style={{ ...inputStyle, cursor: 'pointer' }}
@@ -2176,6 +2225,26 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
             }} />
           <span style={{ marginLeft: 8, fontSize: 12 }}>最後の保存 {plan.updated_at.slice(0, 16).replace('T', ' ')}</span>
           <button type="button" style={{ ...linkBtn, marginLeft: 8 }} onClick={() => void archivePlan(plan)}>この案を使わない</button>
+          {/* メモ（何のための案か・2026-10-22） */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 6, flexWrap: 'wrap' }}>
+            <span style={{ whiteSpace: 'nowrap' }}>メモ：</span>
+            {memoDraft == null ? (
+              <>
+                <span style={{ flex: 1, minWidth: 160, whiteSpace: 'pre-wrap' }}>{plan.memo || <span style={{ opacity: 0.75 }}>（まだありません）</span>}</span>
+                <button type="button" style={{ ...inputStyle, cursor: 'pointer', padding: '2px 10px', fontSize: 12 }} onClick={() => { setMemoDraft(plan.memo ?? ''); setMemoErr(''); }}>メモを直す</button>
+              </>
+            ) : (
+              <>
+                <textarea value={memoDraft} rows={2} maxLength={500} placeholder="例：週休はいまのまま。ほかの案と比べるための元の案"
+                  style={{ ...inputStyle, flex: 1, minWidth: 200, resize: 'vertical' }} onChange={e => setMemoDraft(e.target.value)} />
+                <span style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" style={{ ...inputStyle, cursor: 'pointer', fontSize: 12 }} disabled={memoBusy} onClick={() => { setMemoDraft(null); setMemoErr(''); }}>直さずに閉じる</button>
+                  <button type="button" style={{ ...primaryBtn, padding: '4px 12px', fontSize: 12 }} disabled={memoBusy} onClick={() => void saveMemo(plan)}>{memoBusy ? '保存しています…' : 'この内容にする'}</button>
+                </span>
+              </>
+            )}
+          </div>
+          {memoErr && <div style={{ color: '#c62828', marginTop: 4 }}>{memoErr}</div>}
         </div>
       )}
 

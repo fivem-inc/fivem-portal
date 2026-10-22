@@ -143,6 +143,8 @@ export interface KidsPlan {
   revision: number;
   updated_by: string | null;
   updated_at: string;
+  /** 案のメモ（何のための案か・2026-10-22）。kids_shift_plan_set_memo で書く */
+  memo?: string | null;
 }
 
 export interface KidsSettings {

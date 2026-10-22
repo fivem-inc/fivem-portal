@@ -7,7 +7,7 @@ import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
 import { parseSegments, formatSegs, formatSegsFromRecord, segMinutes, calcSegsBreak, shiftReportDiff, summarizeShiftDiffs } from '../../lib/shiftCalc';
 import { compareEmployeeNo } from '../../lib/employeeNo';
 import { SHIFT_TYPE_INFO, type ShiftAppType } from '../../lib/shiftReportTypes';
-import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
+import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, type PersonSheet, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
 import PayrollSheetView from './PayrollSheetView';
 
 /**
@@ -79,7 +79,9 @@ const ShiftReportPayrollSheet: React.FC<{
   useEffect(() => { if (people.length && (!personId || !people.some(p => p.id === personId))) setPersonId(people[0].id); }, [people, personId]);
   const person = people.find(p => p.id === personId) ?? null;
 
-  const sheet = useMemo(() => {
+  // 1人分の表（1人ずつ・並べて見る・Excel が同じものを使う・2026-10-22）
+  const sheetFor = useCallback((id: string): PersonSheet | null => {
+    const person = people.find(p => p.id === id);
     if (!data || !person) return null;
     const reps = data.reps.filter(r => r.applicant_id === person.id && r.status !== 'returned' && r.status !== 'cancelled');
     const sum = summarizeShiftDiffs(reps);
@@ -119,6 +121,7 @@ const ShiftReportPayrollSheet: React.FC<{
           muted: pend,
           strike: false,
           timeColor: !pend && diff != null && diff < 0 ? '#c62828' : undefined,
+          minutes: pend ? null : diff,
         };
       });
       return {
@@ -129,23 +132,25 @@ const ShiftReportPayrollSheet: React.FC<{
         entries,
       };
     });
-    return { sum, days, empty: reps.length === 0 };
-  }, [data, person, period]);
+    return {
+      total: sum.total,
+      totalNote: '通常シフトとの差の合計です。確認待ちは合計に入っていません',
+      plannedText: sum.planned !== sum.total
+        ? `見込み ${sheetHm(sum.planned)}（確定 ${sheetHm(sum.total)}・確認待ち ${sheetHm(sum.planned - sum.total)}）`
+        : null,
+      absenceDays: sum.absenceDays,
+      pendingText: sum.pendingCount > 0 ? `確認待ちが${sum.pendingCount}件あります。受理されると合計に入ります。` : null,
+      emptyText: reps.length === 0 ? 'この期間の勤務変更の報告はありません' : null,
+      days,
+    };
+  }, [data, people, period]);
 
   return (
     <PayrollSheetView isDarkMode={isDarkMode} onBack={onBack}
       periodOptions={periodOptions} period={period} onPeriod={setPeriod}
       loading={loading || !data} loadErr={loadErr} onReload={load}
       people={people} personId={person?.id ?? null} onPerson={setPersonId}
-      total={sheet ? sheet.sum.total : null}
-      totalNote="通常シフトとの差の合計です。確認待ちは合計に入っていません"
-      plannedText={sheet && sheet.sum.planned !== sheet.sum.total
-        ? `見込み ${sheetHm(sheet.sum.planned)}（確定 ${sheetHm(sheet.sum.total)}・確認待ち ${sheetHm(sheet.sum.planned - sheet.sum.total)}）`
-        : null}
-      absenceDays={sheet?.sum.absenceDays ?? 0}
-      pendingText={sheet && sheet.sum.pendingCount > 0 ? `確認待ちが${sheet.sum.pendingCount}件あります。受理されると合計に入ります。` : null}
-      emptyText={sheet?.empty ? 'この期間の勤務変更の報告はありません' : null}
-      days={sheet?.days ?? []} />
+      kindLabel="勤務変更" sheetFor={sheetFor} />
   );
 };
 

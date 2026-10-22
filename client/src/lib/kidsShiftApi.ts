@@ -118,7 +118,7 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
       .or(`valid_to.is.null,valid_to.gte.${sinceDate}`)
       .order('valid_from'),
     supabase.from('kids_shift_plans')
-      .select('id, board, name, apply_from, status, archived_reason, archived_at, decided_from, revision, updated_by, updated_at')
+      .select('id, board, name, apply_from, status, archived_reason, archived_at, decided_from, revision, updated_by, updated_at, memo')
       .eq('board', board)
       .order('updated_at', { ascending: false }),
     supabase.from('kids_shift_notes').select('id, body, sort_order, active').eq('board', board).order('sort_order'),
@@ -408,6 +408,15 @@ export function termsPayload(t: KidsPlanPerson, days?: KidsPlanPersonDay[]) {
     keep_reason: t.keep_reason ?? '',
     ...(days ? { days: days.map(d => ({ day_kind: d.day_kind, start: d.start, end: d.end, office: d.office })) } : {}),
   };
+}
+
+/** 案のメモを保存する（2026-10-22・案の revision は上げない）。エラーの文を返す */
+export async function setPlanMemo(planId: string, memo: string): Promise<string | null> {
+  // 🚨 supabase.rpc は失敗しても throw しない。error と ok の両方を見る
+  const { data, error } = await supabase.rpc('kids_shift_plan_set_memo', { p_plan_id: planId, p_memo: memo });
+  if (error) return `メモを保存できませんでした：${error.message}`;
+  if (!(data as { ok?: boolean } | null)?.ok) return 'この案は過去の案に移されています。';
+  return null;
 }
 
 /** 案の前提を保存する（DB の kids_shift_plan_save op='terms'・案の revision を見る） */

@@ -14,6 +14,8 @@ export interface SheetEntry {
   /** 二重に数えない行（打ち消し線） */
   strike: boolean;
   timeColor?: string;
+  /** 合計に入る分（Excel の「時間数（分）」に出す）。合計に入らない行は null（2026-10-22） */
+  minutes?: number | null;
 }
 export interface SheetDay {
   date: string;
@@ -25,6 +27,18 @@ export interface SheetDay {
   entries: SheetEntry[];
 }
 export interface SheetPerson { id: string; name: string; employee_no: string | null }
+/** 1人分の表（画面・並べて見る・Excel が同じものを使う・2026-10-22） */
+export interface PersonSheet {
+  total: number | null;
+  totalNote: string;
+  plannedText: string | null;
+  absenceDays: number;
+  pendingText: string | null;
+  emptyText: string | null;
+  days: SheetDay[];
+}
+/** 記載のある日だけ（［記載のある人を並べて］・Excel の「一覧」） */
+export const daysWithEntries = (days: SheetDay[]): SheetDay[] => days.filter(d => d.entries.length > 0);
 
 export const SHEET_DOW = ['日', '月', '火', '水', '木', '金', '土'];
 export const dowOf = (ymd: string): number => { const [y, m, d] = ymd.split('-').map(Number); return new Date(y, m - 1, d).getDay(); };

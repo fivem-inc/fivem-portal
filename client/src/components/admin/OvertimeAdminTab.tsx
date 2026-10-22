@@ -31,7 +31,8 @@ import CorrectionNotice from '../CorrectionNotice';
 import { ApprovedByLines, type ApprovedLine } from './ApprovedByLines';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 import { overtimeApprovedLines } from '../../lib/overtimeApproved';
-import { compareEmployeeNo } from '../../lib/employeeNo';
+import { compareByListSorts, DEFAULT_LIST_SORTS, isDefaultListSorts, type ListSort } from '../../lib/listSort';
+import ListSortBar from './ListSortBar';
 import { onRowPick, pickedRowBg } from '../../lib/rowPick';
 import OvertimePayrollSheet from './OvertimePayrollSheet';
 
@@ -336,11 +337,13 @@ const OvertimeAdminTab: React.FC = () => {
   const [otCsvDateType, setOtCsvDateType] = useState<'work' | 'created'>('work');
   const [otCsvFrom, setOtCsvFrom] = useState('');
   const [otCsvTo, setOtCsvTo] = useState('');
-  const [otFilterPeriod, setOtFilterPeriod] = useState('all');
+  // 最初は今の給与期間（勤務変更の一覧とそろえる・2026-10-22 ユーザー確定）
+  const otCurrentPeriod = calcPayPeriodStartJst(todayJstStr());
+  const [otFilterPeriod, setOtFilterPeriod] = useState(otCurrentPeriod);
   const [otFilterPerson, setOtFilterPerson] = useState('all');
   const [otFilterType, setOtFilterType] = useState('all');
-  const [otSortKey, setOtSortKey] = useState<'work_date' | 'created_at' | 'name' | 'diff'>('work_date');
-  const [otSortAsc, setOtSortAsc] = useState(false);
+  // 並び順（2段・勤務変更の一覧と同じ lib/listSort・2026-10-22 ユーザー確定：出した日の新しい順 → 対象日の新しい順）
+  const [otSorts, setOtSorts] = useState<ListSort[]>(DEFAULT_LIST_SORTS);
   // 従業員番号（2026-10-21・名前順は従業員番号の順＝給与の並び）
   const [otEmpNoMap, setOtEmpNoMap] = useState<Record<string, string | null>>({});
   // ボタン以外を押した行に薄い色（給与の確認中に、どの行を見ているか分かるように・2026-10-21 ユーザー指示）。1行だけ
@@ -543,8 +546,8 @@ const OvertimeAdminTab: React.FC = () => {
     return `${py}年${pm}月給与分（${m}/16〜${pm}/15）`;
   };
   const otPeriodOptions = useMemo(
-    () => [...new Set(otReports.map(r => payPeriodOf(r.work_date)))].sort((a, b) => b.localeCompare(a)),
-    [otReports],
+    () => [...new Set([otCurrentPeriod, ...otReports.map(r => payPeriodOf(r.work_date))])].sort((a, b) => b.localeCompare(a)),
+    [otReports, otCurrentPeriod],
   );
   const otPersonOptions = useMemo(() => {
     const m = new Map<string, string>();
@@ -582,7 +585,7 @@ const OvertimeAdminTab: React.FC = () => {
     () => [...new Set(otReports.flatMap(r => (r.application_types ?? []).filter(isOvertimeType)))],
     [otReports],
   );
-  const otFilterActive = otFilterStatus !== 'all' || otFilterPeriod !== 'all' || otFilterPerson !== 'all' || otFilterType !== 'all' || otSortKey !== 'work_date' || otSortAsc;
+  const otFilterActive = otFilterStatus !== 'all' || otFilterPeriod !== otCurrentPeriod || otFilterPerson !== 'all' || otFilterType !== 'all' || !isDefaultListSorts(otSorts);
   const visibleOtReports = useMemo(() => {
     const statusGroup: Record<string, string[]> = {
       pending: ['requested', 'reported'],
@@ -598,15 +601,9 @@ const OvertimeAdminTab: React.FC = () => {
       if (otFilterType !== 'all' && !(r.application_types ?? []).includes(otFilterType)) return false;
       return true;
     });
-    const dir = otSortAsc ? 1 : -1;
-    return rows.sort((a, b) => {
-      if (otSortKey === 'name') return compareEmployeeNo(otEmpNoMap[a.applicant_id], a.applicantName, otEmpNoMap[b.applicant_id], b.applicantName, otSortAsc);
-      if (otSortKey === 'diff') return ((a.diff_minutes ?? 0) - (b.diff_minutes ?? 0)) * dir;
-      // 申請日順（いつ出されたか）。未設定の古い行は末尾に寄せる
-      if (otSortKey === 'created_at') return String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) * dir;
-      return a.work_date.localeCompare(b.work_date) * dir;
-    });
-  }, [otReports, otStatusMap, otFilterStatus, otFilterPeriod, otFilterPerson, otFilterType, otSortKey, otSortAsc, otEmpNoMap]);
+    const v = (r: OvertimeRecord) => ({ workDate: r.work_date, createdAt: String(r.created_at ?? ''), empNo: otEmpNoMap[r.applicant_id], name: r.applicantName || '', diff: r.diff_minutes ?? 0 });
+    return rows.sort((a, b) => compareByListSorts(v(a), v(b), otSorts) || a.work_date.localeCompare(b.work_date));
+  }, [otReports, otStatusMap, otFilterStatus, otFilterPeriod, otFilterPerson, otFilterType, otSorts, otEmpNoMap]);
 
   // 定時の記録の行（2026-10-12）。状況「すべて／受理済み」・種別「全種別」のときだけ混ぜる（申請ではないため）
   const visibleTeiji = useMemo(() => {
@@ -623,18 +620,11 @@ const OvertimeAdminTab: React.FC = () => {
       ...visibleTeiji.map(c => ({ t: 'c' as const, c })),
     ];
     if (visibleTeiji.length === 0) return list;
-    const dir = otSortAsc ? 1 : -1;
-    const key = (x: OtListRow) => x.t === 'r'
-      ? { uid: x.r.applicant_id, name: x.r.applicantName || '', date: x.r.work_date, diff: x.r.diff_minutes ?? 0, created: String(x.r.created_at ?? '') }
-      : { uid: x.c.user_id, name: x.c.name, date: x.c.work_date, diff: 0, created: x.c.created_at };
-    return list.sort((a, b) => {
-      const ka = key(a), kb = key(b);
-      if (otSortKey === 'name') return compareEmployeeNo(otEmpNoMap[ka.uid], ka.name, otEmpNoMap[kb.uid], kb.name, otSortAsc);
-      if (otSortKey === 'diff') return (ka.diff - kb.diff) * dir;
-      if (otSortKey === 'created_at') return ka.created.localeCompare(kb.created) * dir;
-      return ka.date.localeCompare(kb.date) * dir;
-    });
-  }, [visibleOtReports, visibleTeiji, otSortKey, otSortAsc, otEmpNoMap]);
+    const v = (x: OtListRow) => x.t === 'r'
+      ? { workDate: x.r.work_date, createdAt: String(x.r.created_at ?? ''), empNo: otEmpNoMap[x.r.applicant_id], name: x.r.applicantName || '', diff: x.r.diff_minutes ?? 0 }
+      : { workDate: x.c.work_date, createdAt: x.c.created_at, empNo: otEmpNoMap[x.c.user_id], name: x.c.name, diff: 0 };
+    return list.sort((a, b) => compareByListSorts(v(a), v(b), otSorts) || v(a).workDate.localeCompare(v(b).workDate));
+  }, [visibleOtReports, visibleTeiji, otSorts, otEmpNoMap]);
 
   // Excel出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する。
   //
@@ -1294,19 +1284,9 @@ const OvertimeAdminTab: React.FC = () => {
               <option value="all">全種別</option>
               {otTypeOptions.map(t => <option key={t} value={t}>{OT_TYPE_INFO[t].label}</option>)}
             </select>
-            <select value={otSortKey} onChange={e => setOtSortKey(e.target.value as 'work_date' | 'created_at' | 'name' | 'diff')}
-              style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
-              <option value="work_date">勤務日順</option>
-              <option value="created_at">申請日順</option>
-              <option value="name">名前順（従業員番号）</option>
-              <option value="diff">差分順</option>
-            </select>
-            <button onClick={() => setOtSortAsc(v => !v)}
-              style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12, cursor: 'pointer' }}>
-              {otSortAsc ? '↑ 昇順' : '↓ 降順'}
-            </button>
+            <ListSortBar sorts={otSorts} onChange={setOtSorts} isDarkMode={isDarkMode} />
             {otFilterActive && (
-              <button onClick={() => { setOtFilterStatus('all'); setOtFilterPeriod('all'); setOtFilterPerson('all'); setOtFilterType('all'); setOtSortKey('work_date'); setOtSortAsc(false); }}
+              <button onClick={() => { setOtFilterStatus('all'); setOtFilterPeriod(otCurrentPeriod); setOtFilterPerson('all'); setOtFilterType('all'); setOtSorts(DEFAULT_LIST_SORTS); }}
                 style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', fontSize: 12, cursor: 'pointer' }}>
                 ✕ クリア
               </button>
@@ -1348,9 +1328,10 @@ const OvertimeAdminTab: React.FC = () => {
                 <thead>
                   <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
                     {[
-                      { label: '申請者', w: 70 }, { label: '対象日', w: 78 }, { label: '勤務時間（元/実）', w: 160 },
-                      { label: '休憩/実労働', w: 90 }, { label: '校（元→実）', w: 72 }, { label: '差分', w: 55 },
-                      { label: '状況', w: 70 }, { label: '操作', w: 150 },
+                      // 列は勤務変更の一覧と同じ並び（2026-10-22 ユーザー確定）
+                      { label: '名前', w: 70 }, { label: '対象日', w: 78 }, { label: '種別', w: 80 },
+                      { label: '変更前（通常シフト）', w: 100 }, { label: '変更後（実際）', w: 130 }, { label: '差分', w: 55 },
+                      { label: '理由', w: 120 }, { label: '状況', w: 70 }, { label: '出した日', w: 56 }, { label: '操作', w: 150 },
                     ].map(col => (
                       <th key={col.label} style={{ padding: '8px 4px', textAlign: 'center', borderBottom: `1px solid ${borderColor}`, width: col.w, fontSize: 12 }}>{col.label}</th>
                     ))}
@@ -1367,22 +1348,22 @@ const OvertimeAdminTab: React.FC = () => {
                         <tr key={`dc-${c.id}`} onClick={e => onRowPick(e, `dc-${c.id}`, otPickedRow, setOtPickedRow)}
                           style={{ background: otPickedRow === `dc-${c.id}` ? pickedRowBg(isDarkMode) : (isDarkMode ? '#2b3035' : '#fafafa'), cursor: 'pointer' }}>
                           <td style={{ ...ccell, fontWeight: 'bold', textAlign: 'left', color: text }}>{c.name}</td>
-                          <td style={{ ...ccell, whiteSpace: 'nowrap', color: text }}>
-                            {c.work_date}（{dowLabelOt(c.work_date)}）
-                            <div style={{ fontSize: 10, marginTop: 2 }}>
-                              記録 {new Date(c.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                            </div>
+                          <td style={{ ...ccell, whiteSpace: 'nowrap', color: text }}>{c.work_date}（{dowLabelOt(c.work_date)}）</td>
+                          <td style={ccell}>—</td>
+                          <td style={{ ...ccell, fontSize: 12 }}>
+                            <div>{normalShiftTimeText(cns) || '—'}</div>
+                            {cns.location && <div style={{ fontSize: 11 }}>{cns.location}</div>}
                           </td>
-                          <td style={{ ...ccell, textAlign: 'left', fontSize: 12 }}>
-                            <div style={{ fontSize: 11 }}>元 {normalShiftTimeText(cns) || '—'}</div>
-                            <div style={{ color: text }}>実 シフト通り</div>
+                          <td style={{ ...ccell, fontSize: 12 }}>
+                            <div style={{ color: text }}>シフト通り</div>
+                            <div style={{ fontSize: 11 }}>休憩 {cns.break_minutes ?? 0}分・実労働 {formatMin(cns.labor_minutes ?? 0)}</div>
                           </td>
-                          <td style={{ ...ccell, fontSize: 12, whiteSpace: 'nowrap' }}>休{cns.break_minutes ?? 0}分<br />{formatMin(cns.labor_minutes ?? 0)}</td>
-                          <td style={{ ...ccell, fontSize: 12 }}>{cns.location || '—'}</td>
                           <td style={{ ...ccell, whiteSpace: 'nowrap' }}>—</td>
+                          <td style={ccell}></td>
                           <td style={ccell}>
                             <span style={{ padding: '2px 6px', borderRadius: 6, background: DAY_MARK_STYLE.teiji.bg, color: DAY_MARK_STYLE.teiji.text, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{DAY_MARK_STYLE.teiji.label}</span>
                           </td>
+                          <td style={{ ...ccell, fontSize: 10.5 }}>{new Date(c.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
                           <td style={{ ...ccell, fontSize: 11 }}>本人の記録</td>
                         </tr>
                       );
@@ -1416,14 +1397,7 @@ const OvertimeAdminTab: React.FC = () => {
                           <td style={{ ...cell, fontWeight: 'bold', textAlign: 'left' }}>{r.applicantName}</td>
                           <td style={{ ...cell, whiteSpace: 'nowrap' }}>
                             {r.work_date}（{dowLabelOt(r.work_date)}）
-                            {/* いつ出された申請かが分からないと、事後報告の遅れ具合が追えない */}
-                            {r.created_at && (
-                              <div style={{ fontSize: 10, color: subText, marginTop: 2 }}>
-                                申請 {new Date(r.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                              </div>
-                            )}
-                            {/* 事前に出したのか、あとから報告したのか。
-                                申請日のすぐ下に置く（種別バッジは「何をしたか」だけにする） */}
+                            {/* 事前に出したのか、あとから報告したのか（種別の札は「何をしたか」だけにする） */}
                             {r.entry_type !== 'leave_auto' && otCalMap[r.id] && (
                               <div style={{ marginTop: 3 }}>
                                 <span style={{
@@ -1443,19 +1417,10 @@ const OvertimeAdminTab: React.FC = () => {
                               </div>
                             )}
                           </td>
-                          <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
-                            {/* 休日出勤の日は「元」の欄だけ色を付ける（2026-09-18 ユーザー確定・案1）。
-                                🚨 色はピンク（2026-09-18 ユーザー指示）。新しい色は足さず、既存の「時間外調整休」の札の色（OT_TYPE_INFO.chosei_off）を使う */}
-                            {(r.application_types ?? []).includes('holiday_work') ? (
-                              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '0 5px', color: isDarkMode ? '#fff' : OT_TYPE_INFO.chosei_off.color, background: isDarkMode ? OT_TYPE_INFO.chosei_off.darkBg : `${OT_TYPE_INFO.chosei_off.color}1a` }}>
-                                元 {nsTime}（休日出勤）
-                              </div>
-                            ) : (
-                              <div style={{ color: subText, fontSize: 11 }}>元 {nsTime}</div>
-                            )}
-                            <div>実 {segText}</div>
-                            {(r.application_types ?? []).filter(isOvertimeType).length > 0 && (
-                              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 2 }}>
+                          {/* 種別 */}
+                          <td style={cell}>
+                            {(r.application_types ?? []).filter(isOvertimeType).length > 0 ? (
+                              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'center' }}>
                                 {(r.application_types ?? []).filter(isOvertimeType).map(t => (
                                   <span key={t} style={{ padding: '1px 6px', borderRadius: 6, border: `1px solid ${OT_TYPE_INFO[t].color}`, color: isDarkMode ? '#fff' : OT_TYPE_INFO[t].color, background: isDarkMode ? OT_TYPE_INFO[t].darkBg : `${OT_TYPE_INFO[t].color}1a`, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
                                     {/* 🚨 札の文字は typeLabelFor（押した事情で「遅出(イベント・会議など)」などに変わる・2026-09-26）。本人ページ・表入力・Google カレンダーと同じ表記 */}
@@ -1463,19 +1428,32 @@ const OvertimeAdminTab: React.FC = () => {
                                   </span>
                                 ))}
                               </div>
+                            ) : <span style={{ color: subText }}>—</span>}
+                          </td>
+                          {/* 変更前（通常シフト）。休日出勤の日は色を付ける（2026-09-18 ユーザー確定・案1。色は「時間外調整休」の札の色） */}
+                          <td style={{ ...cell, fontSize: 12 }}>
+                            {(r.application_types ?? []).includes('holiday_work') ? (
+                              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '0 5px', color: isDarkMode ? '#fff' : OT_TYPE_INFO.chosei_off.color, background: isDarkMode ? OT_TYPE_INFO.chosei_off.darkBg : `${OT_TYPE_INFO.chosei_off.color}1a` }}>
+                                {nsTime}（休日出勤）
+                              </div>
+                            ) : (
+                              <div>{nsTime}</div>
                             )}
+                            {nsLoc && <div style={{ color: subText, fontSize: 11 }}>{nsLoc}</div>}
+                          </td>
+                          {/* 変更後（実際） */}
+                          <td style={{ ...cell, fontSize: 12 }}>
+                            <div style={{ fontWeight: 'bold' }}>{segText}</div>
+                            {r.location && r.location !== nsLoc && <div style={{ fontSize: 11 }}>{r.location}</div>}
+                            {!rowFullDay && <div style={{ color: subText, fontSize: 11 }}>休憩 {r.break_minutes ?? 0}分・実労働 {formatMin(r.labor_minutes ?? 0)}</div>}
                             {(r.application_types ?? []).includes('furikae_off') && r.furikae_origin_date && (
                               <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>
                                 振替元：{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabelOt(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}
                               </div>
                             )}
-                            {r.reason && <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
-                            {/* 事前申請どおりか、予定から変わったか。開かずに分かるよう行に出す */}
-                            {/* 予定から変わった行だけ、事前申請の時間と理由を出す
-                                （申請どおりの行はここに何も足さない＝縦が伸びない。
-                                  変更の有無そのものは状態の列のバッジで分かる） */}
+                            {/* 予定から変わった行だけ、事前申請の時間と変えた理由を出す（申請どおりの行は何も足さない＝縦が伸びない） */}
                             {hasActualSegs && r.change_reason && (
-                              <div style={{ marginTop: 2, fontSize: 11, lineHeight: 1.4, color: isDarkMode ? '#ffd54f' : '#9a6700' }}>
+                              <div style={{ marginTop: 2, fontSize: 11, lineHeight: 1.4, color: isDarkMode ? '#ffd54f' : '#9a6700', textAlign: 'left' }}>
                                 <div>
                                   予定 {plannedSegs.length ? plannedSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)'}
                                   {changeDiff !== 0 && (
@@ -1488,13 +1466,8 @@ const OvertimeAdminTab: React.FC = () => {
                               </div>
                             )}
                           </td>
-                          <td style={{ ...cell, fontSize: 12, whiteSpace: 'nowrap' }}>休{r.break_minutes ?? 0}分<br />{formatMin(r.labor_minutes ?? 0)}</td>
-                          <td style={{ ...cell, fontSize: 12 }}>
-                            {nsLoc && nsLoc !== (r.location || '') ? (
-                              <><span style={{ color: subText, fontSize: 11 }}>{nsLoc}</span><br /><span>↓</span><br />{r.location || '—'}</>
-                            ) : (r.location || nsLoc || '—')}
-                          </td>
                           <td style={{ ...cell, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{formatSignedMin(r.diff_minutes ?? 0)}</td>
+                          <td style={{ ...cell, textAlign: 'left', fontSize: 12, color: subText, wordBreak: 'break-word' }}>{r.reason}</td>
                           <td style={cell}>
                             <span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span>
                             <ApprovedByLines lines={otApprovedMap[r.id] ?? []} color={subText} />
@@ -1537,6 +1510,10 @@ const OvertimeAdminTab: React.FC = () => {
                               );
                             })()}
                           </td>
+                          {/* 出した日（小さく・いつ出されたかが分からないと事後報告の遅れ具合が追えない） */}
+                          <td style={{ ...cell, fontSize: 10.5, color: subText }}>
+                            {r.created_at ? new Date(r.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'}
+                          </td>
                           <td style={cell}>
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
                               {/* 経理が代わりに受理（受理まちの行だけ・2026-10-14） */}
@@ -1563,7 +1540,7 @@ const OvertimeAdminTab: React.FC = () => {
                         {/* 修正依頼が来ている申請：行のすぐ下に帯（押すと修正依頼のタブのその依頼へ・2026-10-16） */}
                         {corrections.get(r.id) && (
                           <tr>
-                            <td colSpan={8} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${isDarkMode ? '#495057' : '#dee2e6'}` }}>
+                            <td colSpan={10} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${isDarkMode ? '#495057' : '#dee2e6'}` }}>
                               <CorrectionNotice latest={corrections.get(r.id)} isDark={isDarkMode}
                                 onOpen={() => { setFocusTarget({ type: 'overtime', id: r.id }); setActiveTab('corrections'); }} />
                             </td>
@@ -1571,7 +1548,7 @@ const OvertimeAdminTab: React.FC = () => {
                         )}
                         {isOpen && (
                           <tr>
-                            <td colSpan={8} style={{ padding: '8px 12px', background: isDarkMode ? '#2a1e00' : '#fff8f0', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14' }}>
+                            <td colSpan={10} style={{ padding: '8px 12px', background: isDarkMode ? '#2a1e00' : '#fff8f0', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14' }}>
                               <div style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#ffe082' : '#7c4d00', marginBottom: 6 }}>修正履歴</div>
                               {!otHistory[r.id] ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>読み込み中...</p>
                                 : otHistory[r.id].length === 0 ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>履歴なし</p>

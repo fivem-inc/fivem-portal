@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
-import { compareEmployeeNo } from '../../lib/employeeNo';
+import { compareByListSorts, DEFAULT_LIST_SORTS, type ListSort } from '../../lib/listSort';
+import ListSortBar from './ListSortBar';
 import { SHIFT_TYPE_INFO, type ShiftAppType } from '../../lib/shiftReportTypes';
 import { onRowPick, pickedRowBg } from '../../lib/rowPick';
 import ShiftReportPayrollSheet from './ShiftReportPayrollSheet';
@@ -137,8 +138,8 @@ const ShiftReportsTab: React.FC = () => {
   const [canceling, setCanceling] = useState(false);
   const [returnComment, setReturnComment] = useState('');
   const [returning, setReturning]       = useState(false);
-  const [sortKey, setSortKey]           = useState<'created_at' | 'work_date' | 'applicantName'>('created_at');
-  const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('desc');
+  // 並び順（2段・残業の一覧と同じ lib/listSort・2026-10-22 ユーザー確定：出した日の新しい順 → 対象日の新しい順）
+  const [sorts, setSorts]               = useState<ListSort[]>(DEFAULT_LIST_SORTS);
   const [empNoMap, setEmpNoMap]         = useState<Record<string, string | null>>({});
   // ボタン以外を押した行に薄い色（残業の受理済み一覧と同じ・2026-10-21 ユーザー指示）
   const [pickedRow, setPickedRow]       = useState<string | null>(null);
@@ -366,22 +367,12 @@ const ShiftReportsTab: React.FC = () => {
   // 変更前が登録シフトと違う報告の知らせ（2026-10-21 案A の③）。いま表に出ている分の人と日付で読む
   const regOf = useRegisteredShifts(filtered);
 
-  const sorted = [...filtered].sort((a, b) => {
-    const dir = sortDir === 'asc' ? 1 : -1;
-    let va = '', vb = '';
-    if (sortKey === 'created_at') { va = a.created_at; vb = b.created_at; }
-    else if (sortKey === 'work_date') { va = a.work_date; vb = b.work_date; }
-    else {
-      // 名前順＝従業員番号の順（番号の無い人は最後・その中は名前順）。同じ人の中は対象日で並べる（下）
-      const c0 = compareEmployeeNo(empNoMap[a.applicant_id], a.applicantName, empNoMap[b.applicant_id], b.applicantName, sortDir === 'asc');
-      if (c0 !== 0) return c0;
-    }
-    const c = va.localeCompare(vb);
-    if (c !== 0) return dir * c;
-    // 同じ値のときは対象日で並べる。
-    // まとめて報告された分（報告日時が同じ）が日付順に並ばないと、一覧が読みにくいため
-    return dir * a.work_date.localeCompare(b.work_date);
-  });
+  // 名前順＝従業員番号の順（番号の無い人は最後・その中は名前順）。差分は一覧の「差分」と同じ shiftReportDiff
+  const sortVals = (r: ShiftReport) => ({ workDate: r.work_date, createdAt: r.created_at, empNo: empNoMap[r.applicant_id], name: r.applicantName ?? '', diff: shiftReportDiff(r).diff });
+  const sorted = [...filtered].sort((a, b) =>
+    compareByListSorts(sortVals(a), sortVals(b), sorts)
+    // 2段とも同じときは対象日の古い順（まとめて報告された分が日付順に並ぶように）
+    || a.work_date.localeCompare(b.work_date));
 
   const personOptions = [...new Map(reports.map(r => [r.applicant_id, r.applicantName ?? r.applicant_id])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
 
@@ -546,23 +537,10 @@ const ShiftReportsTab: React.FC = () => {
         </select>
       </div>
 
-      {/* ソート行 */}
+      {/* ソート行（2段・残業の一覧と同じ部品・2026-10-22） */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 12, alignItems: 'center' }}>
-        <span style={{ fontSize: 12, color: sub }}>並び順：</span>
-        <select value={sortKey} onChange={e => setSortKey(e.target.value as typeof sortKey)}
-          style={{ padding: '4px 8px', borderRadius: 8, border: `1px solid ${border}`, background: selBg, color: text, fontSize: 12 }}>
-          {/* 🚨 「勤務日」と書いていたが、これは「いつの勤務についての報告か」＝対象日のこと。
-                 残業管理でも同じ理由で「勤務日」→「対象日」に統一してある。
-                 （一覧の列見出しは「変更前」のまま。あの列には対象日と変更前の内容が両方入る） */}
-          <option value="created_at">報告日</option>
-          <option value="work_date">対象日</option>
-          <option value="applicantName">名前順（従業員番号）</option>
-        </select>
-        <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
-          style={{ ...btnBase, padding: '4px 10px', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: text }}>
-          {sortDir === 'desc' ? '↓ 降順' : '↑ 昇順'}
-        </button>
-        <button onClick={() => { setSortKey('created_at'); setSortDir('desc'); setStatusFilter('all'); setPersonFilter('all'); setGroupFilter('all'); setTypeFilter('all'); setPeriodFilter('__current__'); }}
+        <ListSortBar sorts={sorts} onChange={setSorts} isDarkMode={isDarkMode} />
+        <button onClick={() => { setSorts(DEFAULT_LIST_SORTS); setStatusFilter('all'); setPersonFilter('all'); setGroupFilter('all'); setTypeFilter('all'); setPeriodFilter('__current__'); }}
           style={{ ...btnBase, padding: '4px 10px', fontSize: 12, background: isDarkMode ? '#6c757d' : '#dee2e6', color: sub }}>
           クリア
         </button>
@@ -599,14 +577,16 @@ const ShiftReportsTab: React.FC = () => {
             <thead>
               <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
                 {[
-                  { label: '報告日',   w: 70 },
-                  { label: '報告者',   w: 70 },
+                  // 列は残業の一覧と同じ並び（2026-10-22 ユーザー確定）
+                  { label: '名前',     w: 70 },
+                  { label: '対象日',   w: 64 },
                   { label: '種別',     w: 70 },
-                  { label: '変更前',   w: 100 },
-                  { label: '変更後',   w: 100 },
+                  { label: '変更前（通常シフト）', w: 100 },
+                  { label: '変更後（実際）', w: 100 },
                   { label: '差分',     w: 60 },
-                  { label: '理由・備考', w: 120 },
-                  { label: '確認状況', w: 90 },
+                  { label: '理由',     w: 120 },
+                  { label: '状況',     w: 90 },
+                  { label: '出した日', w: 56 },
                   { label: '操作',     w: 110 },
                 ].map(col => (
                   <th key={col.label} style={{ padding: '8px 4px', textAlign: 'center', borderBottom: `1px solid ${border}`, color: text, width: col.w, fontSize: 12 }}>{col.label}</th>
@@ -631,11 +611,7 @@ const ShiftReportsTab: React.FC = () => {
                       onClick={e => onRowPick(e, r.id, pickedRow, setPickedRow)}
                       style={{ background: r.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : pickedRow === r.id ? pickedRowBg(isDarkMode) : rowBg, borderLeft: isPend ? '3px solid #ffc107' : undefined, transition: 'background 0.6s', cursor: 'pointer' }}
                     >
-                      {/* 申請日 */}
-                      <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
-                        <div>{cDate}</div><div style={{ color: sub }}>{cTime}</div>
-                      </td>
-                      {/* 申請者 */}
+                      {/* 名前 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
                         <div>{r.applicantName ?? '不明'}</div>
                         {r.submitterName && (
@@ -646,6 +622,10 @@ const ShiftReportsTab: React.FC = () => {
                           </div>
                         )}
                       </td>
+                      {/* 対象日 */}
+                      <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）
+                      </td>
                       {/* 種別 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center' }}>
                         {rTypes.map(t => {
@@ -653,9 +633,8 @@ const ShiftReportsTab: React.FC = () => {
                           return <div key={t} style={{ fontSize: 11, fontWeight: 'bold', color: inf.color, lineHeight: 1.4 }}>{inf.emoji} {inf.label}</div>;
                         })}
                       </td>
-                      {/* 変更前 */}
+                      {/* 変更前（通常シフト） */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
-                        <div>{r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）</div>
                         {r.original_location && (
                           <div style={{ fontSize: 11, color: sub }}>{r.original_location}</div>
                         )}
@@ -700,7 +679,7 @@ const ShiftReportsTab: React.FC = () => {
                           </td>
                         );
                       })()}
-                      {/* 理由・バッジ */}
+                      {/* 理由 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
                         <div style={{ color: sub }}>{r.reason}</div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: isReSub || isRet ? 3 : 0 }}>
@@ -724,7 +703,7 @@ const ShiftReportsTab: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      {/* 確認状況 */}
+                      {/* 状況 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center' }}>
                         <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 8, background: stBg, color: 'white', lineHeight: 1.4 }}>
                           <div style={{ fontSize: 9, opacity: 0.9 }}>{r.reviewerName}</div>
@@ -734,6 +713,10 @@ const ShiftReportsTab: React.FC = () => {
                         <ApprovedByLines color={sub} lines={r.status === 'confirmed' && r.confirmed_by
                           ? [{ label: '受理', name: r.confirmed_by === r.applicant_id ? '自己受理（自分で確認）' : (r.confirmerName ?? '—'), at: r.confirmed_at }]
                           : []} />
+                      </td>
+                      {/* 出した日（小さく・残業の一覧とそろえて右へ・2026-10-22） */}
+                      <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 10.5, color: sub }}>
+                        <div>{cDate}</div><div>{cTime}</div>
                       </td>
                       {/* 操作 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center' }}>
@@ -772,7 +755,7 @@ const ShiftReportsTab: React.FC = () => {
                     {/* 修正依頼が来ている申請：行のすぐ下に帯（押すと修正依頼のタブのその依頼へ・2026-10-16） */}
                     {corrections.get(r.id) && (
                       <tr>
-                        <td colSpan={8} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${border}` }}>
+                        <td colSpan={10} style={{ padding: '4px 8px 6px', borderBottom: `1px solid ${border}` }}>
                           <CorrectionNotice latest={corrections.get(r.id)} isDark={isDarkMode}
                             onOpen={() => { setFocusTarget({ type: 'shift', id: r.id }); setActiveTab('corrections'); }} />
                         </td>
@@ -781,7 +764,7 @@ const ShiftReportsTab: React.FC = () => {
                     {/* 展開：修正履歴 */}
                     {hasHist && (
                       <tr>
-                        <td colSpan={8} style={{ padding: '0 8px 8px 40px', background: isDarkMode ? '#1a2030' : '#f0f4ff', borderBottom: `1px solid ${border}` }}>
+                        <td colSpan={10} style={{ padding: '0 8px 8px 40px', background: isDarkMode ? '#1a2030' : '#f0f4ff', borderBottom: `1px solid ${border}` }}>
                           {!historyData[r.id] ? (
                             <p style={{ fontSize: 12, color: sub, margin: '8px 0' }}>読み込み中...</p>
                           ) : historyData[r.id].length === 0 ? (

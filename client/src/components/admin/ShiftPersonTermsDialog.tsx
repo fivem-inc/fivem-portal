@@ -168,14 +168,21 @@ const ShiftPersonTermsDialog: React.FC<{
           )}
 
           <div style={{ fontSize: 12, color: subText, margin: '8px 0 4px' }}>
-            曜日ごとの出勤・退勤と事務の時間（空なら自動：最初の担当の前〜最後の担当の後）
+            曜日ごとの出勤・退勤と事務の時間（空なら今の勤務表のまま。勤務表に無い日は、最初の担当の前〜最後の担当の後）
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {WEEK_DAYS.map(d => {
               const v = days[d];
               const auto = row.autoDay[d];
+              const ds = row.summary.days[d];
+              const rosterText = (ds.roster ?? []).filter(x => x.e > x.s).map(x => `${minText(x.s)}〜${minText(x.e)}`).join(' / ');
+              const useRoster = !!rosterText && ds.change !== 'new' && ds.change !== 'off';
+              const busy = row.busy[d] ?? [];
+              const dutyText = busy.length ? `${minText(Math.min(...busy.map(b => b.s)))}〜${minText(Math.max(...busy.map(b => b.e)))}` : '';
+              // 担当が変わった日：まだ時刻を入れていなければ「こうしますか」（押すと入力欄に入るだけ・保存は［この内容にする］）
+              const sg = ds.suggest && !v.start && !v.end ? ds.suggest : null;
               return (
-                <div key={d} style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '5px 8px' }}>
+                <div key={d} style={{ border: `1px solid ${ds.change ? red : borderColor}`, borderRadius: 8, padding: '5px 8px' }}>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                     <b style={{ width: 22 }}>{ROSTER_DAY_LABEL[d]}</b>
                     <span style={{ fontSize: 12, color: subText }}>出勤</span>
@@ -183,10 +190,32 @@ const ShiftPersonTermsDialog: React.FC<{
                     <span style={{ fontSize: 12, color: subText }}>退勤</span>
                     <input type="time" step={300} value={v.end} style={{ ...inputStyle, width: 105 }} onChange={e => setDay(d, { end: e.target.value })} />
                     <span style={{ fontSize: 11.5, color: subText }}>
-                      {auto.start != null ? `自動 ${minText(auto.start)}〜${auto.end != null ? minText(auto.end) : ''}` : '担当なし'}
+                      {useRoster ? `勤務表 ${rosterText}`
+                        : auto.start != null ? `自動 ${minText(auto.start)}〜${auto.end != null ? minText(auto.end) : ''}` : rosterText ? `勤務表 ${rosterText}` : '担当なし'}
                     </span>
-                    {(v.start || v.end) && <button type="button" style={{ background: 'none', border: 'none', color: subText, fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }} onClick={() => setDay(d, { start: '', end: '' })}>↩ 自動に戻す</button>}
+                    {(v.start || v.end) && <button type="button" style={{ background: 'none', border: 'none', color: subText, fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }} onClick={() => setDay(d, { start: '', end: '' })}>↩ {useRoster ? '勤務表に戻す' : '自動に戻す'}</button>}
                   </div>
+                  {ds.change && (
+                    <div style={{ fontSize: 12, color: red, marginTop: 3, paddingLeft: 28 }}>
+                      {ds.change === 'changed' && `担当が変わりました${dutyText ? `（担当 ${dutyText}）` : ''}。選ぶまでは勤務表のまま数えます`}
+                      {ds.change === 'off' && 'この案では休み（担当が無くなりました）'}
+                      {ds.change === 'new' && `勤務表に無い日です（担当の前後で数えています${auto.start != null ? `：${minText(auto.start)}〜${auto.end != null ? minText(auto.end) : ''}` : ''}）`}
+                    </div>
+                  )}
+                  {sg && (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4, paddingLeft: 28 }}>
+                      <span style={{ fontSize: 12.5, color: red }}>
+                        {sg.start !== sg.fromStart && `出勤を ${minText(sg.fromStart)} → ${minText(sg.start)}`}
+                        {sg.start !== sg.fromStart && sg.end !== sg.fromEnd && '・'}
+                        {sg.end !== sg.fromEnd && `退勤を ${minText(sg.fromEnd)} → ${minText(sg.end)}`}
+                        にしますか？
+                      </span>
+                      <button type="button" style={{ ...primaryBtn(), padding: '3px 10px', fontSize: 12 }}
+                        onClick={() => setDay(d, { start: normTime(minText(sg.start)), end: normTime(minText(sg.end)) })}>{minText(sg.start)}〜{minText(sg.end)} にする</button>
+                      <button type="button" style={{ ...backBtn(isDarkMode), padding: '3px 10px', fontSize: 12 }}
+                        onClick={() => setDay(d, { start: normTime(minText(sg.fromStart)), end: normTime(minText(sg.fromEnd)) })}>勤務表のまま（{minText(sg.fromStart)}〜{minText(sg.fromEnd)}）</button>
+                    </div>
+                  )}
                   {v.office.map((o, i) => (
                     <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 4, flexWrap: 'wrap', paddingLeft: 28 }}>
                       <span style={{ fontSize: 12 }}>事務</span>

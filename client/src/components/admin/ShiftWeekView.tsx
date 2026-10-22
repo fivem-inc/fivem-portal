@@ -1,14 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { primaryBtn, tintBtn, TOGGLE_BLUE } from '../../lib/buttonStyles';
 import { ROSTER_DAY_LABEL, type RosterDayKind } from '../../lib/shiftRoster';
-import { WEEK_DAYS, hm, remainText, type WeekSummary } from '../../lib/shiftWeekSummary';
+import { CHANGE_LABEL, WEEK_DAYS, hm, remainText, type WeekSummary } from '../../lib/shiftWeekSummary';
 import type { KidsPlanPerson, KidsPlanPersonDay } from '../../lib/kidsShift';
 import ShiftPersonTermsDialog from './ShiftPersonTermsDialog';
 import ShiftBulkTermsDialog from './ShiftBulkTermsDialog';
 
 // 週のまとめ（2026-10-22・docs/計画-シフト表の時間と週休.md）。こども・大人シフト表の［週のまとめ］で出す。
 // ・決定済みの表：勤務時間＝勤務表／レッスン＝シフト表。目標の時間（正社員は既定40時間）だけ人ごとに直せる
-// ・作業中の案：勤務時間＝担当の前後から組み立てる。人ごとの窓・まとめて変える・仮の人・足りない人数・あとどこに入れるとよいか
+// ・作業中の案：勤務時間の元は今の勤務表（2026-10-22 ユーザー確定）。担当が変わった日・休みになった日・勤務表に無い日は赤で出し、
+//   変わった日は人ごとの窓で「出勤・退勤をこうしますか」と聞く。勤務表に無い日は担当の前後から組み立てる。
+//   人ごとの窓・まとめて変える・仮の人・足りない人数・あとどこに入れるとよいか
 // 🚨 計算は lib/shiftWeekSummary（画面はここで並べるだけ）。材料は KidsShiftPanel が集める
 
 export interface WeekRow {
@@ -112,7 +114,7 @@ const ShiftWeekView: React.FC<{
     <div>
       <div style={{ fontSize: 12.5, color: subText, marginBottom: 8, lineHeight: 1.6 }}>
         {isPlan
-          ? `シフト表の担当から計算しています（最初の担当の${settings.pre}分前に出勤・最後の担当の${settings.post}分後に退勤。間が${settings.gap}分以上空けば時間帯を分けます。休憩は会社の決まりで引きます）。フロント・事務などシフト表に無い仕事は、人ごとの窓の「事務の時間」で足してください。`
+          ? `勤務時間は今の勤務表の出勤・退勤を元にしています（担当が決定済みの表と同じ日は勤務表のまま）。担当が変わった日・休みになった日・勤務表に無い日は赤で出します。変わった日は、名前を押すと出勤・退勤を変えるか選べます（選ぶまでは勤務表のまま数えます）。勤務表に無い日は、最初の担当の${settings.pre}分前に出勤・最後の担当の${settings.post}分後に退勤で数えます。休憩は会社の決まりで引きます。`
           : '勤務時間は勤務表（いつものシフト）、レッスンの時間はシフト表の担当から出しています。休憩は会社の決まりで引きます。'}
         {' '}名前を押すと{isPlan ? 'その方の働き方' : '週の目標時間'}を直せます。
       </div>
@@ -172,6 +174,11 @@ const ShiftWeekView: React.FC<{
                     {s.offMismatch && <div style={{ fontSize: 11 }}>前提は週休{s.offTarget}。{s.offDays > (s.offTarget ?? 0) ? `あと${s.offDays - (s.offTarget ?? 0)}日出勤` : `${(s.offTarget ?? 0) - s.offDays}日多く出勤`}</div>}
                     {days && <div style={{ fontSize: 11 }}>1日の目安（{s.dailyTarget != null ? hm(s.dailyTarget) : ''}）を超える日：{days}</div>}
                     {WEEK_DAYS.some(d => s.days[d].timeless) && <div style={{ fontSize: 11, color: subText }}>時刻の無い日：{WEEK_DAYS.filter(d => s.days[d].timeless).map(d => ROSTER_DAY_LABEL[d]).join('・')}（0時間で数えています）</div>}
+                    {WEEK_DAYS.some(d => s.days[d].change) && (
+                      <div style={{ fontSize: 11, color: red, fontWeight: 'bold' }}>
+                        変わった日：{WEEK_DAYS.filter(d => s.days[d].change).map(d => `${ROSTER_DAY_LABEL[d]}（${CHANGE_LABEL[s.days[d].change!]}${s.days[d].suggest ? '・時刻を確認' : ''}）`).join('・')}
+                      </div>
+                    )}
                   </td>
                 </tr>
               );

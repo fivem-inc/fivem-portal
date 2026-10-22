@@ -36,9 +36,19 @@ export interface DayInput {
   /** 案で決めた出勤・退勤の時刻（分）。null＝自動 */
   startAt: number | null;
   endAt: number | null;
-  /** 勤務表の時間帯（決定済みの表のとき）。null＝勤務表に無い・休み */
+  /** 勤務表の時間帯。null＝勤務表に無い・休み */
   roster: Span[] | null;
+  /**
+   * 案のとき、その日の担当が決定済みの表と比べてどうか（2026-10-22 ユーザー確定：案の時間の元は今の勤務表）。
+   * same＝同じ（勤務表のまま）／changed＝変わった（勤務表のまま数え、出勤・退勤を変えるか聞く）／
+   * off＝担当が無くなった（休み）／new＝勤務表に無い日に担当が入った（担当の前後で数える）／null＝比べない（仮の人・勤務表の無い方）
+   */
+  base?: PlanDayBase;
 }
+
+export type PlanDayBase = 'same' | 'changed' | 'off' | 'new' | null;
+/** 案で決定済みの表と比べて変わった日の短い呼び名（週のまとめの「出勤」の欄・人ごとの窓） */
+export const CHANGE_LABEL = { changed: '担当が変わった', off: '休み', new: '勤務表に無い日' } as const;
 
 export interface WeekSettings { pre: number; post: number; gap: number }
 
@@ -55,6 +65,12 @@ export interface DaySummary {
   otherMin: number;
   /** 出勤・退勤を手で決めた日 */
   manual: boolean;
+  /** 案：決定済みの表と比べた変わり方（赤で出す）。same・null は出さない */
+  change: 'changed' | 'off' | 'new' | null;
+  /** 案：担当が変わった日で、まだ出勤・退勤を決めていないときの「こうしますか」（勤務表の時刻 → 担当から出した時刻） */
+  suggest: { fromStart: number; fromEnd: number; start: number; end: number } | null;
+  /** その日の勤務表の時間帯（人ごとの窓で「勤務表 9:00〜18:00」と出す）。null＝勤務表に無い・休み */
+  roster: Span[] | null;
 }
 
 export interface WeekSummary {
@@ -123,6 +139,35 @@ export function planBlocks(day: DayInput, set: WeekSettings): Span[] {
   return merged.filter(b => b.e > b.s);
 }
 
+/** 重なる・接する時間帯をつなげる */
+function mergeSpans(spans: Span[]): Span[] {
+  const out: Span[] = [];
+  for (const b of spans.filter(x => x.e > x.s).map(x => ({ ...x })).sort((a, c) => a.s - c.s)) {
+    const last = out[out.length - 1];
+    if (last && b.s <= last.e) last.e = Math.max(last.e, b.e);
+    else out.push(b);
+  }
+  return out;
+}
+
+/** 案で、今の勤務表を元にした1日の時間帯（出勤・退勤を決めていればその日の最初・最後に効く・事務の時間は足す） */
+export function rosterPlanBlocks(day: DayInput): Span[] {
+  const r = (day.roster ?? []).filter(x => x.e > x.s).map(x => ({ ...x })).sort((a, b) => a.s - b.s);
+  if (r.length === 0) return [];
+  if (day.startAt != null) r[0].s = day.startAt;
+  if (day.endAt != null) r[r.length - 1].e = day.endAt;
+  return mergeSpans([...r, ...day.office]);
+}
+
+/** 案の1日の勤務の時間帯：変わり方（base）で、勤務表を元にするか担当から組み立てるかを決める */
+function planDayBlocks(day: DayInput, set: WeekSettings): Span[] {
+  const hasRoster = (day.roster ?? []).some(x => x.e > x.s);
+  if ((day.base === 'same' || day.base === 'changed') && hasRoster) return rosterPlanBlocks(day);
+  // 担当が無くなった日：手で時刻か事務の時間を入れていなければ休み
+  if (day.base === 'off' && day.startAt == null && day.endAt == null && day.office.length === 0) return [];
+  return planBlocks(day, set);
+}
+
 export function daySummary(mode: 'decided' | 'plan', day: DayInput, set: WeekSettings): DaySummary {
   const lessonSpans = day.spans.filter(x => x.lesson);
   const lessonKids = unionMinutes(lessonSpans.filter(x => x.source === 'kids'));
@@ -130,7 +175,7 @@ export function daySummary(mode: 'decided' | 'plan', day: DayInput, set: WeekSet
   const lessonMin = unionMinutes(lessonSpans);
   const blocks = mode === 'decided'
     ? (day.roster ?? []).filter(x => x.e > x.s)
-    : planBlocks(day, set);
+    : planDayBlocks(day, set);
   const span = blocks.reduce((a, b) => a + (b.e - b.s), 0);
   const breakMin = blocks.length > 0 ? calcTotalBreak(blocks.map(b => ({ startMin: b.s, endMin: b.e }))) : 0;
   const totalMin = Math.max(0, span - breakMin);
@@ -146,7 +191,21 @@ export function daySummary(mode: 'decided' | 'plan', day: DayInput, set: WeekSet
     lessonMin,
     otherMin: Math.max(0, totalMin - lessonMin),
     manual: mode === 'plan' && (day.startAt != null || day.endAt != null),
+    change: mode === 'plan' && day.base && day.base !== 'same' ? day.base : null,
+    suggest: mode === 'plan' ? suggestOf(day, set) : null,
+    roster: day.roster,
   };
+}
+
+/** 担当が変わった日の「出勤・退勤をこうしますか」。決めていない日・担当から出した時刻が勤務表と同じ日は null */
+function suggestOf(day: DayInput, set: WeekSettings): DaySummary['suggest'] {
+  if (day.base !== 'changed' || day.startAt != null || day.endAt != null) return null;
+  const r = (day.roster ?? []).filter(x => x.e > x.s).sort((a, b) => a.s - b.s);
+  const auto = planBlocks({ ...day, startAt: null, endAt: null }, set);
+  if (r.length === 0 || auto.length === 0) return null;
+  const fromStart = r[0].s, fromEnd = r[r.length - 1].e, start = auto[0].s, end = auto[auto.length - 1].e;
+  if (start === fromStart && end === fromEnd) return null;
+  return { fromStart, fromEnd, start, end };
 }
 
 export interface PersonTerms {
