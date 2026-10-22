@@ -28,7 +28,7 @@ import HelpLinkButton from '../components/HelpLinkButton';
 import { subscribe as subscribeRefresh } from '../lib/refreshBus';
 import { TOPICS_BOARD } from '../lib/badgeTopics';
 import LoadFailedNotice from '../components/LoadFailedNotice';
-import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT } from '../lib/netFailure';
+import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure } from '../lib/netFailure';
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
 const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
 
@@ -1204,13 +1204,16 @@ const BoardPage: React.FC = () => {
     }
   };
 
+  // 送信トレイ（送信済み・予約・下書き・アーカイブ）が読めなかったか（2026-10-23 機内モードの実機で、英語のエラーの文がそのまま出ていた）。
+  // 🚨 読めなかったときは前の一覧を残し、「ありません」と言わずに［再読み込み］を出す（受信トレイの inboxFailed と同じ形）
+  const [outboxFailed, setOutboxFailed] = useState(false);
   const loadOutbox = useCallback(async () => {
     if (!user) return;
     // 🚨 outbox_hidden（DB の列）はもう読まない（2026-09-26）。アーカイブは board_outbox_hidden（お知らせ × 人）で、
     //    「自分が片付けたか」を自分の行の有無で決める。送った本人と写しで見る代表者は別々に片付けられる。
     //    以前は1件に1つの印だったので、管理者が写しのお知らせを片付けると送った本人の送信トレイからも消えていた
     const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids, recipient_presets, recipient_extra_ids';
-    const [{ data }, { data: ccData }, { data: hiddenData, error: hiddenErr }] = await Promise.all([
+    const [{ data, error: ownErr }, { data: ccData, error: ccErr }, { data: hiddenData, error: hiddenErr }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -1219,8 +1222,10 @@ const BoardPage: React.FC = () => {
         .order('created_at', { ascending: false }),
       supabase.from('board_outbox_hidden').select('message_id').eq('user_id', user.id),
     ]);
-    // 🚨 片付けた記録が読めなかったときは黙って「全部未整理」に見せない（片付けたものが一覧に戻ったように見えるため）
-    if (hiddenErr) setSendError('送信トレイのアーカイブの記録を読み込めませんでした：' + hiddenErr.message);
+    // 🚨 どれか1つでも読めなかったら一覧を書き換えない。片付けた記録（hidden）だけ読めないと、片付けたものが一覧に戻ったように見える
+    const loadErr = ownErr ?? ccErr ?? hiddenErr;
+    if (loadErr) { console.error('[board] 送信トレイの読み込みに失敗:', loadErr.code, loadErr.message); setOutboxFailed(true); return; }
+    setOutboxFailed(false);
     const hiddenIds = new Set((hiddenData || []).map((h: { message_id: string }) => h.message_id));
     const ownIds = new Set((data || []).map((m: any) => m.id));
     const ccOnly = (ccData || []).filter((m: any) => !ownIds.has(m.id));
@@ -1356,7 +1361,10 @@ const BoardPage: React.FC = () => {
       const err = recErr || msgErr;
       if (err) {
         setSearchParams(base, { replace: true });
-        setOpenInboxNotice(`お知らせを読み込めませんでした：${err.message}。通信を確認して、もう一度ベルから開いてください`);
+        // 通信のせいなら英語の文を出さない（2026-10-23）
+        setOpenInboxNotice(isNetworkFailure(err)
+          ? 'お知らせを読み込めませんでした。通信環境の良い場所で、もう一度ベルから開いてください。'
+          : `お知らせを読み込めませんでした：${err.message}。もう一度ベルから開いてください`);
         return;
       }
       if (msg?.channel_id) {
@@ -4424,6 +4432,7 @@ const BoardPage: React.FC = () => {
             </div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+            {outboxFailed && <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => { setOutboxFailed(false); void loadOutbox(); }} />}
             {outboxTab === 'archive' ? (
               <>
                 {/* 一括削除・チェック操作バー */}
@@ -4496,7 +4505,7 @@ const BoardPage: React.FC = () => {
                   )}
                 </div>
                 {outboxArchivedMessages.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 30 }}>アーカイブはありません</div>
+                  outboxFailed ? null : <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 30 }}>アーカイブはありません</div>
                 ) : outboxArchivedMessages.map(msg => {
                   const recipientIds = inboxRecipients[msg.id] || [];
                   const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
@@ -4545,7 +4554,7 @@ const BoardPage: React.FC = () => {
             ) : (
               <>
                 {outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).length === 0 ? (
-                  <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
+                  outboxFailed ? null : <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
                     {outboxTab === 'sent' ? '送信済みのお知らせはありません' : outboxTab === 'scheduled' ? '予約済みのお知らせはありません' : '下書きはありません'}
                   </div>
                 ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
