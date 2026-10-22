@@ -24,10 +24,15 @@ export function takePushNotifIds(maxAgeMs = 30_000): string[] {
   } catch { return []; }
 }
 
-/** 受理のお知らせの文から名前を引く（「…「阿部 康宏（10/31（土））」」→「阿部 康宏」）。引けなければ null */
+/** お知らせの文から名前を引く（受理のお知らせ「…「阿部 康宏（10/31（土））」」→「阿部 康宏」）。引けなければ null */
 export function fyiNameFromMessage(message: string | null | undefined): string | null {
-  const m = (message ?? '').match(/「(.+?)（\d{1,2}\/\d{1,2}/);
-  return m ? m[1].trim() : null;
+  const msg = message ?? '';
+  const m = msg.match(/「(.+?)（\d{1,2}\/\d{1,2}/);
+  if (m) return m[1].trim();
+  // 欠勤・休日出勤の登録「📅 澤田 友紀さんの全欠勤が登録されました（11月7日）」・時間調整「⏰ 森本 千佳子さんが11月7日に…」→ 名前（2026-10-22）。
+  // 文は通知設定のテンプレート（{{対象者名}}さんの…）。先頭の絵文字は飛ばす
+  const a = msg.match(/^(?:[^\p{L}\p{N}\s]+\s*)?([^\s、。「」]+(?:\s[^\s、。「」]+)?)さん[のが]/u);
+  return a ? a[1].trim() : null;
 }
 
 /** 名前を比べる（半角・全角の空白の違いは見ない） */

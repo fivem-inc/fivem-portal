@@ -1517,15 +1517,18 @@ const classifyNotif = (n: NotifLike) => {
     // 勤怠の取消：飛び先の予定はもう消えているため移動しない（その場で閉じるだけ）。誰が・何を・いつ は文面に入っている
     if (isAttendanceCancelled) return { path: null, closeOnTap: true };
     // 欠勤登録：reference_idに対象日(YYYY-MM-DD)があれば、その月へジャンプして該当行を強調する
+    // 🚨 fn＝押したお知らせの ID。カレンダーが文から名前を引き、その人の行だけを光らせる（2026-10-22・受理のお知らせと同じ lib/notifFocus）
     if (isAttendance) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
-      return { path: `/calendar${focus}`, closeOnTap: true };
+      const fn = focus && /^[0-9a-f-]{36}$/i.test(n.id) ? `&fn=${n.id}` : '';
+      return { path: `/calendar${focus}${fn}`, closeOnTap: true };
     }
     // 時間調整はFYI。欠勤登録と同じく、reference_idに対象日(YYYY-MM-DD)があれば
     // その月へジャンプして該当行を強調する（日付が無い古い通知は今月のカレンダーを開くだけ）
     if (isTimeAdjustment) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
-      return { path: `/calendar${focus}`, closeOnTap: true };
+      const fn = focus && /^[0-9a-f-]{36}$/i.test(n.id) ? `&fn=${n.id}` : '';
+      return { path: `/calendar${focus}${fn}`, closeOnTap: true };
     }
     // 出張の到着・終了報告（上長へのFYI）。履歴タブを開いて該当の報告を強調する。
     // 履歴タブは権限のある役職にだけ出るので、権限が無い人が古い通知をタップしても
