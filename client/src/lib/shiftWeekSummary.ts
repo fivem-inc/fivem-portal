@@ -194,10 +194,10 @@ export function hm(min: number): string {
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 }
 
-/** 目標まで：「あと 8:15」「8:15 超え」「ちょうど」 */
+/** 目標まで：「あと 8:15」「8:15 超え」「0:00」（目標どおり＝数字だけ・2026-10-22 ユーザー確定 案1） */
 export function remainText(remain: number | null): string {
   if (remain == null) return '—';
-  if (remain === 0) return 'ちょうど';
+  if (remain === 0) return '0:00';
   return remain > 0 ? `あと ${hm(remain)}` : `${hm(remain)} 超え`;
 }
 
