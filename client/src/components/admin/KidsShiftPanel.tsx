@@ -26,7 +26,7 @@ import {
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
   loadPlanTerms, savePlanTerms, termsPayload, assignTemp, createTemp, deleteTemp, saveWeeklyTarget, setPlanMemo, type KidsSaveResult,
 } from '../../lib/kidsShiftApi';
-import { DEFAULT_WEEKLY_TARGET, planBlocks, remainText, weekSummary, type DayInput, type DutySpan, type PlanDayBase } from '../../lib/shiftWeekSummary';
+import { DEFAULT_WEEKLY_TARGET, hm as hmText, planBlocks, remainText, weekSummary, type DayInput, type DutySpan, type PlanDayBase } from '../../lib/shiftWeekSummary';
 import ShiftWeekView, { type WeekRow, type WeekSuggestion } from './ShiftWeekView';
 import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
@@ -96,6 +96,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
   const [personOnlyId, setPersonOnlyId] = useState<string | null>(null);
   // 週のまとめの並び（曜日で見る・人ごとに見ると行き来しても戻らないように・2026-10-22）
   const [weekSort, setWeekSort] = useState<'list' | 'remain'>('list');
+  // 曜日で見るの上に出す「この方の週」（2026-10-22 第3段：マスを直したあと、週のまとめに戻らなくても時間が分かる）
+  const [dayFocus, setDayFocus] = useState<string>('');
   const roles = useRoles();
   // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
   const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
@@ -2207,7 +2209,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
 
       {/* 比べる（2026-09-22）。🚨 印を付けるだけ。書き換えはしない */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
-        <span style={{ fontSize: 13, color: text }}>比べる</span>
+        <span style={{ fontSize: 13, color: text }}>比べる相手</span>
         <select style={inputStyle} value={compareWith ?? ''} onChange={e => setCompareWith(e.target.value || null)}>
           <option value="">比べない</option>
           {view !== 'decided' && <option value="decided">決定済みの表</option>}
@@ -2215,7 +2217,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
         </select>
         {compareWith && !compareErr && (
           <span style={{ fontSize: 12.5, color: subText }}>
-            違うマス <b style={{ color: text }}>{diffCount}</b> 件（<b style={{ color: text }}>≠</b> の付いたマス）。
+            比べる相手と違うマス <b style={{ color: text }}>{diffCount}</b> 件（<b style={{ color: text }}>≠</b> の付いたマス）。
             🚨 印を付けるだけで、書き換えはしません
           </span>
         )}
@@ -2365,7 +2367,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           変わった所に印
           <span style={{ ...changeCellStyle(true), padding: '0 4px', borderRadius: 3 }}>違うマス</span>
           <span style={CHANGE_MARK_SPAN}>違う名前・時刻</span>
-          {plan ? `（決定済みの表 ${md(plan.apply_from)} 時点と比べて）` : `（${md(prevDate(applyFrom))} と比べて）`}
+          {plan ? `（決定済みの表 ${md(plan.apply_from)} 時点と比べて付けます。「比べる相手」の ≠ とは別です）` : `（${md(prevDate(applyFrom))} と比べて）`}
         </label>
       </div>
 
@@ -2390,7 +2392,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           onSavePlanPerson={weekSavePerson} onSaveTarget={weekSaveTarget} onBulkApply={weekBulk} onBulkApplyAsNew={weekBulkAsNew}
           onCreateTemp={weekCreateTemp} onAssignTemp={weekAssignTemp} onDeleteTemp={weekDeleteTemp}
           sort={weekSort} onSort={setWeekSort}
-          onShowPerson={key => { setPersonOnlyId(key); setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); setViewMode('person'); setOpenKey(null);
+          onShowPerson={key => { setPersonOnlyId(key); setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); setViewMode('person'); setOpenKey(null); setDayFocus(key);
             // 押したら、その方の表まで画面を動かす（画面の上のほうに戻らないように）
             setTimeout(() => document.getElementById('kids-person-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
       )}
@@ -2412,6 +2414,30 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           );
         })}
       </div>
+      {/* この方の週（第3段）：選んだ方の週の合計と、この曜日の勤務。下書き（保存前）の直しも入る */}
+      {!isAdult && weekRows.length > 0 && (() => {
+        const r = weekRows.find(x => x.key === dayFocus) ?? null;
+        const s = r?.summary;
+        const ds = s?.days[day];
+        return (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 12.5, color: text }}>
+            <span style={{ color: subText }}>この方の週を見る</span>
+            <select style={inputStyle} value={dayFocus} onChange={e => setDayFocus(e.target.value)} aria-label="週の時間を見る方">
+              <option value="">選ぶ</option>
+              {weekRows.map(x => <option key={x.key} value={x.key}>{x.name}{x.roleLabel ? `（${x.roleLabel}）` : ''}</option>)}
+            </select>
+            {r && s && ds && (
+              <span>
+                合計 <b>{hmText(s.totalMin)}</b>／{s.target != null ? hmText(s.target) : '—'}
+                {s.target != null && <span style={{ color: s.remain != null && s.remain < 0 ? red : text }}>（{remainText(s.remain)}）</span>}
+                ・{s.workDays}日（週休{s.offDays}{s.offTarget != null ? `・前提${s.offTarget}` : ''}）
+                ・{ROSTER_DAY_LABEL[day]}曜：{ds.working ? (ds.blocks.length ? `${ds.blocks.map(b => `${minText(b.s)}〜${minText(b.e)}`).join('・')}（${hmText(ds.totalMin)}）` : '時刻なし') : '休み'}
+                {s.offMismatch && <span style={{ color: red, fontWeight: 'bold' }}>　前提と合っていません</span>}
+              </span>
+            )}
+          </div>
+        );
+      })()}
       {/* 選んだ曜日の追加必要を校ごとに（時刻を押すとそのマスが開く・追加必要が無い曜日は出さない） */}
       {(() => {
         const list = shortfalls.filter(x => x.day === day);
