@@ -11,7 +11,9 @@ import type {
   ShiftBoard,
   KidsCellValue, KidsCellVersion, KidsItem, KidsPerson, KidsPlace, KidsPlan, KidsPlanCell,
   KidsRoleKind, KidsRowKind, KidsSettings, KidsStaffLite, TripLocationOption,
+  KidsTemp, KidsPlanPerson, KidsPlanPersonDay,
 } from './kidsShift';
+import { isTempId, tempIdOf, tempKey } from './kidsShift';
 
 export interface KidsNote {
   id: string;
@@ -35,9 +37,13 @@ export interface KidsData {
   acks: { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[];
   /** 出張の行き先リスト（出張報告と同じ・終了した行も読む＝古いマスの名前を出すため・2026-10-14） */
   tripLocations: TripLocationOption[];
+  /** 仮の人（この表の分・2026-10-22） */
+  temps: KidsTemp[];
+  /** 週の目標時間（決定済みの表のぶん・人ごと・分）。行が無い正社員は40時間 */
+  targets: Map<string, number>;
 }
 
-interface RawPerson { user_id: string; role: string; start_time: string | null; end_time: string | null; sort_order: number }
+interface RawPerson { user_id: string | null; temp_id: string | null; role: string; start_time: string | null; end_time: string | null; sort_order: number }
 interface RawItem {
   id: string; cell_id: string | null; plan_cell_id: string | null; kind_key: string;
   start_time: string | null; end_time: string | null; class_name: string | null;
@@ -50,7 +56,7 @@ interface RawItem {
 const ITEM_COLS =
   'id, cell_id, plan_cell_id, kind_key, start_time, end_time, class_name, groups, required, min_lesson, role_key, is_none, note, sort_order,'
   + ' split_time, video, use_pool, trip_location_id,'
-  + ' kids_shift_item_people(user_id, role, start_time, end_time, sort_order)';
+  + ' kids_shift_item_people(user_id, temp_id, role, start_time, end_time, sort_order)';
 
 /**
  * 行き先の「表の名前」（短い名前 → 無ければリストの名前）。loadKidsData が入れ、toItems が使う（2026-10-14）。
@@ -72,7 +78,8 @@ function toItems(rows: RawItem[]): KidsCellValue {
     is_none: r.is_none,
     note: r.note ?? '',
     people: [...(r.kids_shift_item_people ?? [])].sort((a, b) => a.sort_order - b.sort_order).map<KidsPerson>(p => ({
-      user_id: p.user_id,
+      // 🚨 仮の人は 'temp:<id>' で持つ（画面の名前・重なり・署名がそのまま使える・2026-10-22）
+      user_id: p.user_id ?? (p.temp_id ? tempKey(p.temp_id) : ''),
       // 🚨 知らない役割も 'lead' に変えずにそのまま持つ（大人の役割を読んだときに書き換えないため・2026-10-06）
       role: (p.role || 'lead') as KidsPerson['role'],
       start: normTime(p.start_time),
@@ -90,6 +97,9 @@ const DEFAULT_SETTINGS: KidsSettings = {
   required_by_groups: { 1: 2, 2: 2, 3: 3 },
   min_lesson_by_groups: { 1: 2, 2: 2, 3: 2 },
   plan_limit: 10,
+  pre_minutes: 30,
+  post_minutes: 15,
+  gap_split_minutes: 60,
 };
 
 /**
@@ -97,9 +107,9 @@ const DEFAULT_SETTINGS: KidsSettings = {
  * 🚨 board でその表の分だけ読む（2026-10-06：大人シフト表も同じ表で持つため。絞らないと大人の列がこどもの表に出る）
  */
 export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'): Promise<{ data: KidsData | null; error: string | null }> {
-  const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes, ackRes, tripRes] = await Promise.all([
+  const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes, ackRes, tripRes, tempRes, targetRes] = await Promise.all([
     supabase.from('kids_shift_places').select('id, board, kind, school, floor, label, sort_order, active').eq('board', board).order('sort_order'),
-    supabase.from('kids_shift_row_kinds').select('key, label, has_class, has_groups, has_people, issue_mode, sort_order, active, boards, default_minutes')
+    supabase.from('kids_shift_row_kinds').select('key, label, has_class, has_groups, has_people, issue_mode, sort_order, active, boards, default_minutes, counts_as_lesson')
       .contains('boards', [board]).order('sort_order'),
     supabase.from('kids_shift_role_kinds').select('key, label, sort_order, active').order('sort_order'),
     supabase.from('kids_shift_cells')
@@ -112,20 +122,22 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
       .eq('board', board)
       .order('updated_at', { ascending: false }),
     supabase.from('kids_shift_notes').select('id, body, sort_order, active').eq('board', board).order('sort_order'),
-    supabase.from('kids_shift_settings').select('lesson_check, required_by_groups, min_lesson_by_groups, plan_limit').maybeSingle(),
+    supabase.from('kids_shift_settings').select('lesson_check, required_by_groups, min_lesson_by_groups, plan_limit, pre_minutes, post_minutes, gap_split_minutes').maybeSingle(),
     supabase.from('kids_shift_staff_flags').select('user_id, can_lesson'),
     supabase.from('staff_display_names').select('user_id, label'),
     supabase.from('profiles').select(`id, name, employment_type, ${PREHIRE_COLS}`).order('name'),
     supabase.from('staff_main_work_areas').select('user_id, shift_work_areas(name)'),
     supabase.from('kids_shift_acks').select('cell_id, plan_cell_id, issue_key'),
     supabase.from('master_options').select('id, category, value, short_label, sort_order, ended_at').like('category', 'trip_location_%').order('sort_order'),
+    supabase.from('kids_shift_temps').select('id, board, label, note').eq('board', board).order('created_at'),
+    supabase.from('kids_shift_person_targets').select('user_id, weekly_minutes'),
   ]);
 
   const failed = [
     placeRes.error && '置き場所', kindRes.error && '行の種類', roleRes.error && '役割', cellRes.error && 'マス',
     planRes.error && '案', noteRes.error && '書き添え', setRes.error && '設定', flagRes.error && 'レッスンできる印',
     labelRes.error && '呼び名', staffRes.error && 'スタッフ', areaRes.error && 'メインの部門',
-    ackRes.error && '確認した記録', tripRes.error && '出張の行き先',
+    ackRes.error && '確認した記録', tripRes.error && '出張の行き先', tempRes.error && '仮の人', targetRes.error && '週の目標時間',
   ].filter(Boolean);
   if (failed.length > 0) return { data: null, error: `${failed.join('・')}を読み込めませんでした` };
 
@@ -159,6 +171,9 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
         required_by_groups: s.required_by_groups ?? DEFAULT_SETTINGS.required_by_groups,
         min_lesson_by_groups: s.min_lesson_by_groups ?? DEFAULT_SETTINGS.min_lesson_by_groups,
         plan_limit: s.plan_limit ?? DEFAULT_SETTINGS.plan_limit,
+        pre_minutes: s.pre_minutes ?? DEFAULT_SETTINGS.pre_minutes,
+        post_minutes: s.post_minutes ?? DEFAULT_SETTINGS.post_minutes,
+        gap_split_minutes: s.gap_split_minutes ?? DEFAULT_SETTINGS.gap_split_minutes,
       } : DEFAULT_SETTINGS,
       flags: new Map(((flagRes.data ?? []) as { user_id: string; can_lesson: boolean }[]).map(r => [r.user_id, r.can_lesson])),
       labels: new Map(((labelRes.data ?? []) as { user_id: string; label: string }[]).map(r => [r.user_id, r.label])),
@@ -167,6 +182,8 @@ export async function loadKidsData(sinceDate: string, board: ShiftBoard = 'kids'
         .map<KidsStaffLite>(p => ({ id: p.id, name: p.name, employment_type: p.employment_type, is_active: isShiftRosterMember(p), main_area: areaByUser.get(p.id) ?? null })),
       acks: (ackRes.data ?? []) as { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[],
       tripLocations,
+      temps: (tempRes.data ?? []) as KidsTemp[],
+      targets: new Map(((targetRes.data ?? []) as { user_id: string; weekly_minutes: number }[]).map(r => [r.user_id, r.weekly_minutes])),
     },
     error: null,
   };
@@ -216,8 +233,10 @@ export function toPayloadCells(cells: { placeId: string; day: string; items: Kid
       video: it.video,
       use_pool: it.use_pool,
       trip_location_id: it.trip_location_id || null,
+      // 🚨 仮の人は temp_id で送る（DB の kids_shift_check_items／put_items）
       people: (it.people ?? []).map(p => ({
-        user_id: p.user_id,
+        user_id: isTempId(p.user_id) ? null : p.user_id,
+        temp_id: isTempId(p.user_id) ? tempIdOf(p.user_id) : null,
         role: p.role,
         start: normTime(p.start) || null,
         end: normTime(p.end) || null,
@@ -349,5 +368,87 @@ export async function ackKidsIssue(
   const { data, error } = await supabase.from('kids_shift_acks').insert(row).select('id');
   if (error) return error.code === '23505' ? null : `確認を残せませんでした：${error.message}`;
   if (!data || data.length === 0) return '確認を残せませんでした（権限がない可能性があります）';
+  return null;
+}
+
+// ── 週のまとめ・案の前提・仮の人（2026-10-22・docs/計画-シフト表の時間と週休.md） ──────────────
+
+/** 案の前提（人ごと・人と曜日ごと）。key は user_id か 'temp:<id>' */
+export async function loadPlanTerms(planId: string): Promise<{ people: KidsPlanPerson[]; days: KidsPlanPersonDay[]; error: string | null }> {
+  const [p, d] = await Promise.all([
+    supabase.from('kids_shift_plan_people').select('user_id, temp_id, weekly_off, weekly_minutes, daily_minutes, keep, keep_reason').eq('plan_id', planId),
+    supabase.from('kids_shift_plan_person_days').select('user_id, temp_id, day_kind, start_time, end_time, office').eq('plan_id', planId),
+  ]);
+  if (p.error || d.error) return { people: [], days: [], error: '案の前提を読み込めませんでした' };
+  type P = { user_id: string | null; temp_id: string | null; weekly_off: number | null; weekly_minutes: number | null; daily_minutes: number | null; keep: boolean; keep_reason: string | null };
+  type D = { user_id: string | null; temp_id: string | null; day_kind: string; start_time: string | null; end_time: string | null; office: { start: string; end: string }[] | null };
+  const keyOf = (u: string | null, t: string | null) => u ?? (t ? tempKey(t) : '');
+  return {
+    people: ((p.data ?? []) as P[]).map(r => ({
+      key: keyOf(r.user_id, r.temp_id), weekly_off: r.weekly_off, weekly_minutes: r.weekly_minutes, daily_minutes: r.daily_minutes,
+      keep: r.keep, keep_reason: r.keep_reason,
+    })),
+    days: ((d.data ?? []) as D[]).map(r => ({
+      key: keyOf(r.user_id, r.temp_id), day_kind: r.day_kind, start: normTime(r.start_time), end: normTime(r.end_time),
+      office: (r.office ?? []).map(o => ({ start: normTime(o.start), end: normTime(o.end) })),
+    })),
+    error: null,
+  };
+}
+
+/** 案の前提を送る形（1人ぶん）。days を入れたときだけ、その人の曜日の分を丸ごと入れ替える */
+export function termsPayload(t: KidsPlanPerson, days?: KidsPlanPersonDay[]) {
+  const who = isTempId(t.key) ? { temp_id: tempIdOf(t.key) } : { user_id: t.key };
+  return {
+    ...who,
+    weekly_off: t.weekly_off == null ? '' : String(t.weekly_off),
+    weekly_minutes: t.weekly_minutes == null ? '' : String(t.weekly_minutes),
+    daily_minutes: t.daily_minutes == null ? '' : String(t.daily_minutes),
+    keep: t.keep,
+    keep_reason: t.keep_reason ?? '',
+    ...(days ? { days: days.map(d => ({ day_kind: d.day_kind, start: d.start, end: d.end, office: d.office })) } : {}),
+  };
+}
+
+/** 案の前提を保存する（DB の kids_shift_plan_save op='terms'・案の revision を見る） */
+export function savePlanTerms(planId: string, revision: number, people: ReturnType<typeof termsPayload>[]): Promise<KidsSaveResult> {
+  return callRpc('kids_shift_plan_save', { op: 'terms', plan_id: planId, revision, people });
+}
+
+/** 仮の人を入社した人に置き換える（この案のマスと前提だけ） */
+export function assignTemp(planId: string, revision: number, tempId: string, userId: string): Promise<KidsSaveResult> {
+  return callRpc('kids_shift_plan_save', { op: 'assign_temp', plan_id: planId, revision, temp_id: tempId, user_id: userId });
+}
+
+/** 仮の人を作る（表ごとに「仮1」「仮2」…） */
+export async function createTemp(board: ShiftBoard, label: string, note: string): Promise<{ id: string | null; error: string | null }> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data, error } = await supabase.from('kids_shift_temps')
+    .insert({ board, label: label.trim(), note: note.trim() || null, created_by: user?.id ?? null }).select('id');
+  if (error) return { id: null, error: error.code === '23505' ? '同じ名前の仮の人がいます。別の名前にしてください' : `仮の人を作れませんでした：${error.message}` };
+  if (!data || data.length === 0) return { id: null, error: '仮の人を作れませんでした（権限がない可能性があります）' };
+  return { id: (data[0] as { id: string }).id, error: null };
+}
+
+/** 仮の人を消す（🚨 どのマスにも入っていないときだけ消せる＝DB が止める） */
+export async function deleteTemp(id: string): Promise<string | null> {
+  const { data, error } = await supabase.from('kids_shift_temps').delete().eq('id', id).select('id');
+  if (error) return error.code === '23503' ? 'まだどこかの案のマスに入っています。先にマスから外すか、入社した人に置き換えてください' : `消せませんでした：${error.message}`;
+  if (!data || data.length === 0) return '消せませんでした（権限がないか、もう消えています）';
+  return null;
+}
+
+/** 週の目標時間（決定済みの表のぶん）。minutes=null で既定（正社員 40時間）に戻す */
+export async function saveWeeklyTarget(userId: string, minutes: number | null): Promise<string | null> {
+  if (minutes == null) {
+    const { error } = await supabase.from('kids_shift_person_targets').delete().eq('user_id', userId).select('user_id');
+    return error ? `保存できませんでした：${error.message}` : null;
+  }
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data, error } = await supabase.from('kids_shift_person_targets')
+    .upsert({ user_id: userId, weekly_minutes: minutes, updated_by: user?.id ?? null, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    .select('user_id');
+  if (error) return `保存できませんでした：${error.message}`;
+  if (!data || data.length === 0) return '保存できませんでした（権限がない可能性があります）';
   return null;
 }

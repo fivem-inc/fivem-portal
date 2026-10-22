@@ -53,6 +53,8 @@ export interface KidsRowKind {
   boards: ShiftBoard[];
   /** 終わりの時刻が無い行の長さ（分）。空＝時刻だけ */
   default_minutes: number | null;
+  /** 週のまとめでレッスンに数えるか（2026-10-22・false＝レッスン以外） */
+  counts_as_lesson?: boolean;
 }
 
 export interface KidsRoleKind {
@@ -148,6 +150,38 @@ export interface KidsSettings {
   required_by_groups: Record<string, number>;
   min_lesson_by_groups: Record<string, number>;
   plan_limit: number;
+  /** 案の勤務時間：最初の担当の何分前に出勤／最後の担当の何分後に退勤／何分空いたら時間帯を分けるか（2026-10-22） */
+  pre_minutes: number;
+  post_minutes: number;
+  gap_split_minutes: number;
+}
+
+// ── 仮の人（2026-10-22）────────────────────────────────────────────
+// 🚨 画面では仮の人を user_id='temp:<id>' で持つ（名前・重なり・追加必要がそのまま使える）。
+//    DB へ送るときに temp_id に直す（lib/kidsShiftApi の toPayloadCells）。署名（sigOfItems）も 'temp:<id>' で DB と同じ形
+export const TEMP_PREFIX = 'temp:';
+export const isTempId = (id: string | null | undefined): boolean => !!id && id.startsWith(TEMP_PREFIX);
+export const tempIdOf = (id: string): string => id.slice(TEMP_PREFIX.length);
+export const tempKey = (tempId: string): string => TEMP_PREFIX + tempId;
+
+export interface KidsTemp { id: string; board: ShiftBoard; label: string; note: string | null }
+
+/** 案の中だけの前提（人ごと）。key＝user_id か 'temp:<id>' */
+export interface KidsPlanPerson {
+  key: string;
+  weekly_off: number | null;
+  weekly_minutes: number | null;
+  daily_minutes: number | null;
+  keep: boolean;
+  keep_reason: string | null;
+}
+/** 案の中だけの前提（人と曜日ごと）：出勤・退勤の時刻・事務の時間 */
+export interface KidsPlanPersonDay {
+  key: string;
+  day_kind: string;
+  start: string;
+  end: string;
+  office: { start: string; end: string }[];
 }
 
 export const EMPTY_CELL: KidsCellValue = [];
@@ -469,6 +503,8 @@ export function kidsCellIssues(
     if (it.is_none) continue;
     const dayOnly = modeOf(it.kind) === 'day_only';
     for (const p of it.people) {
+      // 仮の人は勤務表が無いので見ない（2026-10-22）
+      if (isTempId(p.user_id)) continue;
       if (inactive.has(p.user_id)) { push(p.user_id, 'inactive', '', it.kind, ''); continue; }
       const day = dayOf(p.user_id);
       // 人ごとの時間があればそれで見る（「19まで」「16:45〜」）
