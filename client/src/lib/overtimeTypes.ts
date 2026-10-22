@@ -32,12 +32,38 @@ export const OT_TYPE_INFO: Record<OvertimeType, { label: string; color: string; 
 //    それらは会社の指示でやる仕事＝残業であり、「残業ではない」と記録させると
 //    サービス残業を本人に認めさせた記録になる。並べてよいのは本人の都合だけ。
 //    「着替え」も制服着用が義務だと労働時間と判断されうるため出さない。
-export const CLOCK_ONLY_REASONS = [
-  '打刻を忘れた（あとで押した）',
+//
+// 2026-10-22（ユーザー確定 案B）：先に「何があったか」を3つから選ぶ。
+//   ① 出勤の打刻を忘れた ② 退勤の打刻を忘れた … 理由はこれで決まり（押せた方の打刻時刻だけ任意で入れる）
+//   ③ 打刻が遅れた・早かった（残業ではない） … CLOCK_LATE_REASONS から理由を選ぶ
+//   保存する理由の文（「残業ではありません（理由：…）」）は今までどおり1つの文字。①②は下の CLOCK_FORGOT_* がそのまま入る。
+//   旧「打刻を忘れた（あとで押した）」は①②に分けた（過去の記録はそのまま）
+export const CLOCK_FORGOT_IN = '出勤の打刻を忘れた';
+export const CLOCK_FORGOT_OUT = '退勤の打刻を忘れた';
+export const CLOCK_LATE_REASONS = [
   '同僚と話していた',
   '私用で残っていた（休憩・電話・迎え待ちなど）',
   'その他',
 ];
+/** 選べる理由の全部（経理の確認への回答・メモの文例）。並びは ①②③ の順 */
+export const CLOCK_ONLY_REASONS = [CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, ...CLOCK_LATE_REASONS];
+
+export type ClockKind = 'in' | 'out' | 'late';
+export const CLOCK_KINDS: { key: ClockKind; label: string }[] = [
+  { key: 'in', label: `① ${CLOCK_FORGOT_IN}` },
+  { key: 'out', label: `② ${CLOCK_FORGOT_OUT}` },
+  { key: 'late', label: '③ 打刻が遅れた・早かった（残業ではない）' },
+];
+/** 選んである理由から ①②③ のどれかを決める（③で理由をまだ選んでいないときは null・画面が別に覚える） */
+export function clockKindOf(reason: string | null | undefined): ClockKind | null {
+  if (reason === CLOCK_FORGOT_IN) return 'in';
+  if (reason === CLOCK_FORGOT_OUT) return 'out';
+  return reason && CLOCK_LATE_REASONS.includes(reason) ? 'late' : null;
+}
+/** ①②③ ごとに出す打刻の時刻の欄（①＝退勤だけ・②＝出勤だけ・③と未選択＝両方） */
+export function clockTimeFields(kind: ClockKind | null): { in: boolean; out: boolean } {
+  return { in: kind !== 'in', out: kind !== 'out' };
+}
 
 /**
  * 理由の文例。いま検知している種別に合わせて出す（残業前提の固定文だと早退・遅刻等で使えないため）。

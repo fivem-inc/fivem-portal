@@ -84,7 +84,7 @@ export function askSideNote(side: AskSide, shiftStart: string | null, shiftEnd: 
 
 /** 「定時でした」の言葉は、何について聞いたかで変える */
 const NOT_WORKED_LABEL: Record<AskSide, string> = {
-  after: '定時でした（打刻が遅れただけ）',
+  after: '定時でした（打刻を忘れた・遅れただけ）',
   before: '定時でした（早く来ただけ）',
   both: '定時でした（業務はしていません）',
 };

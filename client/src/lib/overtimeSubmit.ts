@@ -269,7 +269,7 @@ export function validateOvertime(v: ValidateInput): string {
   // ※ ここを通さないと「勤務地を選択してください」「申請先を選択してください」で必ず止まる
   if (v.clockOnlyMode) {
     if (!v.normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ記録できます';
-    if (!v.clockReason) return '打刻が遅くなった理由を選んでください';
+    if (!v.clockReason) return '何があったかを選んでください（③のときは理由も）';
     if (v.clockReason === 'その他' && !v.clockReasonOther.trim()) return '理由を入力してください';
     return '';
   }

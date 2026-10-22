@@ -90,7 +90,9 @@ const ShiftReportPayrollSheet: React.FC<{
       const employed = (!person.hire_date || d >= person.hire_date) && (!person.retire_date || d <= person.retire_date);
       const dayReps = reps.filter(r => r.work_date === d).sort((a, b) => a.created_at.localeCompare(b.created_at));
       const cal = data.calendar[d] ?? null;
-      // 報告がある日は報告の「変更前」（差分はこれで計算されている）。休日出勤などで変更前が空なら「休み」
+      // 報告がある日は報告の「変更前」（差分はこれで計算されている）。
+      // 変更前が空の日（欠勤は入力画面に変更前の欄が無い・休日出勤など）は、報告が無い日と同じく登録シフトを日付で引く（2026-10-22 ユーザー確定）。
+      // 登録シフトも休みなら「休み」
       const withOrig = dayReps.find(r => parseSegments(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end).length > 0);
       let nsLines: string[] = []; let laborText = '-';
       if (withOrig) {
@@ -98,7 +100,7 @@ const ShiftReportPayrollSheet: React.FC<{
         nsLines = formatSegs(segs).split(' / ');
         const brk = calcSegsBreak(segs);
         laborText = `${formatMin(Math.max(0, segMinutes(segs) - brk))}(${formatMin(brk)})`;
-      } else if (dayReps.length === 0 && employed) {
+      } else if (employed) {
         const ns = resolveNormalShift(pats, d, cal);
         const t = normalShiftTimeText(ns);
         if (t) { nsLines = t.split(' / '); laborText = `${formatMin(ns.labor_minutes)}(${formatMin(ns.break_minutes)})`; }

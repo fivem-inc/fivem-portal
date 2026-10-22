@@ -78,7 +78,8 @@ import ShiftAdjustChoice from '../components/ShiftAdjustChoice';
 import { isPartialShiftCase, partialCover, partialCoverLabel, PARTIAL_SHIFT_NOTE } from '../lib/partialShiftAdjust';
 import PartialShiftToggle from '../components/PartialShiftToggle';
 import { usePartialSlotMap } from '../hooks/usePartialSlotMap';
-import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
+import ClockReasonPicker from '../components/ClockReasonPicker';
+import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, clockKindOf, clockTimeFields, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
 import type { OvertimeType, SituationLike } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
@@ -945,11 +946,12 @@ const OvertimeForm: React.FC<{
       setMode('posthoc');
       setClockOnly(true);
       setClockInAt(t1); setClockOutAt(t2);
+      // 打刻忘れのメモは、出勤・退勤のどちらかが分からないので①②は本人が選ぶ（2026-10-22 案B）
       const preset = memo.kind === 'missed_clock'
-        ? CLOCK_ONLY_REASONS[0]
+        ? ''
         : (CLOCK_ONLY_REASONS.includes(memo.reason) ? memo.reason : '');
       setClockReason(preset);
-      if (!preset && memo.reason) { setClockReason('その他'); setClockReasonOther(memo.reason); }
+      if (!preset && memo.reason && memo.kind !== 'missed_clock') { setClockReason('その他'); setClockReasonOther(memo.reason); }
       setReason('');
       setSegments(bands.length > 0 ? bands.map(b => ({ ...b })) : [{ ...EMPTY_SEG }]);
     } else {
@@ -1888,7 +1890,7 @@ const OvertimeForm: React.FC<{
                 ) : selMark.kind === 'unreported' ? (
                   <>{dayTitle}は事前申請を出していますが、<b>実績の報告がまだ</b>です。</>
                 ) : selMark.kind === 'teiji' ? (
-                  <>{dayTitle}は<b>定時</b>（{selMark.clockOnly ? '打刻が遅れただけ' : '残業なし'}）として記録済みです。変更は履歴から行ってください。</>
+                  <>{dayTitle}は<b>定時</b>（{selMark.clockOnly ? '打刻を忘れた・遅れた' : '残業なし'}）として記録済みです。変更は履歴から行ってください。</>
                 ) : (
                   <>{dayTitle}は申請済みです（{selMark.status && STATUS_INFO[selMark.status as OvertimeStatus] ? STATUS_INFO[selMark.status as OvertimeStatus].label : ''}）。同じ日に2件目は出せません。変更・取消は履歴から行ってください。</>
                 )}
@@ -1966,10 +1968,10 @@ const OvertimeForm: React.FC<{
               </p>
               <p style={{ margin: '0 0 8px', fontSize: 13, color: text }}>残業・遅刻・早退はありませんか？</p>
               <p style={{ margin: '0 0 10px', fontSize: 12, color: subText, lineHeight: 1.6 }}>
-                打刻が遅れた日も、残業がなければこのボタンで大丈夫です。理由を残したい日・経理から確認が来た日は
+                打刻を忘れた・遅れた日も、残業がなければこのボタンで大丈夫です。理由を残したい日・経理から確認が来た日は
                 <button type="button" onClick={() => { setClockOnly(true); setFormFor(date); }}
                   style={{ background: 'none', border: 'none', padding: 0, margin: '0 2px', color: isDark ? '#8ec5f0' : '#1565c0', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}>
-                  打刻が遅れた日はこちら（理由を選ぶ）
+                  打刻を忘れた・遅れた日はこちら（理由を選ぶ）
                 </button>
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -2352,7 +2354,7 @@ const OvertimeForm: React.FC<{
               background: isDark ? '#2c3e50' : '#e8f4fd',
               color: isDark ? '#fff' : '#1565c0',
             }}>
-            {clockOnly ? '✓ 残業ではありません（打刻が遅れただけ）─ 押すと通常の報告に戻ります' : '🕐 残業ではありません（打刻が遅れただけ）はこちらを押す'}
+            {clockOnly ? '✓ 打刻を忘れた・遅れた（残業ではない）─ 押すと通常の報告に戻ります' : '🕐 打刻を忘れた・遅れた（残業ではない）はこちら'}
           </button>
         </div>
       )}
@@ -2369,35 +2371,34 @@ const OvertimeForm: React.FC<{
             </p>
           </div>
 
-          <span style={labelStyle}>打刻の時刻<span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（分かれば・任意）</span></span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>出勤</span>
-            <TimeInput value={clockInAt} onChange={setClockInAt} isDark={isDark} advance ariaLabel="出勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
-            <span style={{ fontSize: 12, color: subText, minWidth: 44, textAlign: 'right' }}>退勤</span>
-            <TimeInput value={clockOutAt} onChange={setClockOutAt} isDark={isDark} ariaLabel="退勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
-          </div>
+          {/* 何がありましたか（①②③・③は理由も）。部品は components/ClockReasonPicker（まとめて申請・表入力と共用・2026-10-22 案B） */}
+          <ClockReasonPicker reason={clockReason} other={clockReasonOther} errField="clockReason" otherInputStyle={fieldStyle}
+            onPick={(r, k) => {
+              setClockReason(r); clearErr('clockReason');
+              // ①（出勤を忘れた）は出勤の欄を、②（退勤を忘れた）は退勤の欄を出さないので、入っていた値も消す
+              if (!clockTimeFields(k).in) setClockInAt('');
+              if (!clockTimeFields(k).out) setClockOutAt('');
+            }}
+            onOtherChange={setClockReasonOther} />
 
-          <span style={labelStyle}>打刻が遅くなった理由{req}</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
-            {CLOCK_ONLY_REASONS.map(r => (
-              <button key={r} type="button"
-                onClick={() => { setClockReason(r); clearErr('clockReason'); }}
-                data-err-field={r === CLOCK_ONLY_REASONS[0] ? 'clockReason' : undefined}
-                style={{
-                  padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-                  fontSize: 13.5, fontWeight: 'bold',
-                  border: `2px solid ${clockReason === r ? '#1565c0' : '#90caf9'}`,
-                  background: clockReason === r ? '#1976d2' : '#e3f2fd',
-                  color: clockReason === r ? '#fff' : '#1565c0',
-                }}>
-                {r}
-              </button>
-            ))}
-          </div>
-          {clockReason === 'その他' && (
-            <input value={clockReasonOther} onChange={e => setClockReasonOther(e.target.value)}
-              placeholder="例：迎えを待っていた" style={{ ...fieldStyle, marginBottom: 10 }} />
-          )}
+          {(() => {
+            const tf = clockTimeFields(clockKindOf(clockReason));
+            return (
+              <>
+                <span style={labelStyle}>打刻の時刻<span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（{tf.in && tf.out ? '' : '押せた方・'}分かれば・任意）</span></span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  {tf.in && <>
+                    <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>出勤</span>
+                    <TimeInput value={clockInAt} onChange={setClockInAt} isDark={isDark} advance ariaLabel="出勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
+                  </>}
+                  {tf.out && <>
+                    <span style={{ fontSize: 12, color: subText, minWidth: 44, textAlign: tf.in ? 'right' : 'left' }}>退勤</span>
+                    <TimeInput value={clockOutAt} onChange={setClockOutAt} isDark={isDark} ariaLabel="退勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
+                  </>}
+                </div>
+              </>
+            );
+          })()}
 
           {/* 🚨 この枠は絶対に外さない。片付け・準備・保護者対応は業務であり、
               「残業ではありません」で記録させるとサービス残業を認めた記録になる。
@@ -2851,7 +2852,7 @@ const OvertimeForm: React.FC<{
           )}
           {clockOnlyMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
-              {date}（{dowLabel(date)}）　<b>残業ではありません</b>（打刻が遅れただけ）<br />
+              {date}（{dowLabel(date)}）　<b>残業ではありません</b>（打刻を忘れた・遅れた）<br />
               理由：{effectiveClockReason}<br />
               {(clockInAt || clockOutAt) && <>打刻：{clockInAt || '—'}〜{clockOutAt || '—'}<br /></>}
               勤務時間はシフトどおり（労働{formatMin(normalShift.labor_minutes)}）・合計時間数は変わりません<br />

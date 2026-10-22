@@ -223,7 +223,7 @@ export function gridDayTypeOptions(kind: GridDayKind, ns: NormalShiftSnapshot): 
     { value: 'chosei_off', label: '時間外調整休（終日）', disabledReason: fullNg },
     { value: 'furikae_off', label: '振替休日（終日）', disabledReason: fullNg },
     { value: 'absence', label: '欠勤（終日）', disabledReason: fullNg },
-    { value: 'clock_only', label: '打刻が遅れただけ', disabledReason: clockNg },
+    { value: 'clock_only', label: '打刻を忘れた・遅れた', disabledReason: clockNg },
   ];
 }
 
@@ -536,7 +536,7 @@ function computeClockOnlyRow(a: Parameters<typeof computeGridRow>[0]): GridRowCa
     offerCalendar: false,
   };
   const ng = gridDayTypeOptions(kind, ns).find(o => o.value === 'clock_only')?.disabledReason ?? '';
-  const message = ng ? '打刻が遅れただけは選べません（' + ng + '）' : validateOvertime({
+  const message = ng ? '打刻を忘れた・遅れたは選べません（' + ng + '）' : validateOvertime({
     date, mode, hasEditTarget: false, today, advanceMaxDate: a.advanceMaxDate,
     // 🚨 締め切りは最後に見る（時間の行と同じ）
     closeLocked: false, clockOnlyMode: true, normalShift: ns,

@@ -27,7 +27,8 @@ import { diffColor } from '../lib/overtimeBalance';
 import { OvertimeBalanceInline } from './OvertimeBalanceView';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
-import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor, clockKindOf, clockTimeFields } from '../lib/overtimeTypes';
+import ClockReasonPicker from './ClockReasonPicker';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -910,7 +911,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             </span>
                           </td>
                           <td style={{ ...td, minWidth: 200 }}>
-                            <span style={{ fontSize: 12, color: subText }}>残業ではありません（打刻が遅れただけ）。下の行で入力します</span>
+                            <span style={{ fontSize: 12, color: subText }}>打刻を忘れた・遅れた（残業ではない）。下の行で入力します</span>
                             {c.message && (c.state === 'error' || c.state === 'locked') && (
                               <div style={{ fontSize: 11.5, fontWeight: 'bold', marginTop: 3, color: c.state === 'error' ? '#e24b4a' : subText }}>{c.message}</div>
                             )}
@@ -1063,27 +1064,32 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                       <tr style={{ background: bg }} {...rowFocus}>
                         <td style={{ ...td, position: 'sticky', left: 0, background: bg ?? cardBg }} />
                         <td colSpan={8} style={{ ...td, borderLeft: `3px solid ${toggleBlue}` }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 'bold', marginBottom: 2 }}>残業ではありません（打刻が遅れただけ）</div>
+                          <div style={{ fontSize: 12.5, fontWeight: 'bold', marginBottom: 2 }}>打刻を忘れた・遅れた（残業ではない）</div>
                           <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>勤務時間はシフトどおりとして記録します。合計時間数は増えも減りもしません。</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 6 }}>
-                            <span>打刻の時刻<span style={{ color: subText }}>（分かれば・任意）</span></span>
-                            <span style={{ color: subText }}>出勤</span>
-                            <TimeInput value={r.draft.clockInAt ?? ''} onChange={v => touch({ clockInAt: v })} isDark={isDark} style={timeBox} advance ariaLabel={`${md(r.date)} 出勤の打刻時刻`} />
-                            <span style={{ color: subText }}>退勤</span>
-                            <TimeInput value={r.draft.clockOutAt ?? ''} onChange={v => touch({ clockOutAt: v })} isDark={isDark} style={timeBox} ariaLabel={`${md(r.date)} 退勤の打刻時刻`} />
-                          </div>
-                          <div style={{ fontSize: 12, marginBottom: 4 }}>打刻が遅くなった理由<span style={{ color: '#dc3545' }}> *</span></div>
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                            {/* 選択肢は lib/overtimeTypes の CLOCK_ONLY_REASONS（1件フォームと共用） */}
-                            {CLOCK_ONLY_REASONS.map(x => (
-                              <button key={x} type="button" style={{ ...btnSm, fontSize: 12, padding: '3px 10px', ...(r.draft.clockReason === x ? btnOn : {}) }}
-                                onClick={() => touch({ clockReason: x })}>{x}</button>
-                            ))}
-                            {r.draft.clockReason === 'その他' && (
-                              <input type="text" value={r.draft.clockReasonOther ?? ''} placeholder="例：迎えを待っていた" onChange={e => touch({ clockReasonOther: e.target.value })}
-                                style={{ ...txt, minWidth: 0, width: 220 }} aria-label={`${md(r.date)} 打刻が遅くなった理由（その他）`} />
-                            )}
-                          </div>
+                          {/* 何がありましたか（①②③）。部品は components/ClockReasonPicker（1件フォーム・まとめて申請と共用・2026-10-22 案B） */}
+                          <ClockReasonPicker compact reason={r.draft.clockReason ?? ''} other={r.draft.clockReasonOther ?? ''}
+                            otherInputStyle={{ ...txt, minWidth: 0, width: 220 }} ariaPrefix={`${md(r.date)} `}
+                            onPick={(x, k) => {
+                              const tf = clockTimeFields(k);
+                              touch({ clockReason: x, ...(tf.in ? {} : { clockInAt: '' }), ...(tf.out ? {} : { clockOutAt: '' }) });
+                            }}
+                            onOtherChange={v => touch({ clockReasonOther: v })} />
+                          {(() => {
+                            const tf = clockTimeFields(clockKindOf(r.draft.clockReason));
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+                                <span>打刻の時刻<span style={{ color: subText }}>（{tf.in && tf.out ? '' : '押せた方・'}分かれば・任意）</span></span>
+                                {tf.in && <>
+                                  <span style={{ color: subText }}>出勤</span>
+                                  <TimeInput value={r.draft.clockInAt ?? ''} onChange={v => touch({ clockInAt: v })} isDark={isDark} style={timeBox} advance ariaLabel={`${md(r.date)} 出勤の打刻時刻`} />
+                                </>}
+                                {tf.out && <>
+                                  <span style={{ color: subText }}>退勤</span>
+                                  <TimeInput value={r.draft.clockOutAt ?? ''} onChange={v => touch({ clockOutAt: v })} isDark={isDark} style={timeBox} ariaLabel={`${md(r.date)} 退勤の打刻時刻`} />
+                                </>}
+                              </div>
+                            );
+                          })()}
                           {/* 🚨 この枠は絶対に外さない（1件フォームと同じ）。片付け・準備・保護者対応は業務であり、
                               「残業ではありません」で記録させるとサービス残業を認めた記録になる。黄色の固定色（ライト・ダーク共通） */}
                           <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
@@ -1202,7 +1208,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 const ci = r.draft.clockInAt ?? '', co = r.draft.clockOutAt ?? '';
                 return (
                   <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
-                    <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> 残業ではありません（打刻が遅れただけ）{r.req ? '（依頼に答える）' : ''}：勤務時間はシフトどおり {normalShiftTimeText(r.ns)}
+                    <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> 残業ではありません（打刻を忘れた・遅れた）{r.req ? '（依頼に答える）' : ''}：勤務時間はシフトどおり {normalShiftTimeText(r.ns)}
                     {' '}理由「{effectiveClockReasonOf(r.draft.clockReason ?? '', r.draft.clockReasonOther ?? '')}」
                     {(ci || co) && <span style={{ color: subText }}> 打刻 {ci || '—'}〜{co || '—'}</span>}
                   </div>

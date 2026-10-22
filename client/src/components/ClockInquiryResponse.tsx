@@ -4,7 +4,7 @@ import { resolveNormalShift, normalShiftTimeText, normalShiftEdges, normalShiftS
 import type { PatternRow } from '../lib/overtimeShift';
 import { calcPayPeriodStartJst } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
-import { CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
+import { CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, CLOCK_LATE_REASONS } from '../lib/overtimeTypes';
 import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
 import { primaryBtn } from '../lib/buttonStyles';
 import TimeInput from './TimeInput';
@@ -545,11 +545,16 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
 
             {canRespond && p.answer === 'not_worked' && (
               <div style={{ marginTop: 10, background: innerBg, borderRadius: 8, padding: '10px 12px' }}>
-                <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>打刻が遅くなった理由</div>
+                <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>何がありましたか</div>
                 <select value={p.reason} onChange={e => setPick(d.id, { reason: e.target.value })}
                   style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 13 }}>
                   <option value="">選んでください</option>
-                  {CLOCK_ONLY_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  {/* ①②③ と③の理由（1件フォームの ClockReasonPicker と同じ一覧・2026-10-22 案B） */}
+                  <option value={CLOCK_FORGOT_IN}>① {CLOCK_FORGOT_IN}</option>
+                  <option value={CLOCK_FORGOT_OUT}>② {CLOCK_FORGOT_OUT}</option>
+                  <optgroup label="③ 打刻が遅れた・早かった（残業ではない）">
+                    {CLOCK_LATE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </optgroup>
                 </select>
                 {p.reason === 'その他' && (
                   <input value={p.note} onChange={e => setPick(d.id, { note: e.target.value })}

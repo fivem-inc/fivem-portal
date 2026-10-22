@@ -22,7 +22,8 @@ import {
 import type { GridReport, GridDayKind, RowDraft, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
 import { diffColor } from '../lib/overtimeBalance';
 import { OvertimeBalanceInline } from './OvertimeBalanceView';
-import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor, clockKindOf, clockTimeFields } from '../lib/overtimeTypes';
+import ClockReasonPicker from './ClockReasonPicker';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { DRAFT_KEYS, loadDraft, saveDraft } from '../lib/draftStorage';
 import { useRoles } from '../hooks/useRoles';
@@ -550,7 +551,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
 
   /** 1件の中身（一覧と確認で同じ文字） */
   const itemSummary = (r: BoxRow) => {
-    if (r.calc.clockOnly) return <>残業ではありません（打刻が遅れただけ）・理由「{effectiveClockReasonOf(r.draft.clockReason ?? '', r.draft.clockReasonOther ?? '')}」</>;
+    if (r.calc.clockOnly) return <>残業ではありません（打刻を忘れた・遅れた）・理由「{effectiveClockReasonOf(r.draft.clockReason ?? '', r.draft.clockReasonOther ?? '')}」</>;
     if (r.calc.fullDayType) return <>終日 {r.calc.fullDayType === 'absence' ? '欠勤1日' : <b style={{ color: diffColor(r.calc.diffMin, isDark) }}>{formatSignedMin(r.calc.diffMin)}</b>}</>;
     const segs = [...r.calc.workSegments].sort((a, b) => a.startMin - b.startMin).map(s => `${minToTime(s.startMin)}〜${minToTime(s.endMin)}`).join(' / ');
     return <>{segs} <b style={{ color: diffColor(r.calc.diffMin, isDark) }}>{formatSignedMin(r.calc.diffMin)}</b></>;
@@ -748,18 +749,33 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: subText, marginTop: 8, lineHeight: 1.6 }}>
               勤務時間はシフトどおりとして記録します。合計時間数は増えも減りもしません。
             </div>
-            <label style={lbl}>打刻の時刻<span style={{ fontSize: 11 }}>（分かれば・任意）</span></label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 12, color: subText }}>出勤</span>
-              <TimeInput value={d.clockInAt ?? ''} onChange={v => setInputDraft({ clockInAt: v })} isDark={isDark} advance ariaLabel="出勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
-              <span style={{ fontSize: 12, color: subText }}>退勤</span>
-              <TimeInput value={d.clockOutAt ?? ''} onChange={v => setInputDraft({ clockOutAt: v })} isDark={isDark} ariaLabel="退勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
+            {/* 何がありましたか（①②③）。部品は components/ClockReasonPicker（1件フォーム・表入力と共用・2026-10-22 案B） */}
+            <div style={{ marginTop: 8 }}>
+              <ClockReasonPicker reason={d.clockReason ?? ''} other={d.clockReasonOther ?? ''} otherInputStyle={fld}
+                onPick={(x, k) => {
+                  const tf = clockTimeFields(k);
+                  setInputDraft({ clockReason: x, ...(tf.in ? {} : { clockInAt: '' }), ...(tf.out ? {} : { clockOutAt: '' }) });
+                }}
+                onOtherChange={v => setInputDraft({ clockReasonOther: v })} />
             </div>
-            <label style={lbl}>打刻が遅くなった理由{req}</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {CLOCK_ONLY_REASONS.map(x => <button key={x} type="button" style={{ ...chip(d.clockReason === x), borderRadius: 10, textAlign: 'left' }} onClick={() => setInputDraft({ clockReason: x })}>{x}</button>)}
-            </div>
-            {d.clockReason === 'その他' && <input type="text" value={d.clockReasonOther ?? ''} placeholder="例：迎えを待っていた" onChange={e => setInputDraft({ clockReasonOther: e.target.value })} style={{ ...fld, marginTop: 6 }} aria-label="打刻が遅くなった理由（その他）" />}
+            {(() => {
+              const tf = clockTimeFields(clockKindOf(d.clockReason));
+              return (
+                <>
+                  <label style={lbl}>打刻の時刻<span style={{ fontSize: 11 }}>（{tf.in && tf.out ? '' : '押せた方・'}分かれば・任意）</span></label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {tf.in && <>
+                      <span style={{ fontSize: 12, color: subText }}>出勤</span>
+                      <TimeInput value={d.clockInAt ?? ''} onChange={v => setInputDraft({ clockInAt: v })} isDark={isDark} advance ariaLabel="出勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
+                    </>}
+                    {tf.out && <>
+                      <span style={{ fontSize: 12, color: subText }}>退勤</span>
+                      <TimeInput value={d.clockOutAt ?? ''} onChange={v => setInputDraft({ clockOutAt: v })} isDark={isDark} ariaLabel="退勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
+                    </>}
+                  </div>
+                </>
+              );
+            })()}
             {/* 🚨 この枠は絶対に外さない（1件フォーム・表入力と同じ）。黄色の固定色 */}
             <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
               <p style={{ margin: 0, fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
