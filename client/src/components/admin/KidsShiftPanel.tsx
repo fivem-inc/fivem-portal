@@ -26,7 +26,7 @@ import {
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
   loadPlanTerms, savePlanTerms, termsPayload, assignTemp, createTemp, deleteTemp, saveWeeklyTarget, setPlanMemo, type KidsSaveResult,
 } from '../../lib/kidsShiftApi';
-import { DEFAULT_WEEKLY_TARGET, hm as hmText, planBlocks, remainText, weekSummary, type DayInput, type DutySpan, type PlanDayBase } from '../../lib/shiftWeekSummary';
+import { DEFAULT_WEEKLY_TARGET, hm as hmText, lessonLightDays, offMismatchText, planBlocks, remainText, weekSummary, type DayInput, type DutySpan, type PlanDayBase } from '../../lib/shiftWeekSummary';
 import ShiftWeekView, { type WeekRow, type WeekSuggestion } from './ShiftWeekView';
 import { buildKidsPrintHtml, type KidsPrintLayout } from '../../lib/kidsShiftPrint';
 import { CHANGE_MARK_SPAN, changeCellStyle, diffLines } from '../../lib/changeMark';
@@ -98,6 +98,16 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
   const [weekSort, setWeekSort] = useState<'list' | 'remain'>('list');
   // 曜日で見るの上に出す「この方の週」（2026-10-22 第3段：マスを直したあと、週のまとめに戻らなくても時間が分かる）
   const [dayFocus, setDayFocus] = useState<string>('');
+  // スマホの幅（600px より狭い）：週のまとめはカード・案の帯は2段（2026-10-22・勤怠カレンダーと同じ書き方・PC は今のまま）
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 600);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 600);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+  const [bannerOpen, setBannerOpen] = useState(false);
+  // 曜日で見るの黄色い枠：スマホでは候補を1人だけ出し、［ほか◯人］で開く（開いたコマ）
+  const [candOpen, setCandOpen] = useState<Set<string>>(new Set());
   const roles = useRoles();
   // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
   const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
@@ -2273,8 +2283,16 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       })()}
 
       {plan && (
-        <div style={{ ...warnCard, marginBottom: 8 }}>
-          <b>{plan.name}を直しています</b>（保存しても決定済みの表は変わりません）／予定の適用開始日{' '}
+        <div style={{ ...warnCard, marginBottom: 8, textAlign: 'left' }}>
+          {/* スマホでは2段（案の名前＋［詳しく］／保存していないマス＋［保存する］）。適用開始日・最後の保存・メモは［詳しく］の中（2026-10-22） */}
+          {isMobile && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <b style={{ flex: 1 }}>{plan.name}</b>
+              <button type="button" style={{ ...linkBtn, color: '#856404' }} onClick={() => setBannerOpen(v => !v)} aria-expanded={bannerOpen}>{bannerOpen ? '閉じる ▲' : '詳しく ▼'}</button>
+            </div>
+          )}
+          {(!isMobile || bannerOpen) && <>
+          {isMobile ? <span>（保存しても決定済みの表は変わりません）／予定の適用開始日{' '}</span> : <><b>{plan.name}を直しています</b>（保存しても決定済みの表は変わりません）／予定の適用開始日{' '}</>}
           <input type="date" value={plan.apply_from} style={inputStyle}
             onChange={e => {
               if (!e.target.value) return;
@@ -2288,7 +2306,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
             <span style={{ whiteSpace: 'nowrap' }}>メモ：</span>
             {memoDraft == null ? (
               <>
-                <span style={{ flex: 1, minWidth: 160, whiteSpace: 'pre-wrap' }}>{plan.memo || <span style={{ opacity: 0.75 }}>（まだありません）</span>}</span>
+                <span style={{ flex: 1, minWidth: 160, whiteSpace: 'pre-wrap', textAlign: 'left', lineHeight: 1.6 }}>{plan.memo || <span style={{ opacity: 0.75 }}>（まだありません）</span>}</span>
                 <button type="button" style={{ ...inputStyle, cursor: 'pointer', padding: '2px 10px', fontSize: 12 }} onClick={() => { setMemoDraft(plan.memo ?? ''); setMemoErr(''); }}>メモを直す</button>
               </>
             ) : (
@@ -2303,6 +2321,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
             )}
           </div>
           {memoErr && <div style={{ color: '#c62828', marginTop: 4 }}>{memoErr}</div>}
+          </>}
           {/* 保存していないマスと［保存する］（画面の下まで行かなくても保存できる・中身は下の［案を保存］と同じ・2026-10-22 第2段） */}
           {changedKeys.length > 0 && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
@@ -2362,12 +2381,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
               onChange={e => e.target.value && guarded('別の日付', () => setApplyFrom(e.target.value))} />
           </>
         )}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: subText, cursor: 'pointer' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: subText, cursor: 'pointer', flexWrap: 'wrap' }}>
           <input type="checkbox" checked={markScreen} onChange={e => setMarkScreen(e.target.checked)} />
           変わった所に印
           <span style={{ ...changeCellStyle(true), padding: '0 4px', borderRadius: 3 }}>違うマス</span>
           <span style={CHANGE_MARK_SPAN}>違う名前・時刻</span>
-          {plan ? `（決定済みの表 ${md(plan.apply_from)} 時点と比べて付けます。「比べる相手」の ≠ とは別です）` : `（${md(prevDate(applyFrom))} と比べて）`}
+          <span style={isMobile ? { flexBasis: '100%', fontSize: 11, textAlign: 'left' } : undefined}>{plan ? `（決定済みの表 ${md(plan.apply_from)} 時点と比べて付けます。「比べる相手」の ≠ とは別です）` : `（${md(prevDate(applyFrom))} と比べて）`}</span>
         </label>
       </div>
 
@@ -2391,7 +2410,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           planName={plan?.name ?? ''} canNewPlan={openPlans.length < data.settings.plan_limit}
           onSavePlanPerson={weekSavePerson} onSaveTarget={weekSaveTarget} onBulkApply={weekBulk} onBulkApplyAsNew={weekBulkAsNew}
           onCreateTemp={weekCreateTemp} onAssignTemp={weekAssignTemp} onDeleteTemp={weekDeleteTemp}
-          sort={weekSort} onSort={setWeekSort}
+          sort={weekSort} onSort={setWeekSort} isMobile={isMobile}
           onShowPerson={key => { setPersonOnlyId(key); setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); setViewMode('person'); setOpenKey(null); setDayFocus(key);
             // 押したら、その方の表まで画面を動かす（画面の上のほうに戻らないように）
             setTimeout(() => document.getElementById('kids-person-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
@@ -2427,13 +2446,31 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
               {weekRows.map(x => <option key={x.key} value={x.key}>{x.name}{x.roleLabel ? `（${x.roleLabel}）` : ''}</option>)}
             </select>
             {r && s && ds && (
-              <span>
-                合計 <b>{hmText(s.totalMin)}</b>／{s.target != null ? hmText(s.target) : '—'}
-                {s.target != null && <span style={{ color: s.remain != null && s.remain < 0 ? red : text }}>（{remainText(s.remain)}）</span>}
-                ・{s.workDays}日（週休{s.offDays}{s.offTarget != null ? `・前提${s.offTarget}` : ''}）
-                ・{ROSTER_DAY_LABEL[day]}曜：{ds.working ? (ds.blocks.length ? `${ds.blocks.map(b => `${minText(b.s)}〜${minText(b.e)}`).join('・')}（${hmText(ds.totalMin)}）` : '時刻なし') : '休み'}
-                {s.offMismatch && <span style={{ color: red, fontWeight: 'bold' }}>　前提と合っていません</span>}
-              </span>
+              <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 3, textAlign: 'left' }}>
+                <span>
+                  合計 <b>{hmText(s.totalMin)}</b>／{s.target != null ? hmText(s.target) : '—'}
+                  {s.target != null && <span style={{ color: s.remain != null && s.remain < 0 ? red : text }}>（目標まで {remainText(s.remain)}）</span>}
+                  ・{s.workDays}日（週休{s.offDays}）
+                </span>
+                {s.offMismatch && <span style={{ color: red, fontWeight: 'bold' }}>{offMismatchText(s)}</span>}
+                {lessonLightDays(s) && <span>レッスンの少ない曜日：{lessonLightDays(s)}</span>}
+                {/* 7日分の札（押すとその曜日の表に切り替わる） */}
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {KIDS_WEEK.map(d => {
+                    const x = s.days[d];
+                    const on = d === day;
+                    return (
+                      <button key={d} type="button" onClick={() => { setDay(d); setOpenKey(null); }}
+                        style={{ padding: '1px 7px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer',
+                          border: x.working ? 'none' : `1px dashed ${subText}`,
+                          background: on ? TOGGLE_BLUE : x.working ? (isDarkMode ? '#495057' : '#e9ecef') : 'transparent',
+                          color: on ? '#fff' : x.working ? text : subText }}>
+                        {ROSTER_DAY_LABEL[d]} {x.working ? (x.blocks.length ? hmText(x.totalMin) : '時刻なし') : '休'}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
         );
@@ -2450,7 +2487,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
         return (
           <div style={{ ...warnCard, marginBottom: 8, textAlign: 'left' }}>
             <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{ROSTER_DAY_LABEL[day]}曜の追加必要 あと{shortByDay[day]}人{les > 0 ? `（ほかに、レッスンできる人があと${les}人）` : ''}（時刻を押すとそのマスが開きます）</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, max-content) 1fr', gap: '4px 16px', textAlign: 'left', alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(90px, max-content) 1fr', gap: isMobile ? '2px 0' : '4px 16px', textAlign: 'left', alignItems: 'start' }}>
               {groups.map(g => (
                 <React.Fragment key={g.c.id}>
                   <div style={{ fontWeight: 'bold' }}>{g.c.label}</div>
@@ -2462,9 +2499,18 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
                         {(() => {
                           const c = slotCands.get(x);
                           if (!c) return null;
-                          return c.length > 0
-                            ? <span style={{ color: '#495057' }}>{'　← '}{c.map(y => y.text).join('・')}</span>
-                            : <span style={{ color: '#c62828' }}>{'　← 空いている方がいません'}</span>;
+                          if (c.length === 0) return <div style={{ paddingLeft: 16, color: '#c62828' }}>→ 空いている方がいません</div>;
+                          const ck = `${x.place.id}|${x.day}|${x.item.start}|${i}`;
+                          const shown = isMobile && !candOpen.has(ck) ? c.slice(0, 1) : c;
+                          return (
+                            <div style={{ paddingLeft: 16, color: '#495057' }}>
+                              {shown.map(y => <div key={y.key}>→ {y.text}</div>)}
+                              {shown.length < c.length && (
+                                <button type="button" style={{ ...linkBtn, fontSize: 12, color: '#856404' }}
+                                  onClick={() => setCandOpen(prev => new Set(prev).add(ck))}>ほか{c.length - shown.length}人 ▼</button>
+                              )}
+                            </div>
+                          );
                         })()}
                       </div>
                     ))}

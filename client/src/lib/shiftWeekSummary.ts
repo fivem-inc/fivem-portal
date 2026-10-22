@@ -10,7 +10,7 @@
 // 🚨 週休＝7 − 出勤した曜日の数。目標は「週の目標時間」（正社員だけ・既定40時間）
 
 import { calcTotalBreak } from './breakCalc';
-import type { RosterDayKind } from './shiftRoster';
+import { ROSTER_DAY_LABEL, type RosterDayKind } from './shiftRoster';
 
 export const WEEK_DAYS: RosterDayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 /** 正社員の週の目標時間の既定（分） */
@@ -54,6 +54,21 @@ export interface DayInput {
 export type PlanDayBase = 'same' | 'changed' | 'off' | 'new' | null;
 /** 案で決定済みの表と比べて変わった日の短い呼び名（週のまとめの「出勤」の欄・人ごとの窓） */
 export const CHANGE_LABEL = { changed: '担当が変わった', off: '休み', new: '勤務表に無い日' } as const;
+
+
+/** 週休の前提とシフトが合っていないときの文（週のまとめの表・スマホのカード・曜日で見るの「この方の週」で同じものを使う） */
+export function offMismatchText(s: WeekSummary): string {
+  const t = s.offTarget ?? 0;
+  return s.offDays < t ? `前提は週休${t}。あと${t - s.offDays}日、休みの日が要ります` : `前提は週休${t}。${s.offDays - t}日多く休んでいます`;
+}
+
+/** 休みが足りない方の「レッスンの少ない曜日」（出勤の日のうちレッスンの時間が少ない順に2つ・決めるのは人）。足りないときだけ文を返す */
+export function lessonLightDays(s: WeekSummary): string {
+  if (!s.offMismatch || s.offTarget == null || s.offDays >= s.offTarget) return '';
+  return WEEK_DAYS.filter(d => s.days[d].working)
+    .sort((a, b) => s.days[a].lessonMin - s.days[b].lessonMin).slice(0, 2)
+    .map(d => `${ROSTER_DAY_LABEL[d]}（${s.days[d].lessonMin === 0 ? 'レッスンなし' : hm(s.days[d].lessonMin)}）`).join('・');
+}
 
 export interface WeekSettings { pre: number; post: number; gap: number }
 
