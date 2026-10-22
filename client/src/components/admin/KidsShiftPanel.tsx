@@ -790,8 +790,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
     });
   }, [data, roster, studyVersions, baseDate, dutyOfDay, board, otherBoard, other, otherCellOf, isAdult, leaveWk, roles, rowsByUser, nameOf]);
 
-  const weekRows = useMemo(() => (viewMode === 'week' ? weekRowsOf(plan ? 'plan' : 'decided', shownCell, planTerms, !!plan, plan ? baseCell : null) : []),
-    [viewMode, weekRowsOf, plan, shownCell, planTerms, baseCell]);
+  // 曜日で見る（こども）でも計算する：黄色い枠の各時刻に入れられそうな方を添えるため（2026-10-22 第2段）
+  const weekRows = useMemo(() => (viewMode === 'week' || (viewMode === 'day' && !isAdult) ? weekRowsOf(plan ? 'plan' : 'decided', shownCell, planTerms, !!plan, plan ? baseCell : null) : []),
+    [viewMode, isAdult, weekRowsOf, plan, shownCell, planTerms, baseCell]);
   const compareWeekRows = useMemo(() => {
     if (viewMode !== 'week' || !compareWith || compareErr) return null;
     const p = data?.plans.find(x => x.id === compareWith);
@@ -816,24 +817,50 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
     return m;
   }, [shortfalls, poolShorts]);
   /** あとどこに入れるとよいか：足りないマスと、その時間が空いていて「目標まで」が残っている方 */
-  const weekSuggestions = useMemo<WeekSuggestion[]>(() => {
-    if (viewMode !== 'week') return [];
-    const out: WeekSuggestion[] = [];
-    for (const s of shortfalls.filter(x => x.need > 0).slice(0, 30)) {
+  /**
+   * 足りないコマごとの「入れられそうな方」（最大3人）。🚨 判定はここ1か所：曜日で見るの黄色い枠と、週のまとめの「あとどこに」が同じものを使う。
+   * その時間が空いていて・目標まで残っていて・レッスンできる方（仮の人も）。休みの日の方は、前提より多く休んでいるときだけ
+   */
+  const slotCands = useMemo(() => {
+    const m = new Map<(typeof shortfalls)[number], { key: string; remain: number; text: string }[]>();
+    if (weekRows.length === 0) return m;
+    for (const s of shortfalls) {
       const st = toMin(normTime(s.item.start));
-      if (st == null) continue;
+      if (st == null) { m.set(s, []); continue; }
       const en = toMin(normTime(s.item.end)) ?? st + defMinOf(s.item.kind);
-      const cands = weekRows
+      m.set(s, weekRows
         .filter(r => r.summary.remain != null && r.summary.remain > 0 && (isTempId(r.key) || canLesson(r.key)))
         .filter(r => !(r.busy[s.day] ?? []).some(b => b.s < en && st < b.e))
         .filter(r => r.summary.days[s.day].working || (r.summary.offTarget != null && r.summary.offDays > r.summary.offTarget))
         .sort((a, b) => (b.summary.remain ?? 0) - (a.summary.remain ?? 0))
         .slice(0, 3)
-        .map(r => `${r.name}（${remainText(r.summary.remain)}${r.summary.days[s.day].working ? '' : '・休みの日'}）`);
-      out.push({ day: s.day, what: `${placeShort(s.place)} ${normTime(s.item.start)} ${s.item.class_name}`.trim(), need: s.need, candidates: cands });
+        .map(r => ({ key: r.key, remain: r.summary.remain ?? 0, text: `${r.name}（${remainText(r.summary.remain)}${r.summary.days[s.day].working ? '' : '・休みの日'}）` })));
     }
-    return out;
-  }, [viewMode, shortfalls, weekRows, defMinOf, canLesson]);
+    return m;
+  }, [shortfalls, weekRows, defMinOf, canLesson]);
+  /** 週のまとめの「あとどこに入れるとよいか」：曜日ごとに1行（コマは校ごとに時刻を並べ、候補は1回ずつ・30件で切らない） */
+  const weekSuggestions = useMemo<WeekSuggestion[]>(() => {
+    if (viewMode !== 'week') return [];
+    return KIDS_WEEK.map(d => {
+      const list = shortfalls.filter(x => x.day === d);
+      const pools = poolShorts.filter(x => x.d === d);
+      if (list.length === 0 && pools.length === 0) return null;
+      const t = (x: (typeof shortfalls)[number]) => `${normTime(x.item.start) ? minText(toMin(normTime(x.item.start)) ?? 0) : '時刻なし'}${x.need === 0 ? '（レッスンできる人）' : ''}`;
+      const places = activeColumns.map(c => ({ label: placeShort(c), times: list.filter(x => x.place.id === c.id)
+        .sort((a, b) => (toMin(normTime(a.item.start)) ?? 0) - (toMin(normTime(b.item.start)) ?? 0)).map(t) })).filter(p => p.times.length > 0);
+      // 共通の人で回すクラスの不足も並べる（曜日の人数に入っているため）
+      for (const x of pools) {
+        const label = `${x.pp.school ?? ''} 共通`;
+        const g = places.find(p => p.label === label);
+        if (g) g.times.push(x.b.label); else places.push({ label, times: [x.b.label] });
+      }
+      const byKey = new Map<string, { remain: number; text: string }>();
+      for (const x of list) for (const c of slotCands.get(x) ?? []) if (!byKey.has(c.key)) byKey.set(c.key, c);
+      const candidates = [...byKey.values()].sort((a, b) => b.remain - a.remain).map(c => c.text);
+      const empty = list.filter(x => (slotCands.get(x) ?? []).length === 0).map(x => `${placeShort(x.place)} ${t(x).replace('（レッスンできる人）', '')}`);
+      return { day: d, need: shortByDay[d], places, candidates, empty };
+    }).filter((x): x is WeekSuggestion => !!x);
+  }, [viewMode, shortfalls, poolShorts, slotCands, activeColumns, shortByDay]);
   /** 仮の人がこの画面のマスに何か所入っているか */
   const tempCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -2274,6 +2301,16 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
             )}
           </div>
           {memoErr && <div style={{ color: '#c62828', marginTop: 4 }}>{memoErr}</div>}
+          {/* 保存していないマスと［保存する］（画面の下まで行かなくても保存できる・中身は下の［案を保存］と同じ・2026-10-22 第2段） */}
+          {changedKeys.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+              <span style={{ color: '#c62828' }}>保存していないマス <b>{changedKeys.length}</b></span>
+              <button type="button" style={{ ...primaryBtn, padding: '4px 14px', fontSize: 12.5, opacity: saving ? 0.5 : 1 }} disabled={saving} onClick={() => void doSavePlan()}>
+                {saving ? '保存しています…' : '保存する'}
+              </button>
+            </div>
+          )}
+          {(saveErr || saveMsg) && <div style={{ marginTop: 4, fontSize: 12.5, color: saveErr ? '#c62828' : '#155724' }}>{saveErr || `✓ ${saveMsg}`}</div>}
         </div>
       )}
 
@@ -2344,6 +2381,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
         <ShiftWeekView isDarkMode={isDarkMode} isPlan={!!plan} boardName={boardName} rows={weekRows}
           settings={{ pre: data.settings.pre_minutes, post: data.settings.post_minutes, gap: data.settings.gap_split_minutes }}
           shortByDay={shortByDay} suggestions={weekSuggestions}
+          onOpenDay={d => { setDay(d); setViewMode('day'); setOpenKey(null); }}
           temps={data.temps.map(t => ({ id: t.id, label: t.label, note: t.note, count: tempCounts.get(tempKey(t.id)) ?? 0 }))}
           staffOptions={activeStaff.map(s => ({ id: s.id, name: fullName(s.name) }))}
           compare={compareWeekRows}
@@ -2377,13 +2415,15 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       {/* 選んだ曜日の追加必要を校ごとに（時刻を押すとそのマスが開く・追加必要が無い曜日は出さない） */}
       {(() => {
         const list = shortfalls.filter(x => x.day === day);
-        if (list.length === 0) return null;
+        const pools = poolShorts.filter(x => x.d === day);
+        if (list.length === 0 && pools.length === 0) return null;
+        const les = list.filter(x => x.need === 0).reduce((a, x) => a + x.lessonNeed, 0);
         const groups = activeColumns
           .map(c => ({ c, items: list.filter(x => x.place.id === c.id).sort((a, b) => (toMin(normTime(a.item.start)) ?? 0) - (toMin(normTime(b.item.start)) ?? 0)) }))
           .filter(g => g.items.length > 0);
         return (
           <div style={{ ...warnCard, marginBottom: 8, textAlign: 'left' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{ROSTER_DAY_LABEL[day]}曜の追加必要 {list.length}件（時刻を押すとそのマスが開きます）</div>
+            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{ROSTER_DAY_LABEL[day]}曜の追加必要 あと{shortByDay[day]}人{les > 0 ? `（ほかに、レッスンできる人があと${les}人）` : ''}（時刻を押すとそのマスが開きます）</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, max-content) 1fr', gap: '4px 16px', textAlign: 'left', alignItems: 'start' }}>
               {groups.map(g => (
                 <React.Fragment key={g.c.id}>
@@ -2393,8 +2433,25 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
                       <div key={i}>
                         <button type="button" style={{ ...linkBtn, fontSize: 13, color: '#856404' }} onClick={() => openCell(x.place.id, x.day)}>{normTime(x.item.start) ? minText(toMin(normTime(x.item.start)) ?? 0) : '時刻なし'}</button>
                         {'\u3000'}{shortText(x)}
+                        {(() => {
+                          const c = slotCands.get(x);
+                          if (!c) return null;
+                          return c.length > 0
+                            ? <span style={{ color: '#495057' }}>{'　← '}{c.map(y => y.text).join('・')}</span>
+                            : <span style={{ color: '#c62828' }}>{'　← 空いている方がいません'}</span>;
+                        })()}
                       </div>
                     ))}
+                  </div>
+                </React.Fragment>
+              ))}
+              {/* 共通の人で回すクラスの不足（曜日のボタンの人数に入っているもの） */}
+              {pools.map((x, i) => (
+                <React.Fragment key={`pool${i}`}>
+                  <div style={{ fontWeight: 'bold' }}>{x.pp.school} 共通</div>
+                  <div>
+                    <button type="button" style={{ ...linkBtn, fontSize: 13, color: '#856404' }} onClick={() => openCell(x.pp.id, x.d)}>{x.b.label}</button>
+                    {'　'}あと{x.r.need - x.r.common.length}人（共通 {x.r.common.length}人／要る {x.r.need}）
                   </div>
                 </React.Fragment>
               ))}
@@ -2579,7 +2636,14 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
 
       {/* 追加必要・重なり */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-        {!isAdult && <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
+        {/* 週のまとめでは1行（上の「あとどこに」に曜日ごとに出ている）・曜日で見るでは出さない（上の黄色い枠と同じ）（2026-10-22 第2段） */}
+        {!isAdult && viewMode === 'week' && (
+          <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, fontSize: 13, color: text }}>
+            <b>追加必要 あと{KIDS_WEEK.reduce((a, d) => a + shortByDay[d], 0)}人</b>
+            <span style={{ color: subText, fontSize: 12 }}>（上の「あとどこに入れるとよいか」に曜日ごとに出ています）</span>
+          </div>
+        )}
+        {!isAdult && viewMode === 'person' && <div style={{ flex: 1, minWidth: 260, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
           <b style={{ fontSize: 13, color: text }}>追加必要 {shortfalls.length} 件</b>
           <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>レッスンが回るのに足りない人数です。</div>
           {shortfalls.slice(0, 12).map((s, i) => (

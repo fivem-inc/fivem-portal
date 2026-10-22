@@ -114,6 +114,8 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
   const [rows, setRows] = useState<DayInput[]>([]);
   const [newDate, setNewDate] = useState('');
   const [message, setMessage] = useState('');
+  // 文例・よく使う一言の入れ先（2026-10-22 ユーザー確定）：最後に押した欄。'all'＝全体の一言／日付＝その日のひとこと
+  const [msgTarget, setMsgTarget] = useState<string>('all');
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
   const [calendarKinds, setCalendarKinds] = useState<Record<string, CalendarKind | null>>({});
   // 送る日の申請の状態（2026-10-13・申請がある日も送れる。中身を出して見比べてもらう）
@@ -166,14 +168,23 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         setHiddenMessages(Array.isArray(v) ? v : []);
       } catch { /* 読めなくても履歴は出す */ }
       const { data } = await supabase.from('overtime_clock_inquiries')
-        .select('message').eq('sender_id', uid).not('message', 'is', null)
+        .select('message, created_at').eq('sender_id', uid).not('message', 'is', null)
         .order('created_at', { ascending: false }).limit(60);
+      // 日ごとのひとこと（2026-10-22〜）も「よく使う一言」に並べる
+      const { data: dayNotes } = await supabase.from('overtime_clock_inquiry_days')
+        .select('ask_note, inquiry:overtime_clock_inquiries!inner(sender_id, created_at)')
+        .eq('inquiry.sender_id', uid).not('ask_note', 'is', null).limit(60);
+      type DN = { ask_note: string | null; inquiry: { created_at: string } | { created_at: string }[] | null };
+      const all: { m: string; at: string }[] = [
+        ...((data ?? []) as { message: string | null; created_at?: string }[]).map((r, i) => ({ m: (r.message ?? '').trim(), at: r.created_at ?? String(9e15 - i) })),
+        ...((dayNotes ?? []) as DN[]).map(r => {
+          const inq = Array.isArray(r.inquiry) ? r.inquiry[0] : r.inquiry;
+          return { m: (r.ask_note ?? '').trim(), at: inq?.created_at ?? '' };
+        }),
+      ].sort((a, b) => (a.at < b.at ? 1 : -1));
       const seen = new Set<string>();
       const list: string[] = [];
-      (data ?? []).forEach((r: { message: string | null }) => {
-        const m = (r.message ?? '').trim();
-        if (m && !seen.has(m)) { seen.add(m); list.push(m); }
-      });
+      all.forEach(({ m }) => { if (m && !seen.has(m)) { seen.add(m); list.push(m); } });
       setPastMessages(list.slice(0, 10));
     })();
   }, []);
@@ -295,6 +306,13 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     return '';
   };
 
+  /** 文例・よく使う一言を、入れ先の欄に入れる（その日の欄が無くなっていれば全体の一言） */
+  const targetRow = msgTarget === 'all' ? null : rows.find(r => r.work_date === msgTarget) ?? null;
+  const putText = (t: string) => {
+    if (targetRow) setRows(prev => prev.map(p => (p.work_date === targetRow.work_date ? { ...p, note: t.slice(0, 200) } : p)));
+    else setMessage(t);
+  };
+
   const doSend = async () => {
     setSending(true); setErr(''); setMsg('');
     try {
@@ -343,9 +361,9 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
       setReask([]);
       setMsg(`${names[targetId] ?? ''}さんに${payload.length}日ぶんの確認を送りました`);
       // 送った一言を「よく使う履歴」の先頭に反映（次回すぐ押せるように）
-      const sent = message.trim();
-      if (sent) setPastMessages(prev => [sent, ...prev.filter(m => m !== sent)].slice(0, 10));
-      setRows([]); setMessage(''); setConfirming(false);
+      const sentList = [message.trim(), ...sendable.map(r => r.note.trim())].filter(Boolean);
+      if (sentList.length) setPastMessages(prev => [...new Set([...sentList, ...prev])].slice(0, 10));
+      setRows([]); setMessage(''); setMsgTarget('all'); setConfirming(false);
       loadInquiries();
       setTimeout(() => setMsg(''), 4000);
     } finally {
@@ -619,8 +637,10 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                       <td style={{ padding: '6px 8px', minWidth: 180 }}>
                         {/* その日のひとこと（2026-10-22）：本人の回答画面で、その日の下に「経理から：…」と出る。全体の一言は下の欄 */}
                         <textarea value={r.note} rows={2} maxLength={200} placeholder="例：退勤が1時間遅いです。残業でしたか？"
+                          onFocus={() => setMsgTarget(r.work_date)}
                           onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, note: e.target.value } : p))}
-                          style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical', fontSize: 12.5 }} />
+                          style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical', fontSize: 12.5,
+                            ...(msgTarget === r.work_date ? { border: '2px solid #1976d2' } : {}) }} />
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                         {/* ✕ を使う（🚫 は環境によって□に化ける） */}
@@ -641,14 +661,26 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         )}
         <div style={{ marginBottom: 12 }}>
           {label('一言（任意）')}
-          <input value={message} onChange={e => setMessage(e.target.value)}
+          <input value={message} onChange={e => setMessage(e.target.value)} onFocus={() => setMsgTarget('all')}
             placeholder={`例：${MESSAGE_EXAMPLES[0]}`}
             style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }} />
+
+          {/* 文例・よく使う一言の入れ先（最後に押した欄・2026-10-22） */}
+          {rows.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6, padding: '5px 10px', borderRadius: 8, background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#fff' : '#0c447c', fontSize: 12 }}>
+              <span>文例・よく使う一言の入れ先：<b>{targetRow ? `${md(targetRow.work_date)}（${dowOf(targetRow.work_date)}）のひとこと` : '全体の一言'}</b></span>
+              {targetRow && (
+                <button type="button" onClick={() => setMsgTarget('all')}
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: subText, textDecoration: 'underline' }}>全体の一言に入れる</button>
+              )}
+              <span style={{ color: subText }}>（入れたい欄を押してから、文例や［入力］を押してください）</span>
+            </div>
+          )}
 
           {/* 文例ボタン（押すと入る） */}
           <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
             {MESSAGE_EXAMPLES.map(ex => (
-              <button key={ex} type="button" onClick={() => setMessage(ex)}
+              <button key={ex} type="button" onClick={() => putText(ex)}
                 style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0', fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer' }}>
                 文例 ー「{ex}」
               </button>
@@ -662,7 +694,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
               {(showAllMessages ? visiblePastMessages : visiblePastMessages.slice(0, 3)).map((m, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: isDark ? '#2c3e50' : '#fff', border: `1px solid ${isDark ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, marginBottom: 5 }}>
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#fff' : '#333' }}>{m}</span>
-                  <button type="button" onClick={() => setMessage(m)}
+                  <button type="button" onClick={() => putText(m)}
                     style={{ flexShrink: 0, background: '#1976d2', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '4px 12px', border: 'none', borderRadius: 4, cursor: 'pointer' }}>入力</button>
                   <button type="button" onClick={() => hideMessage(m)} title="この候補を消す"
                     style={{ flexShrink: 0, background: 'none', border: 'none', color: isDark ? '#adb5bd' : '#90a4ae', fontSize: 14, lineHeight: 1, padding: '2px 4px', cursor: 'pointer' }}>✕</button>

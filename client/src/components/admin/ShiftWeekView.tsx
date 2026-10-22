@@ -35,11 +35,17 @@ export interface WeekRow {
   busy: Record<RosterDayKind, { s: number; e: number }[]>;
 }
 
+/** あとどこに入れるとよいか（曜日ごとに1行・2026-10-22 第2段） */
 export interface WeekSuggestion {
   day: RosterDayKind;
-  what: string;
+  /** その曜日の足りない人数（曜日のボタンと同じ数え方） */
   need: number;
+  /** 校ごとの足りないコマの時刻 */
+  places: { label: string; times: string[] }[];
+  /** 入れられそうな方（1回ずつ・目標までの残りが多い順） */
   candidates: string[];
+  /** 空いている方がいないコマ */
+  empty: string[];
 }
 
 export interface WeekTemp { id: string; label: string; note: string | null; count: number }
@@ -73,6 +79,8 @@ const ShiftWeekView: React.FC<{
   onSort: (s: 'list' | 'remain') => void;
   /** ［この方の週を見る］→［人ごとに見る］をその方だけで開く（仮の人には出さない） */
   onShowPerson?: (key: string) => void;
+  /** 曜日を押したら、その曜日の［曜日で見る］を開く */
+  onOpenDay?: (d: RosterDayKind) => void;
 }> = props => {
   const { isDarkMode, isPlan, boardName, rows, settings, shortByDay, suggestions, temps, staffOptions, compare } = props;
   const text = isDarkMode ? '#f8f9fa' : '#212529';
@@ -258,14 +266,27 @@ const ShiftWeekView: React.FC<{
       {suggestions.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 4 }}>あとどこに入れるとよいか</div>
-          <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>人が足りないマスと、その時間が空いていて「目標まで」が残っている方（多い順に3人まで）です。入れるときは、曜日で見るからマスを開いてください。</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {suggestions.map((g, i) => (
-              <div key={i} style={{ fontSize: 12.5, color: text, padding: '4px 8px', borderRadius: 6, background: innerBg }}>
-                <b>{ROSTER_DAY_LABEL[g.day]} {g.what}</b>（あと{g.need}人）
-                {' ← '}{g.candidates.length > 0 ? g.candidates.join('・') : <span style={{ color: subText }}>空いている方がいません</span>}
-              </div>
-            ))}
+          <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>曜日ごとに、人が足りないコマと、その時間が空いていて「目標まで」が残っている方（1コマ3人まで）です。曜日を押すと、その曜日の「曜日で見る」が開きます。</div>
+          <div style={{ overflowX: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
+              <thead><tr><th style={{ ...th, width: 80 }}>曜日</th><th style={th}>足りないコマ</th><th style={{ ...th, width: '38%' }}>入れられそうな方</th></tr></thead>
+              <tbody>
+                {suggestions.map(g => (
+                  <tr key={g.day}>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <button type="button" onClick={() => props.onOpenDay?.(g.day)}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#8ab4f8' : '#1565c0', textDecoration: 'underline' }}>{ROSTER_DAY_LABEL[g.day]}</button>
+                      {g.need > 0 && <span style={{ fontSize: 12 }}> あと{g.need}人</span>}
+                    </td>
+                    <td style={td}>{g.places.map(p => <div key={p.label}>{p.label}　{p.times.join('・')}</div>)}</td>
+                    <td style={td}>
+                      {g.candidates.length > 0 ? g.candidates.join('・') : <span style={{ color: subText }}>空いている方がいません</span>}
+                      {g.empty.length > 0 && g.candidates.length > 0 && <div style={{ fontSize: 11, color: red }}>{g.empty.join('・')} は空いている方がいません</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
