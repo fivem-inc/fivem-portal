@@ -511,6 +511,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
     }
     return out;
   }, [data, activeColumns, shownCell, canLesson, inactive, isPoolColumn]);
+  /** 追加必要の言い方（2026-10-22 ユーザー確定）：人数が足りていてレッスンできる人だけ足りないときは「人数はそろっています・…」 */
+  const shortText = (x: { need: number; lessonNeed: number }) => (x.need > 0
+    ? `あと${x.need}人${x.lessonNeed > 0 ? `（うちレッスンできる人 ${x.lessonNeed}人）` : ''}`
+    : `人数はそろっています・レッスンできる人があと${x.lessonNeed}人`);
 
   // ⚠️（出勤していない・2026-09-22）。
   // 🚨 判定は lib/kidsShift.ts の kidsCellIssues（中身は ④掃除担当表・③勉強会と同じ shiftTimeIssue）。
@@ -2326,12 +2330,46 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       {isAdult && viewMode === 'day' && adultGrid()}
       {!isAdult && viewMode === 'day' && (<>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
-        {KIDS_WEEK.map(d => (
-          <button key={d} type="button" style={toggle(day === d)} onClick={() => { setDay(d); setOpenKey(null); }}>
-            {ROSTER_DAY_LABEL[d]}
-          </button>
-        ))}
+        {KIDS_WEEK.map(d => {
+          // 曜日の横にその曜日の追加必要の件数（2026-10-22 ユーザー確定）
+          const n = shortfalls.filter(x => x.day === d).length;
+          return (
+            <button key={d} type="button" style={toggle(day === d)} onClick={() => { setDay(d); setOpenKey(null); }}
+              title={n > 0 ? `追加必要 ${n}件` : undefined}>
+              {ROSTER_DAY_LABEL[d]}
+              {n > 0 && <span style={{ display: 'inline-block', minWidth: 16, marginLeft: 4, padding: '0 5px', borderRadius: 9, background: '#fff3cd', color: '#856404', border: '1px solid #ffc107', fontSize: 11, fontWeight: 'bold', lineHeight: '16px' }}>{n}</span>}
+            </button>
+          );
+        })}
       </div>
+      {/* 選んだ曜日の追加必要を校ごとに（時刻を押すとそのマスが開く・追加必要が無い曜日は出さない） */}
+      {(() => {
+        const list = shortfalls.filter(x => x.day === day);
+        if (list.length === 0) return null;
+        const groups = activeColumns
+          .map(c => ({ c, items: list.filter(x => x.place.id === c.id).sort((a, b) => (toMin(normTime(a.item.start)) ?? 0) - (toMin(normTime(b.item.start)) ?? 0)) }))
+          .filter(g => g.items.length > 0);
+        return (
+          <div style={{ ...warnCard, marginBottom: 8, textAlign: 'left' }}>
+            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{ROSTER_DAY_LABEL[day]}曜の追加必要 {list.length}件（時刻を押すとそのマスが開きます）</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, max-content) 1fr', gap: '4px 16px', textAlign: 'left', alignItems: 'start' }}>
+              {groups.map(g => (
+                <React.Fragment key={g.c.id}>
+                  <div style={{ fontWeight: 'bold' }}>{g.c.label}</div>
+                  <div>
+                    {g.items.map((x, i) => (
+                      <div key={i}>
+                        <button type="button" style={{ ...linkBtn, fontSize: 13, color: '#856404' }} onClick={() => openCell(x.place.id, x.day)}>{normTime(x.item.start) ? minText(toMin(normTime(x.item.start)) ?? 0) : '時刻なし'}</button>
+                        {'\u3000'}{shortText(x)}
+                      </div>
+                    ))}
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {stale && (
         <div style={{ ...warnCard, marginBottom: 8 }}>
@@ -2517,7 +2555,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
               <button type="button" style={linkBtn} onClick={() => { setDay(s.day); openCell(s.place.id, s.day); }}>
                 {ROSTER_DAY_LABEL[s.day]} {s.place.label} {s.item.start || ''}
               </button>
-              {'\u3000あと '}{s.need} 人{s.lessonNeed > 0 ? `（うちレッスンできる人 ${s.lessonNeed} 人）` : ''}
+              {'\u3000'}{shortText(s)}
             </div>
           ))}
           {shortfalls.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {shortfalls.length - 12} 件</div>}

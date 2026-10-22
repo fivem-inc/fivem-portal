@@ -125,7 +125,7 @@ const ShiftWeekView: React.FC<{
         <button type="button" style={toggle(sort === 'remain')} onClick={() => setSort('remain')}>目標まで（余裕のある順）</button>
         {isPlan && (
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <button type="button" style={primaryBtn()} onClick={() => { setBulk(true); setMsg(''); setErr(''); }}>まとめて変える</button>
+            <button type="button" style={{ ...primaryBtn(), padding: '6px 16px', fontSize: 13 }} onClick={() => { setBulk(true); setMsg(''); setErr(''); }}>まとめて変える</button>
           </span>
         )}
       </div>
@@ -237,7 +237,7 @@ const ShiftWeekView: React.FC<{
                     <option value="">入社した方を選ぶ</option>
                     {staffOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
-                  <button type="button" style={primaryBtn({ disabled: busy || !assign.userId })} disabled={busy || !assign.userId}
+                  <button type="button" style={{ ...primaryBtn({ disabled: busy || !assign.userId }), padding: '4px 12px', fontSize: 12.5 }} disabled={busy || !assign.userId}
                     onClick={() => void run(() => props.onAssignTemp(t.id, assign.userId), `${t.label}を置き換えました（この案のマスと前提）`).then(() => setAssign(null))}>置き換える</button>
                   <button type="button" style={{ background: 'none', border: 'none', color: subText, textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }} onClick={() => setAssign(null)}>やめる</button>
                 </>
