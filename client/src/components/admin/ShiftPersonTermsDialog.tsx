@@ -202,6 +202,11 @@ const ShiftPersonTermsDialog: React.FC<{
                       {ds.change === 'new' && `勤務表に無い日です（担当の前後で数えています${auto.start != null ? `：${minText(auto.start)}〜${auto.end != null ? minText(auto.end) : ''}` : ''}）`}
                     </div>
                   )}
+                  {ds.studyOnly && (
+                    <div style={{ fontSize: 12, color: isDarkMode ? '#ffe08a' : '#856404', marginTop: 3, paddingLeft: 28 }}>
+                      勉強会あり（{ds.studyOnly.map(x => `${minText(x.s)}〜${minText(x.e)}`).join('・')}）。この案では休みとして数えています（勉強会は勤務が決まってから組み直します）
+                    </div>
+                  )}
                   {sg && (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4, paddingLeft: 28 }}>
                       <span style={{ fontSize: 12.5, color: red }}>

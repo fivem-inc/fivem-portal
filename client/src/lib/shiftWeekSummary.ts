@@ -44,6 +44,11 @@ export interface DayInput {
    * off＝担当が無くなった（休み）／new＝勤務表に無い日に担当が入った（担当の前後で数える）／null＝比べない（仮の人・勤務表の無い方）
    */
   base?: PlanDayBase;
+  /**
+   * 案：勉強会だけが残った日の勉強会の時間（2026-10-22 ユーザー確定 案A：シフト優先。勉強会は勤務が決まってから組み直すので、休みとして数える）。
+   * spans には入れない（＝出勤に数えない）。画面で「勉強会あり」と黄色で添えるだけ
+   */
+  studyOnly?: Span[];
 }
 
 export type PlanDayBase = 'same' | 'changed' | 'off' | 'new' | null;
@@ -71,6 +76,8 @@ export interface DaySummary {
   suggest: { fromStart: number; fromEnd: number; start: number; end: number } | null;
   /** その日の勤務表の時間帯（人ごとの窓で「勤務表 9:00〜18:00」と出す）。null＝勤務表に無い・休み */
   roster: Span[] | null;
+  /** 案：勉強会だけが残った日の勉強会の時間（休みとして数えている）。無ければ null */
+  studyOnly: Span[] | null;
 }
 
 export interface WeekSummary {
@@ -194,6 +201,7 @@ export function daySummary(mode: 'decided' | 'plan', day: DayInput, set: WeekSet
     change: mode === 'plan' && day.base && day.base !== 'same' ? day.base : null,
     suggest: mode === 'plan' ? suggestOf(day, set) : null,
     roster: day.roster,
+    studyOnly: mode === 'plan' && day.studyOnly && day.studyOnly.length > 0 ? day.studyOnly : null,
   };
 }
 

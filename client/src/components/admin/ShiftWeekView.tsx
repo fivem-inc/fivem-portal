@@ -44,6 +44,9 @@ export interface WeekSuggestion {
 
 export interface WeekTemp { id: string; label: string; note: string | null; count: number }
 
+/** 時刻（分）→「14:50」 */
+const hmClock = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+
 const ShiftWeekView: React.FC<{
   isDarkMode: boolean;
   isPlan: boolean;
@@ -186,6 +189,11 @@ const ShiftWeekView: React.FC<{
                     {s.offMismatch && <div style={{ fontSize: 11 }}>{mismatchText(s)}</div>}
                     {days && <div style={{ fontSize: 11, ...(s.offMismatch ? { color: warnText, background: warnBg, borderRadius: 4, padding: '0 4px', marginTop: 2 } : {}) }}>1日の目安（{s.dailyTarget != null ? hm(s.dailyTarget) : ''}）を超える日：{days}</div>}
                     {WEEK_DAYS.some(d => s.days[d].timeless) && <div style={{ fontSize: 11, color: subText }}>時刻の無い日：{WEEK_DAYS.filter(d => s.days[d].timeless).map(d => ROSTER_DAY_LABEL[d]).join('・')}（0時間で数えています）</div>}
+                    {WEEK_DAYS.some(d => s.days[d].studyOnly) && (
+                      <div style={{ fontSize: 11, color: warnText, background: warnBg, borderRadius: 4, padding: '0 4px', marginTop: 2 }}>
+                        勉強会あり：{WEEK_DAYS.filter(d => s.days[d].studyOnly).map(d => `${ROSTER_DAY_LABEL[d]}（${s.days[d].studyOnly!.map(x => `${hmClock(x.s)}〜${hmClock(x.e)}`).join('・')}）`).join('・')}（休みとして数えています）
+                      </div>
+                    )}
                     {WEEK_DAYS.some(d => s.days[d].change) && (
                       <div style={{ fontSize: 11, color: red, fontWeight: 'bold' }}>
                         変わった日：{WEEK_DAYS.filter(d => s.days[d].change).map(d => `${ROSTER_DAY_LABEL[d]}（${CHANGE_LABEL[s.days[d].change!]}${s.days[d].suggest ? '・時刻を確認' : ''}）`).join('・')}

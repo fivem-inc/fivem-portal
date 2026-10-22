@@ -737,7 +737,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       for (const x of perDay) {
         const own = x.own.get(k);
         const oth = x.oth.get(k);
-        const spans = [...(own?.spans ?? []), ...(oth?.spans ?? []), ...(x.study.get(k) ?? [])];
+        const studySpans = x.study.get(k) ?? [];
+        // 案で勉強会だけが残った日は休みとして数える（2026-10-22 ユーザー確定 案A：シフト優先・勉強会は勤務が決まってから組み直す）
+        const studyOnly = mode === 'plan' && !own?.spans.length && !oth?.spans.length && !own?.timeless && !oth?.timeless && studySpans.length > 0;
+        const spans = studyOnly ? [] : [...(own?.spans ?? []), ...(oth?.spans ?? []), ...studySpans];
         const td = tDays.find(y => y.day_kind === x.d);
         const office = (td?.office ?? []).map(o => ({ s: toMin(o.start) ?? 0, e: toMin(o.end) ?? 0 })).filter(o => o.e > o.s);
         const rd = rosterDay(x.d);
@@ -759,6 +762,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           endAt: td?.end ? toMin(td.end) : null,
           roster: rd ? rd.segments.map(g => ({ s: toMin(normTime(g.start)) ?? 0, e: toMin(normTime(g.end)) ?? 0 })) : null,
           base,
+          studyOnly: studyOnly ? studySpans.map(x => ({ s: x.s, e: x.e })) : undefined,
         };
         inputs[x.d] = input;
         const ab = planBlocks({ ...input, startAt: null, endAt: null }, set);
