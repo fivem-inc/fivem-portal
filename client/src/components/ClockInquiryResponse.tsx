@@ -38,6 +38,8 @@ interface DayRow {
   ask_side: AskSide | null;
   answer: InquiryAnswer;
   answer_reason: string | null; answer_note: string | null;
+  /** 経理がその日に書いたひとこと（2026-10-22） */
+  ask_note?: string | null;
   result_report_id: string | null;
   report_state: DayStateRow['state'] | null;
   answer_segments: { start_min: number; end_min: number }[] | null;
@@ -501,6 +503,12 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             {canRespond && (
               <div style={{ background: bandStyle.bg, color: bandStyle.fg, borderRadius: 6, padding: '5px 8px', fontSize: 12, fontWeight: 'bold', marginBottom: 6, lineHeight: 1.5 }}>
                 {band.text}
+              </div>
+            )}
+            {/* 経理からその日のひとこと（2026-10-22 経理担当の意見：日ごとに書けるように） */}
+            {d.ask_note && (
+              <div style={{ background: '#e8f4fd', borderLeft: '3px solid #1976d2', padding: '5px 10px', fontSize: 12.5, color: '#0c447c', marginBottom: 6, lineHeight: 1.6 }}>
+                経理から：{d.ask_note}
               </div>
             )}
             {/* 見比べるための枠：シフト・出している申請・打刻（固定色） */}

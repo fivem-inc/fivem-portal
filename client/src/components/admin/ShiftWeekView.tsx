@@ -108,6 +108,13 @@ const ShiftWeekView: React.FC<{
   const td: React.CSSProperties = { padding: '6px 6px', fontSize: 12.5, color: text, verticalAlign: 'top', borderTop: `1px solid ${borderColor}` };
 
   const totalShort = WEEK_DAYS.reduce((a, d) => a + shortByDay[d], 0);
+  // 案の前提（週休）とシフトの出勤日数が合っていない方（2026-10-22 ユーザー確定：赤で出す・シフトは自動では変えない）
+  const mismatchCount = isPlan ? rows.filter(r => r.summary.offMismatch).length : 0;
+  const redBg = isDarkMode ? '#4a1f1f' : '#fdecec';
+  const mismatchText = (s: WeekSummary) => {
+    const t = s.offTarget ?? 0;
+    return s.offDays < t ? `前提は週休${t}。あと${t - s.offDays}日、休みの日が要ります` : `前提は週休${t}。${s.offDays - t}日多く休んでいます`;
+  };
   const maxShort = Math.max(...WEEK_DAYS.map(d => shortByDay[d]));
 
   return (
@@ -130,6 +137,11 @@ const ShiftWeekView: React.FC<{
         )}
       </div>
 
+      {mismatchCount > 0 && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, background: redBg, border: `1px solid ${red}`, color: red, fontSize: 13, marginBottom: 8 }}>
+          前提とシフトが合っていない方 <b>{mismatchCount}人</b>（週休の前提と、シフトの出勤日数が違います）。シフトは自動では変えません。案の中でマスを直すと消えます。
+        </div>
+      )}
       {msg && <div style={{ padding: '6px 10px', borderRadius: 8, background: '#d4edda', color: '#155724', fontSize: 13, marginBottom: 8 }}>{msg}</div>}
       {err && <div style={{ color: red, fontSize: 13, marginBottom: 8 }}>{err}</div>}
 
@@ -169,10 +181,10 @@ const ShiftWeekView: React.FC<{
                     <div style={{ fontSize: 11, color: subText }}>こども {hm(s.lessonKids)}・大人 {hm(s.lessonAdult)}</div>
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{hm(s.otherMin)}</td>
-                  <td style={{ ...td, ...(s.offMismatch || days ? { background: warnBg, color: warnText } : {}) }}>
-                    {s.workDays}日（週休{s.offDays}）
-                    {s.offMismatch && <div style={{ fontSize: 11 }}>前提は週休{s.offTarget}。{s.offDays > (s.offTarget ?? 0) ? `あと${s.offDays - (s.offTarget ?? 0)}日出勤` : `${(s.offTarget ?? 0) - s.offDays}日多く出勤`}</div>}
-                    {days && <div style={{ fontSize: 11 }}>1日の目安（{s.dailyTarget != null ? hm(s.dailyTarget) : ''}）を超える日：{days}</div>}
+                  <td style={{ ...td, ...(s.offMismatch ? { background: redBg, color: red } : days ? { background: warnBg, color: warnText } : {}) }}>
+                    <span style={s.offMismatch ? { fontWeight: 'bold' } : undefined}>{s.workDays}日（週休{s.offDays}）</span>
+                    {s.offMismatch && <div style={{ fontSize: 11 }}>{mismatchText(s)}</div>}
+                    {days && <div style={{ fontSize: 11, ...(s.offMismatch ? { color: warnText, background: warnBg, borderRadius: 4, padding: '0 4px', marginTop: 2 } : {}) }}>1日の目安（{s.dailyTarget != null ? hm(s.dailyTarget) : ''}）を超える日：{days}</div>}
                     {WEEK_DAYS.some(d => s.days[d].timeless) && <div style={{ fontSize: 11, color: subText }}>時刻の無い日：{WEEK_DAYS.filter(d => s.days[d].timeless).map(d => ROSTER_DAY_LABEL[d]).join('・')}（0時間で数えています）</div>}
                     {WEEK_DAYS.some(d => s.days[d].change) && (
                       <div style={{ fontSize: 11, color: red, fontWeight: 'bold' }}>

@@ -37,6 +37,8 @@ interface DayInput {
   work_date: string; clock_in: string; clock_out: string; ask_side: AskSide | null;
   /** 2組目の打刻（外出・戻りなど・2026-10-13）。two＝2組目の欄を出しているか */
   two: boolean; clock_in2: string; clock_out2: string;
+  /** その日のひとこと（任意・200字まで・2026-10-22 経理担当の意見）。本人の回答画面でその日の下に出す */
+  note: string;
 }
 interface InquiryDay {
   id: string; work_date: string; shift_start: string | null; shift_end: string | null;
@@ -51,6 +53,8 @@ interface InquiryDay {
   resolved_kind: 'edited' | 'cancelled' | 'kept' | null;
   ask_side: AskSide | null;
   resolved_at: string | null; resolved_by: string | null; resolved_note: string | null;
+  /** 送るときに書いたその日のひとこと（2026-10-22） */
+  ask_note?: string | null;
 }
 /** 答えの一覧で出す申請の中身（いまの状態） */
 interface ReportBrief {
@@ -261,7 +265,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     if (!newDate) return;
     if (rows.some(r => r.work_date === newDate)) { setErr('その日はすでに追加されています'); return; }
     setErr('');
-    setRows(prev => [...prev, { work_date: newDate, clock_in: '', clock_out: '', ask_side: null, two: false, clock_in2: '', clock_out2: '' }].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)));
+    setRows(prev => [...prev, { work_date: newDate, clock_in: '', clock_out: '', ask_side: null, two: false, clock_in2: '', clock_out2: '', note: '' }].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)));
     setNewDate('');
   };
 
@@ -309,6 +313,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
           clock_in2: r.two ? (r.clock_in2 || null) : null,
           clock_out2: r.two ? (r.clock_out2 || null) : null,
           ask_side: askSideOf(r, ns),
+          note: r.note.trim() || null,
         };
       });
       const { data: inqId, error } = await supabase.rpc('send_overtime_clock_inquiry', {
@@ -439,7 +444,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
     closeOp();
     setTargetId(i.user_id);
     setRows([{ work_date: d.work_date, clock_in: d.clock_in ? d.clock_in.slice(0, 5) : '', clock_out: d.clock_out ? d.clock_out.slice(0, 5) : '', ask_side: d.ask_side ?? null,
-      two: !!(d.clock_in2 || d.clock_out2), clock_in2: d.clock_in2 ? d.clock_in2.slice(0, 5) : '', clock_out2: d.clock_out2 ? d.clock_out2.slice(0, 5) : '' }]);
+      two: !!(d.clock_in2 || d.clock_out2), clock_in2: d.clock_in2 ? d.clock_in2.slice(0, 5) : '', clock_out2: d.clock_out2 ? d.clock_out2.slice(0, 5) : '', note: d.ask_note ?? '' }]);
     setReask([{ dayId: d.id, userId: i.user_id, workDate: d.work_date }]);
     setConfirming(false); setErr('');
     sendRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -534,6 +539,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                   <th style={{ padding: '6px 8px', textAlign: 'left', color: subText, whiteSpace: 'nowrap' }}>通常シフト</th>
                   <th style={{ padding: '6px 8px', textAlign: 'left', color: subText, whiteSpace: 'nowrap' }}>出勤打刻</th>
                   <th style={{ padding: '6px 8px', textAlign: 'left', color: subText, whiteSpace: 'nowrap' }}>退勤打刻</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'left', color: subText, whiteSpace: 'nowrap' }}>この日のひとこと（任意）</th>
                   <th style={{ padding: '6px 8px' }}></th>
                 </tr>
               </thead>
@@ -609,6 +615,12 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                           style={{ display: 'block', marginTop: 4, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11.5, color: r.two ? subText : (isDark ? '#8ec5f0' : '#1565c0'), textDecoration: 'underline', whiteSpace: 'nowrap' }}>
                           {r.two ? '2組目を外す ✕' : '＋ 打刻を追加（外出・戻りなど）'}
                         </button>
+                      </td>
+                      <td style={{ padding: '6px 8px', minWidth: 180 }}>
+                        {/* その日のひとこと（2026-10-22）：本人の回答画面で、その日の下に「経理から：…」と出る。全体の一言は下の欄 */}
+                        <textarea value={r.note} rows={2} maxLength={200} placeholder="例：退勤が1時間遅いです。残業でしたか？"
+                          onChange={e => setRows(prev => prev.map((p, j) => j === i ? { ...p, note: e.target.value } : p))}
+                          style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical', fontSize: 12.5 }} />
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                         {/* ✕ を使う（🚫 は環境によって□に化ける） */}
@@ -775,6 +787,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                       <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>本人が入れた<br />正しい時間</span>
                         <span style={{ fontWeight: 'bold', color: isDark ? '#8ec5f0' : '#0c447c' }}>{segmentsText(ansSegs)}（{signedText(ansDiff)}）</span></div>
                     )}
+                    {d.ask_note && <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>送ったひとこと</span><span>{d.ask_note}</span></div>}
                     <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>打刻</span><span>{clockText(d)}{d.ask_side && d.ask_side !== 'after' ? `（聞いたこと：${ASK_SIDE_LABEL[d.ask_side]}）` : ''}</span></div>
                     {d.answer_note && <div style={{ display: 'flex', gap: 6 }}><span style={rowLabel}>ひとこと</span><span>{d.answer_note}</span></div>}
                     {d.answer === 'not_worked' && !d.result_report_id && <div style={{ color: '#b45309', marginTop: 2 }}>※ 打刻ズレの記録が未作成です（本人の画面で作れなかった）</div>}
