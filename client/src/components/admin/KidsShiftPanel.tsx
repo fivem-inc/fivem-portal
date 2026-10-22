@@ -92,6 +92,10 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
   const [personSort, setPersonSort] = useState<'roster' | 'role'>('roster');
   const [personQuery, setPersonQuery] = useState('');
   const [personOwnOnly, setPersonOwnOnly] = useState(false);
+  // 週のまとめの［この方の週を見る］で開いたとき：その方だけ（ID で絞る・同じ名字の人を混ぜない・2026-10-22）
+  const [personOnlyId, setPersonOnlyId] = useState<string | null>(null);
+  // 週のまとめの並び（曜日で見る・人ごとに見ると行き来しても戻らないように・2026-10-22）
+  const [weekSort, setWeekSort] = useState<'list' | 'remain'>('list');
   const roles = useRoles();
   // 勉強会（2026-10-07）。勉強会の表から自動で出す（ここでは直せない）。🚨 読めなくても表は使える（共通の人から勉強会の時間を外せないだけ）
   const [studyVersions, setStudyVersions] = useState<StudyVersion[]>([]);
@@ -797,11 +801,20 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
         compareWith === 'decided' || !data ? null : (pid, d) => cellVersionOn(data.cells, pid, d, p?.apply_from ?? applyFrom)?.items ?? []),
     };
   }, [viewMode, compareWith, compareErr, data, weekRowsOf, compareCell, compareTerms, applyFrom]);
+  /** 共通の人で回すクラスの不足（曜日ごとの人数と、下の追加必要の一覧で同じものを使う） */
+  const poolShorts = useMemo(() => KIDS_WEEK.flatMap(d => poolPlaces.flatMap(pp => {
+    const ctx = poolCtxOf(d, pp);
+    return bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem)
+      .map(b => ({ d, pp, b, r: poolRowOfBand(b, ctx) }))
+      .filter(x => x.r.show && x.r.common.length < x.r.need);
+  })), [poolPlaces, poolCtxOf, activeColumns, shownCell, isClassItem]);
+  /** 曜日ごとの足りない人数（あと◯人）。共通の人の不足も入れる（2026-10-22：曜日のボタンと週のまとめを同じ数え方に） */
   const shortByDay = useMemo(() => {
     const m = Object.fromEntries(KIDS_WEEK.map(d => [d, 0])) as Record<RosterDayKind, number>;
     for (const s of shortfalls) m[s.day] += s.need;
+    for (const x of poolShorts) m[x.d] += x.r.need - x.r.common.length;
     return m;
-  }, [shortfalls]);
+  }, [shortfalls, poolShorts]);
   /** あとどこに入れるとよいか：足りないマスと、その時間が空いていて「目標まで」が残っている方 */
   const weekSuggestions = useMemo<WeekSuggestion[]>(() => {
     if (viewMode !== 'week') return [];
@@ -1672,10 +1685,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
       if (personArea === 'none' ? aid !== '' : personArea !== 'all' && aid !== personArea) return false;
       if (personOwnOnly && !inThisBoard(p.id)) return false;
       if (leaveWk(p.id).state === 'all') return false;
+      if (personOnlyId && p.id !== personOnlyId) return false;
       if (q && !normalizeForSearch(`${nameOf(p.id)} ${p.name}`).replace(/\s/g, '').includes(q.replace(/\s/g, ''))) return false;
       return true;
     });
-    const filtered = personArea !== 'all' || personOwnOnly || q !== '';
+    const filtered = personArea !== 'all' || personOwnOnly || q !== '' || !!personOnlyId;
     const bar = (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1699,9 +1713,16 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           <span style={{ fontSize: 12, color: subText }}>{all.length}人中 {people.length}人</span>
           {filtered && (
             <button type="button" style={{ ...toggle(false), fontSize: 12 }}
-              onClick={() => { setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); }}>絞り込みを外す</button>
+              onClick={() => { setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); setPersonOnlyId(null); }}>絞り込みを外す</button>
           )}
         </div>
+        {personOnlyId && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: text }}>
+            <span>{nameOf(personOnlyId)}さんだけを表示しています</span>
+            <button type="button" style={{ ...toggle(false), fontSize: 12 }} onClick={() => setPersonOnlyId(null)}>全員に戻す</button>
+            <button type="button" style={{ ...toggle(false), fontSize: 12 }} onClick={() => setViewMode('week')}>週のまとめに戻る</button>
+          </div>
+        )}
       </div>
     );
     if (people.length === 0) return (<>{bar}<p style={{ color: subText, fontSize: 13 }}>当てはまる人がいません。絞り込みを変えてください</p></>);
@@ -2317,7 +2338,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
         <button type="button" style={toggle(viewMode === 'week')} onClick={() => { setViewMode('week'); setOpenKey(null); }}>週のまとめ</button>
         {viewMode === 'person' && <span style={{ fontSize: 12, color: subText }}>見るだけです。マスを押すと、その曜日の表のマスが開きます。{otherName}の分は薄い字で並べます</span>}
       </div>}
-      {viewMode === 'person' && personTable()}
+      {viewMode === 'person' && <div id="kids-person-view" style={{ scrollMarginTop: 80 }}>{personTable()}</div>}
       {viewMode === 'week' && termsErr && <div style={{ color: red, fontSize: 13, marginBottom: 6 }}>{termsErr}</div>}
       {viewMode === 'week' && (
         <ShiftWeekView isDarkMode={isDarkMode} isPlan={!!plan} boardName={boardName} rows={weekRows}
@@ -2329,19 +2350,26 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
           roles={rolesByRank(roles).map(r => ({ id: r.id, name: r.name }))}
           planName={plan?.name ?? ''} canNewPlan={openPlans.length < data.settings.plan_limit}
           onSavePlanPerson={weekSavePerson} onSaveTarget={weekSaveTarget} onBulkApply={weekBulk} onBulkApplyAsNew={weekBulkAsNew}
-          onCreateTemp={weekCreateTemp} onAssignTemp={weekAssignTemp} onDeleteTemp={weekDeleteTemp} />
+          onCreateTemp={weekCreateTemp} onAssignTemp={weekAssignTemp} onDeleteTemp={weekDeleteTemp}
+          sort={weekSort} onSort={setWeekSort}
+          onShowPerson={key => { setPersonOnlyId(key); setPersonArea('all'); setPersonOwnOnly(false); setPersonQuery(''); setViewMode('person'); setOpenKey(null);
+            // 押したら、その方の表まで画面を動かす（画面の上のほうに戻らないように）
+            setTimeout(() => document.getElementById('kids-person-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
       )}
       {isAdult && viewMode === 'day' && adultGrid()}
       {!isAdult && viewMode === 'day' && (<>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
         {KIDS_WEEK.map(d => {
-          // 曜日の横にその曜日の追加必要の件数（2026-10-22 ユーザー確定）
-          const n = shortfalls.filter(x => x.day === d).length;
+          // 曜日の横にその曜日の追加必要（2026-10-22：週のまとめと同じ「あと◯人」。人数はそろっていてレッスンできる人だけ足りないマスは「レ◯」）
+          const n = shortByDay[d];
+          const les = shortfalls.filter(x => x.day === d && x.need === 0).reduce((a, x) => a + x.lessonNeed, 0);
+          const label = n > 0 ? `あと${n}人` : les > 0 ? `レ${les}` : '';
+          const tip = [n > 0 ? `追加必要 あと${n}人` : '', les > 0 ? `人数はそろっていて、レッスンできる人があと${les}人` : ''].filter(Boolean).join('／');
           return (
             <button key={d} type="button" style={toggle(day === d)} onClick={() => { setDay(d); setOpenKey(null); }}
-              title={n > 0 ? `追加必要 ${n}件` : undefined}>
+              title={tip || undefined}>
               {ROSTER_DAY_LABEL[d]}
-              {n > 0 && <span style={{ display: 'inline-block', minWidth: 16, marginLeft: 4, padding: '0 5px', borderRadius: 9, background: '#fff3cd', color: '#856404', border: '1px solid #ffc107', fontSize: 11, fontWeight: 'bold', lineHeight: '16px' }}>{n}</span>}
+              {label && <span style={{ display: 'inline-block', minWidth: 16, marginLeft: 4, padding: '0 5px', borderRadius: 9, background: '#fff3cd', color: '#856404', border: '1px solid #ffc107', fontSize: 11, fontWeight: 'bold', lineHeight: '16px' }}>{label}</span>}
             </button>
           );
         })}
@@ -2563,12 +2591,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
             </div>
           ))}
           {shortfalls.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {shortfalls.length - 12} 件</div>}
-          {KIDS_WEEK.flatMap(d => poolPlaces.flatMap(pp => {
-            const ctx = poolCtxOf(d, pp);
-            return bandsOfDay(activeColumns.map(c => ({ placeId: c.id, items: shownCell(c.id, d) })), isClassItem)
-              .map(b => ({ d, pp, b, r: poolRowOfBand(b, ctx) }))
-              .filter(x => x.r.show && x.r.common.length < x.r.need);
-          })).map((x, i) => (
+          {poolShorts.map((x, i) => (
             <div key={`pool${i}`} style={{ fontSize: 12.5, color: text, marginTop: 3 }}>
               <button type="button" style={linkBtn} onClick={() => { setDay(x.d); openCell(x.pp.id, x.d); }}>
                 {ROSTER_DAY_LABEL[x.d]} {x.pp.school} 共通 {x.b.label}

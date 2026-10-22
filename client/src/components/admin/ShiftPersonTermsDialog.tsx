@@ -125,6 +125,10 @@ const ShiftPersonTermsDialog: React.FC<{
             {[1, 2, 3].map(n => <button key={n} type="button" style={chip(effOff === n)} onClick={() => setOff(n)}>{n}日</button>)}
             {off != null && <button type="button" style={{ background: 'none', border: 'none', color: subText, fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }} onClick={() => setOff(null)}>↩ 勤務表どおりに戻す</button>}
           </div>
+          {/* 前提を変えるだけで赤が消える件（2026-10-22 2体のレビュー） */}
+          <div style={{ marginTop: 6, fontSize: 12, color: isDarkMode ? '#ffe08a' : '#856404', background: isDarkMode ? '#4d3d00' : '#fff3cd', borderRadius: 6, padding: '4px 8px' }}>
+            シフトに合わせて前提を変えると赤は消えます。休みを増やすときは、曜日で見るのマスを直してください。
+          </div>
         </div>
       )}
 

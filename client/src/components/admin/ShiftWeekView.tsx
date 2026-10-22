@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { primaryBtn, tintBtn, TOGGLE_BLUE } from '../../lib/buttonStyles';
 import { ROSTER_DAY_LABEL, type RosterDayKind } from '../../lib/shiftRoster';
-import { CHANGE_LABEL, WEEK_DAYS, hm, remainText, type WeekSummary } from '../../lib/shiftWeekSummary';
+import { WEEK_DAYS, hm, remainText, type WeekSummary } from '../../lib/shiftWeekSummary';
 import type { KidsPlanPerson, KidsPlanPersonDay } from '../../lib/kidsShift';
 import ShiftPersonTermsDialog from './ShiftPersonTermsDialog';
 import ShiftBulkTermsDialog from './ShiftBulkTermsDialog';
@@ -68,6 +68,11 @@ const ShiftWeekView: React.FC<{
   onCreateTemp: (note: string) => Promise<string | null>;
   onAssignTemp: (tempId: string, userId: string) => Promise<string | null>;
   onDeleteTemp: (tempId: string) => Promise<string | null>;
+  /** 並び（画面を切り替えても戻らないように KidsShiftPanel が持つ・2026-10-22） */
+  sort: 'list' | 'remain';
+  onSort: (s: 'list' | 'remain') => void;
+  /** ［この方の週を見る］→［人ごとに見る］をその方だけで開く（仮の人には出さない） */
+  onShowPerson?: (key: string) => void;
 }> = props => {
   const { isDarkMode, isPlan, boardName, rows, settings, shortByDay, suggestions, temps, staffOptions, compare } = props;
   const text = isDarkMode ? '#f8f9fa' : '#212529';
@@ -77,14 +82,14 @@ const ShiftWeekView: React.FC<{
   const red = isDarkMode ? '#ff8a80' : '#c62828';
   const warnBg = isDarkMode ? '#4d3d00' : '#fff3cd';
   const warnText = isDarkMode ? '#ffe08a' : '#856404';
-  const blue = isDarkMode ? '#8ab4f8' : '#0d6efd';
   const inputStyle: React.CSSProperties = { padding: '5px 7px', borderRadius: 6, border: `1px solid ${borderColor}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13 };
   const toggle = (on: boolean): React.CSSProperties => ({
     padding: '5px 11px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5,
     fontWeight: on ? 'bold' : 'normal', background: on ? TOGGLE_BLUE : (isDarkMode ? '#495057' : '#e9ecef'), color: on ? '#fff' : text,
   });
 
-  const [sort, setSort] = useState<'list' | 'remain'>('list');
+  const { sort, onSort: setSort } = props;
+  const [howOpen, setHowOpen] = useState(false);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [bulk, setBulk] = useState(false);
   const [tempNote, setTempNote] = useState('');
@@ -111,6 +116,14 @@ const ShiftWeekView: React.FC<{
   const td: React.CSSProperties = { padding: '6px 6px', fontSize: 12.5, color: text, verticalAlign: 'top', borderTop: `1px solid ${borderColor}` };
 
   const totalShort = WEEK_DAYS.reduce((a, d) => a + shortByDay[d], 0);
+  const chip = (bg: string, fg: string, border?: string): React.CSSProperties => ({ display: 'inline-block', padding: '0 6px', borderRadius: 6, background: bg, color: fg, fontSize: 11, lineHeight: '18px', ...(border ? { border: `1px solid ${border}` } : {}) });
+  const grayChip = chip(isDarkMode ? '#3a3f44' : '#f1f3f5', isDarkMode ? '#ced4da' : '#495057');
+  const yellowChip = chip(warnBg, warnText);
+  const redChip = chip(isDarkMode ? '#4a1f1f' : '#fdecec', red, red);
+  /** 休みが足りない方の「レッスンの少ない曜日」（出勤の日のうちレッスンの時間が少ない順に2つ・決めるのは人） */
+  const lightDays = (s: WeekSummary) => WEEK_DAYS.filter(d => s.days[d].working)
+    .sort((a, b) => s.days[a].lessonMin - s.days[b].lessonMin).slice(0, 2)
+    .map(d => `${ROSTER_DAY_LABEL[d]}（${s.days[d].lessonMin === 0 ? 'レッスンなし' : hm(s.days[d].lessonMin)}）`).join('・');
   // 案の前提（週休）とシフトの出勤日数が合っていない方（2026-10-22 ユーザー確定：赤で出す・シフトは自動では変えない）
   const mismatchCount = isPlan ? rows.filter(r => r.summary.offMismatch).length : 0;
   const redBg = isDarkMode ? '#4a1f1f' : '#fdecec';
@@ -122,12 +135,19 @@ const ShiftWeekView: React.FC<{
 
   return (
     <div>
-      <div style={{ fontSize: 12.5, color: subText, marginBottom: 8, lineHeight: 1.6 }}>
+      {/* 説明は［計算のしかた ▼］で開く（2026-10-22 2体のレビュー・中身は消さない） */}
+      <div style={{ marginBottom: 6 }}>
+        <button type="button" onClick={() => setHowOpen(v => !v)} aria-expanded={howOpen}
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: subText, textDecoration: 'underline' }}>
+          計算のしかた {howOpen ? '▲' : '▼'}
+        </button>
+      </div>
+      {howOpen && <div style={{ fontSize: 12.5, color: subText, marginBottom: 8, lineHeight: 1.6 }}>
         {isPlan
           ? `勤務時間は今の勤務表の出勤・退勤を元にしています（担当が決定済みの表と同じ日は勤務表のまま）。担当が変わった日・休みになった日・勤務表に無い日は赤で出します。変わった日は、名前を押すと出勤・退勤を変えるか選べます（選ぶまでは勤務表のまま数えます）。勤務表に無い日は、最初の担当の${settings.pre}分前に出勤・最後の担当の${settings.post}分後に退勤で数えます。休憩は会社の決まりで引きます。`
           : '勤務時間は勤務表（いつものシフト）、レッスンの時間はシフト表の担当から出しています。休憩は会社の決まりで引きます。'}
         {' '}名前を押すと{isPlan ? 'その方の働き方' : '週の目標時間'}を直せます。
-      </div>
+      </div>}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
         <span style={{ fontSize: 12.5, color: subText }}>並び：</span>
@@ -171,8 +191,12 @@ const ShiftWeekView: React.FC<{
                     <span style={r.isTemp ? { border: `1px dashed ${subText}`, borderRadius: 4, padding: '0 4px' } : undefined}>{r.name}</span>
                     {r.terms?.keep && <div style={{ fontSize: 11, color: subText, fontWeight: 'normal' }}>（まとめて変えない{r.terms.keep_reason ? `：${r.terms.keep_reason}` : ''}）</div>}
                     {r.roleLabel && <div style={{ fontSize: 11, color: subText, fontWeight: 'normal' }}>{r.roleLabel}</div>}
+                    {!r.isTemp && props.onShowPerson && (
+                      <button type="button" onClick={e => { e.stopPropagation(); props.onShowPerson?.(r.key); }}
+                        style={{ ...tintBtn(isDarkMode), marginTop: 4, padding: '1px 8px', fontSize: 11, fontWeight: 'normal', borderRadius: 6, whiteSpace: 'nowrap' }}>この方の週を見る</button>
+                    )}
                   </td>
-                  <td style={{ ...td, fontWeight: 'bold', color: over ? red : s.remain != null && s.remain > 0 ? blue : text, whiteSpace: 'nowrap' }}>
+                  <td style={{ ...td, fontWeight: 'bold', color: over ? red : text, whiteSpace: 'nowrap' }}>
                     {remainText(s.remain)}
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
@@ -184,21 +208,29 @@ const ShiftWeekView: React.FC<{
                     <div style={{ fontSize: 11, color: subText }}>こども {hm(s.lessonKids)}・大人 {hm(s.lessonAdult)}</div>
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{hm(s.otherMin)}</td>
-                  <td style={{ ...td, ...(s.offMismatch ? { background: redBg, color: red } : days ? { background: warnBg, color: warnText } : {}) }}>
+                  {/* 出勤（週休）。赤は直す所だけ（前提と合っていない・時刻を確認）。ほかは小さな札（黄＝気づき・灰＝案で変えた所）（2026-10-22 2体のレビュー） */}
+                  <td style={{ ...td, ...(s.offMismatch ? { background: redBg, color: red } : {}) }}>
                     <span style={s.offMismatch ? { fontWeight: 'bold' } : undefined}>{s.workDays}日（週休{s.offDays}）</span>
                     {s.offMismatch && <div style={{ fontSize: 11 }}>{mismatchText(s)}</div>}
-                    {days && <div style={{ fontSize: 11, ...(s.offMismatch ? { color: warnText, background: warnBg, borderRadius: 4, padding: '0 4px', marginTop: 2 } : {}) }}>1日の目安（{s.dailyTarget != null ? hm(s.dailyTarget) : ''}）を超える日：{days}</div>}
-                    {WEEK_DAYS.some(d => s.days[d].timeless) && <div style={{ fontSize: 11, color: subText }}>時刻の無い日：{WEEK_DAYS.filter(d => s.days[d].timeless).map(d => ROSTER_DAY_LABEL[d]).join('・')}（0時間で数えています）</div>}
-                    {WEEK_DAYS.some(d => s.days[d].studyOnly) && (
-                      <div style={{ fontSize: 11, color: warnText, background: warnBg, borderRadius: 4, padding: '0 4px', marginTop: 2 }}>
-                        勉強会あり：{WEEK_DAYS.filter(d => s.days[d].studyOnly).map(d => `${ROSTER_DAY_LABEL[d]}（${s.days[d].studyOnly!.map(x => `${hmClock(x.s)}〜${hmClock(x.e)}`).join('・')}）`).join('・')}（休みとして数えています）
-                      </div>
+                    {s.offMismatch && s.offTarget != null && s.offDays < s.offTarget && lightDays(s) && (
+                      <div style={{ fontSize: 11, color: text }}>レッスンの少ない曜日：{lightDays(s)}</div>
                     )}
-                    {WEEK_DAYS.some(d => s.days[d].change) && (
-                      <div style={{ fontSize: 11, color: red, fontWeight: 'bold' }}>
-                        変わった日：{WEEK_DAYS.filter(d => s.days[d].change).map(d => `${ROSTER_DAY_LABEL[d]}（${CHANGE_LABEL[s.days[d].change!]}${s.days[d].suggest ? '・時刻を確認' : ''}）`).join('・')}
-                      </div>
-                    )}
+                    {(() => {
+                      const chips: React.ReactNode[] = [];
+                      for (const d of WEEK_DAYS) {
+                        const ds = s.days[d];
+                        if (ds.change === 'changed' && ds.suggest) chips.push(<span key={`c${d}`} style={redChip}>{ROSTER_DAY_LABEL[d]}：時刻を確認</span>);
+                        else if (ds.change === 'changed') chips.push(<span key={`c${d}`} style={grayChip}>変わった日：{ROSTER_DAY_LABEL[d]}</span>);
+                        else if (ds.change === 'off') chips.push(<span key={`c${d}`} style={grayChip}>変わった日：{ROSTER_DAY_LABEL[d]}（休み）</span>);
+                        else if (ds.change === 'new') chips.push(<span key={`c${d}`} style={grayChip}>勤務表に無い日：{ROSTER_DAY_LABEL[d]}（自動で数えています）</span>);
+                      }
+                      if (days) chips.push(<span key="over" style={yellowChip}>{s.dailyTarget != null ? hm(s.dailyTarget) : ''}を超える日：{days}</span>);
+                      const study = WEEK_DAYS.filter(d => s.days[d].studyOnly);
+                      if (study.length) chips.push(<span key="study" style={yellowChip}>勉強会あり：{study.map(d => `${ROSTER_DAY_LABEL[d]} ${s.days[d].studyOnly!.map(x => `${hmClock(x.s)}〜${hmClock(x.e)}`).join('・')}`).join('・')}（休みとして数えています）</span>);
+                      const tl = WEEK_DAYS.filter(d => s.days[d].timeless);
+                      if (tl.length) chips.push(<span key="tl" style={grayChip}>時刻の無い日：{tl.map(d => ROSTER_DAY_LABEL[d]).join('・')}（0時間）</span>);
+                      return chips.length ? <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 3 }}>{chips}</div> : null;
+                    })()}
                   </td>
                 </tr>
               );
