@@ -15,8 +15,6 @@ export interface StaffLeave {
   user_id: string;
   start_date: string;          // 休職の初日
   return_date: string | null;  // 復職日（戻って最初に出勤する日）。空＝未定
-  board_opt_in: boolean;
-  board_asked_at: string | null;
   push_on: boolean;
   push_asked_at: string | null;
   /** スマホの通知の希望を確かめた・変えた人（本人なら「本人が設定で変更」・2026-10-21） */
@@ -38,7 +36,7 @@ export const LEAVE_REGISTER_OPEN = true;
 
 export type LeaveStatus = 'scheduled' | 'on_leave' | 'ended' | 'cancelled';
 
-const COLS = 'id, user_id, start_date, return_date, board_opt_in, board_asked_at, push_on, push_asked_at, push_asked_by, features_add, features_remove, ended_at, end_reason, cancelled_at, created_at';
+const COLS = 'id, user_id, start_date, return_date, push_on, push_asked_at, push_asked_by, features_add, features_remove, ended_at, end_reason, cancelled_at, created_at';
 
 /** 日本時間の日付 "YYYY-MM-DD"（ended_at の日付を出すため） */
 function jstDate(iso: string): string {
