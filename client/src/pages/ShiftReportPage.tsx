@@ -3,7 +3,8 @@ import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '..
 import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT, isNetworkFailure, timeoutSignal } from '../lib/netFailure';
+import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import { submitOnce } from '../lib/submitOnce';
 import PendingSubmitLine from '../components/PendingSubmitLine';
 import { useRoles } from '../hooks/useRoles';
@@ -1440,12 +1441,25 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       .from('shift_reports')
       .select('*')
       .eq('applicant_id', user.id)
-      .order('work_date', { ascending: false });
-    if (error) { setHistFailed('my', true); return; }
+      .order('work_date', { ascending: false })
+      // 電波が弱いと応答が返らず空のまま待ち続けるので、10秒で打ち切って端末の控えに切り替える（電波 段6）
+      .abortSignal(timeoutSignal(10000));
+    if (error) {
+      // 通信のせいで読めなかったら、端末の控え（スマホ・タブレットだけ・lib/offlineCopy）を出す。前の一覧が出ていればそれを優先
+      const copy = isNetworkFailure(error) ? await loadCopy<ShiftReport[]>(user.id, 'shift_report_own') : null;
+      if (copy && copy.length > 0) {
+        setHistFailed('my', false);
+        setMyReports(prev => (prev.length > 0 ? prev : copy));
+        setOpenPeriods(prev => (prev.size > 0 ? prev : new Set([copy[0].pay_period_start])));
+        return;
+      }
+      setHistFailed('my', true); return;
+    }
     setHistFailed('my', false);
     if (data) {
       setMyReports(data as ShiftReport[]);
       if (data.length > 0) setOpenPeriods(new Set([data[0].pay_period_start]));
+      void saveCopy(user.id, 'shift_report_own', (data as ShiftReport[]).slice(0, 100));
     }
   }, [user.id, setHistFailed]);
 

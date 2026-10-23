@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Submission, PendingApproval, AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { isNetworkFailure, timeoutSignal } from '../lib/netFailure';
+import { saveCopy, loadCopy } from '../lib/offlineCopy';
 
 interface UseExpensesReturn {
   submissions: Submission[];
@@ -27,6 +29,8 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
     let expensesToSet: Submission[] = [];
     let pendingApprovalsToSet: PendingApproval[] = [];
     let failed = false;
+    // 本人の履歴が通信のせいで読めなかったか（このときだけ端末の控えを出す・電波 段6）
+    let netFailedOwn = false;
 
     try {
       if (isAdmin) {
@@ -53,13 +57,18 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
           //    交通費の履歴が1件も出なくなる（＝ホームが空になる）。本人のぶんに email は要らない
           .select('*, profiles!user_id(name)')
           .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          // 電波が弱いと応答が返らず空のまま待ち続けるので、10秒で打ち切って端末の控えに切り替える（電波 段6）
+          .abortSignal(timeoutSignal(10000));
 
         if (myError) {
           console.error('Error fetching your expenses:', myError);
           failed = true;
+          netFailedOwn = isNetworkFailure(myError);
         } else {
           expensesToSet = myData || [];
+          // 端末の控え（スマホ・タブレットだけ・lib/offlineCopy）：本人の分だけ・新しい順に100件まで。🚨 管理者の全員分は控えない
+          void saveCopy(user.id, 'expense_own', expensesToSet.slice(0, 100));
           
           // 一般ユーザーの場合、新しく却下された申請をチェック
           const recentlyRejected = myData?.filter(submission => {
@@ -99,8 +108,12 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
       console.error('Unexpected error fetching expenses:', error);
       failed = true;
     } finally {
-      // 🚨 読めなかったときは前の一覧を残す（空で上書きしない）
-      if (!failed) {
+      // 通信のせいで本人の履歴が読めなかったら、端末の控えを出す（前の一覧が出ていればそれを優先）
+      if (failed && netFailedOwn) {
+        const copy = await loadCopy<Submission[]>(user.id, 'expense_own');
+        if (copy && copy.length > 0) { failed = false; setSubmissions(prev => (prev.length > 0 ? prev : copy)); }
+      } else if (!failed) {
+        // 🚨 読めなかったときは前の一覧を残す（空で上書きしない）
         setSubmissions(expensesToSet);
         setPendingApprovals(pendingApprovalsToSet);
       }

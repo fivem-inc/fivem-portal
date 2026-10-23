@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT, isNetworkFailure, timeoutSignal } from '../lib/netFailure';
+import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import { submitOnce } from '../lib/submitOnce';
 import PendingSubmitLine from './PendingSubmitLine';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
@@ -281,15 +282,24 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
     const { data, error } = await supabase
       .from('business_trip_reports')
       .select('id, user_id, report_type, category, category_other, location, notes, latitude, longitude, address, next_dates, created_at, profiles(name)')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      // 電波が弱いと応答が返らず空のまま待ち続けるので、10秒で打ち切って端末の控えに切り替える（電波 段6）
+      .abortSignal(timeoutSignal(10000));
     if (error) {
+      // 通信のせいで読めなかったら、端末の控え（スマホ・タブレットだけ・lib/offlineCopy）を出す。前の一覧が出ていればそれを優先
+      const copy = isNetworkFailure(error) ? await loadCopy<TripHistoryRow[]>(user.id, 'trip_own') : null;
+      if (copy && copy.length > 0) { setHistoryRows(prev => (prev.length > 0 ? prev : copy)); setHistoryLoading(false); return; }
       setHistoryError('報告を読み込めませんでした。通信状況を確認してもう一度お試しください。');
       setHistoryLoading(false);
       return;
     }
-    setHistoryRows((data ?? []) as unknown as TripHistoryRow[]);
+    const rows = (data ?? []) as unknown as TripHistoryRow[];
+    setHistoryRows(rows);
     setHistoryLoading(false);
-  }, []);
+    // 端末の控え：🚨 本人の分だけ（上長は全員分を読むため）・位置（緯度・経度・住所）は外す・新しい順に100件まで
+    void saveCopy(user.id, 'trip_own', rows.filter(r => r.user_id === user.id).slice(0, 100)
+      .map(r => ({ ...r, latitude: null, longitude: null, address: null })));
+  }, [user.id]);
 
   useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, fetchHistory]);
 

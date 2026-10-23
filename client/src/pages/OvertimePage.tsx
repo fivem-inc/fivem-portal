@@ -8,7 +8,8 @@ import AppRequestCard from '../components/AppRequestCard';
 import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
-import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_SLOW_TEXT } from '../lib/netFailure';
+import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_SLOW_TEXT, timeoutSignal } from '../lib/netFailure';
+import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import LoadFailedNotice from '../components/LoadFailedNotice';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
@@ -3102,11 +3103,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     //    先の期の事前申請が多いと前期・今期の分が欠けるおそれがあった（2026-10-13）→ 範囲で読んで件数で切らない。
     //    管理者は自分の履歴を全期間見られるので、今までどおり新しい順100件
     q = isAdmin ? q.limit(100) : q.gte('pay_period_start', shiftPayPeriod(currentPeriod, -1)).limit(1000);
-    const { data, error } = await q;
+    // 電波が弱いと応答が返らず空のまま待ち続けるので、10秒で打ち切って端末の控えに切り替える（電波 段6）
+    const { data, error } = await q.abortSignal(timeoutSignal(10000));
     // 🚨 英語の文を出さない・読めなかったときに「ありません」と出さない（2026-10-20・電波 段2）
-    if (error) { console.error('[残業] 履歴を読み込めませんでした:', error.message); setLoadError(HISTORY_LOAD_FAILED_TEXT); return; }
+    if (error) {
+      console.error('[残業] 履歴を読み込めませんでした:', error.message);
+      // 通信のせいで読めなかったら、端末の控え（スマホ・タブレットだけ・lib/offlineCopy）を出す。前の一覧が出ていればそれを優先
+      const copy = isNetworkFailure(error) ? await loadCopy<OvertimeReport[]>(user.id, 'overtime_own') : null;
+      if (copy && copy.length > 0) { setLoadError(''); setReports(prev => (prev.length > 0 ? prev : copy)); return; }
+      setLoadError(HISTORY_LOAD_FAILED_TEXT); return;
+    }
     setLoadError('');
     setReports((data as OvertimeReport[] | null) ?? []);
+    // 端末の控え：新しい順に200件まで（前期から先の範囲）
+    void saveCopy(user.id, 'overtime_own', ((data as OvertimeReport[] | null) ?? []).slice(0, 200));
   }, [user.id, isAdmin, currentPeriod]);
 
   const fetchPendingForMe = useCallback(async () => {
