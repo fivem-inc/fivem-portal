@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
+import DeleteReasonDialog from '../DeleteReasonDialog';
+import { deleteApplications } from '../../lib/deleteApplication';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
 import { retireeReturnNote } from '../../lib/retire';
@@ -35,11 +37,32 @@ const ApprovalsTab: React.FC = () => {
     handlePrintSelect, handlePrintPreview, handleSelectAll, handleSelectPendingOnly, handleDeselectAll,
     handleStartEdit, handleCancelEdit, handleSaveEdit, handleUpdateEditingExpense,
     editingSubmissionId, editingExpenses,
-    handleDeleteSubmission, handleExportCsv,
+    handleExportCsv,
     fetchLocationEditor, setShowLocationEditor,
   } = ctx;
+  // ［削除］（理由は必須・消すのは lib/deleteApplication・消した記録は「修正依頼」の「削除の記録」に残る・2026-10-23）。
+  // 🚨 AdminPanelContext の handleDeleteSubmission（「削除」と打つ形・理由なし）はもう使わない（2人共通のファイルなので消さずに置いてある）
+  const [delTarget, setDelTarget] = useState<{ id: string; label: string } | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState<string | null>(null);
+  const doDelete = async (reason: string) => {
+    if (!delTarget) return;
+    setDelBusy(true); setDelErr(null);
+    const res = await deleteApplications('expense', [delTarget.id], reason);
+    setDelBusy(false);
+    if (res.error) { setDelErr(res.error); ctx.onRefresh(); return; }
+    setDelTarget(null);
+    ctx.setSuccessMsg('申請を削除しました');
+    ctx.onRefresh();
+  };
+  const deleteDialog = delTarget && (
+    <DeleteReasonDialog busy={delBusy} error={delErr} detail={delTarget.label}
+      onCancel={() => { if (!delBusy) setDelTarget(null); }}
+      onConfirm={reason => void doDelete(reason)} />
+  );
 
   return (          <div>
+            {deleteDialog}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
               <div style={{ flex: 1 }} />
               <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000' }}>🚃 交通費申請一覧</h3>
@@ -772,7 +795,7 @@ const ApprovalsTab: React.FC = () => {
                                             </button>
                                           )}
                                           <button 
-                                            onClick={() => handleDeleteSubmission(s.id)} 
+                                            onClick={() => { setDelErr(null); setDelTarget({ id: s.id, label: `${s.profiles?.name || s.profiles?.email || '不明'}さん　交通費　申請日 ${toJST(s.created_at)}` }); }} 
                                             style={{ 
                                               marginLeft: 10, 
                                               padding: '8px 12px', 

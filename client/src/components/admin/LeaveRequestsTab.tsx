@@ -16,6 +16,8 @@ import {
 } from '../../lib/attendanceTypes';
 import { describeUpdate, describePartial } from '../../lib/statusUpdate';
 import CorrectionNotice from '../CorrectionNotice';
+import DeleteReasonDialog from '../DeleteReasonDialog';
+import { deleteApplications } from '../../lib/deleteApplication';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import { ApprovedByLines, type ApprovedLine } from './ApprovedByLines';
@@ -117,6 +119,10 @@ const LeaveRequestsTab: React.FC = () => {
   const [rejectNewType, setRejectNewType] = useState('');
   // 共通インライン確認（window.confirm廃止）。shiftChoice＝マネージャー段の代理受理のときだけ「シフト調整」を出す（2026-09-28）
   //   'choose'＝［必要］［調整不要］を選ぶ／'already'＝すでに調整不要（有休奨励日だけの休暇など）なので表示だけ
+  // ［削除］の確認（理由は必須・消した記録は「修正依頼」の「削除の記録」に残る・2026-10-23）
+  const [delTarget, setDelTarget] = useState<AdminLeaveRequest | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; shiftChoice?: 'choose' | 'already' } | null>(null);
   // 🚨 既定は「必要」。onConfirm は開いた時点の関数なので、選んだ値は ref で読む（受理ページ LeaveApprovals と同じ作り）
   const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
@@ -1139,6 +1145,23 @@ const LeaveRequestsTab: React.FC = () => {
 
           return (
             <div>
+              {delTarget && (
+                <DeleteReasonDialog busy={delBusy} error={delErr}
+                  detail={`${delTarget.profile?.name ?? ''}さん　${delTarget.leave_type === 'その他' ? (delTarget.leave_type_other || 'その他') : delTarget.leave_type}　${formatLeaveDateSummary(delTarget.leave_dates, delTarget.start_date, delTarget.end_date, '')}`}
+                  onCancel={() => { if (!delBusy) setDelTarget(null); }}
+                  onConfirm={async reason => {
+                    // 🚨 消すのは lib/deleteApplication（理由つきで記録が残る）。件数で確かめる（RLS で0件でもエラーにならない）
+                    setDelBusy(true); setDelErr(null);
+                    const res = await deleteApplications('leave', [delTarget.id], reason);
+                    if (res.error) { setDelBusy(false); setDelErr(res.error); fetchLeaveRequests(); return; }
+                    const gcalOk = await deleteLeaveGcal(delTarget.id);
+                    setDelBusy(false); setDelTarget(null);
+                    setSuccessMsg(gcalOk
+                      ? '申請を削除しました'
+                      : '⚠️ 削除しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+                    fetchLeaveRequests();
+                  }} />
+              )}
               {confirmDialogModal}
               {encCreateModal}
               {encConfirmModal}
@@ -1700,24 +1723,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 </div>
                               )}
                               <button
-                                onClick={() => {
-                                  setConfirmDialog({ message: 'この申請を削除します。\n本当に削除しますか？この操作は取り消せません。', onConfirm: async () => {
-                                    // 🚨 削除件数を必ず見る。RLSで0件でもエラーは返らないため、
-                                    // 権限が足りないと「消えたように見えて実は残っている」ことになる
-                                    const { data: deleted, error } = await supabase.from('leave_requests').delete().eq('id', req.id).select('id');
-                                    if (error) { setErrorMsg('削除に失敗しました: ' + error.message); return; }
-                                    if (!deleted || deleted.length === 0) {
-                                      setErrorMsg('削除できませんでした（権限/RLSの可能性）。管理者アカウントでログインしているかご確認ください。');
-                                      fetchLeaveRequests();
-                                      return;
-                                    }
-                                    const gcalOk = await deleteLeaveGcal(req.id);
-                                    setSuccessMsg(gcalOk
-                                      ? '申請を削除しました'
-                                      : '⚠️ 削除しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
-                                    fetchLeaveRequests();
-                                  } });
-                                }}
+                                onClick={() => { setDelErr(null); setDelTarget(req); }}
                                 style={{ padding: '4px 3px', background: 'transparent', color: isDarkMode ? '#888' : '#aaa', border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, borderRadius: 4, cursor: 'pointer', fontSize: 9, writingMode: 'vertical-rl', letterSpacing: 1 }}
                               >削除</button>
                               </div>

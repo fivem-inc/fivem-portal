@@ -49,6 +49,8 @@ import { useAuth } from '../hooks/useAuth';
 import ShiftRegWarn from '../components/ShiftRegWarn';
 import { useRegisteredShifts } from '../hooks/useRegisteredShifts';
 import LoadFailedNotice from '../components/LoadFailedNotice';
+import DeleteReasonDialog from '../components/DeleteReasonDialog';
+import { deleteApplications } from '../lib/deleteApplication';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -1349,7 +1351,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const formAnchorRef                   = useRef<HTMLDivElement>(null);
   const { canShiftReportTodo }          = useAuth();
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
-  const [hardDeleteTargetId, setHardDeleteTargetId] = useState<string | null>(null);
+  // 完全削除（管理者だけ）の確認。理由は必須で、消した記録は管理画面「修正依頼」の「削除の記録」に残る（2026-10-23）
+  const [hardDeleteTarget, setHardDeleteTarget] = useState<ShiftReport | null>(null);
+  const [hardDeleteBusy, setHardDeleteBusy] = useState(false);
+  const [hardDeleteErr, setHardDeleteErr] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   // 確認ページはURLパラメータ(view=confirm)と連動させ、戻るボタンでTOPに戻れるようにする
   const confirmView = searchParams.get('view') === 'confirm';
@@ -1706,17 +1711,16 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     }
   };
 
-  // 完全削除はアプリ規約によりwindow.confirmを使わず、ボタンの2段階インライン確認で行う
-  const hardDeleteReport = async (r: ShiftReport) => {
-    setActionError('');
-    // 🚨 履歴 → 本体 の順に消す。本体を先に消すと、履歴が残ったまま
-    //    一覧から消えて、もう一度押して直すこともできなくなる。
-    const histDel = await supabase.from('shift_report_history').delete().eq('report_id', r.id);
-    if (histDel.error) { setActionError(`履歴を削除できませんでした：${histDel.error.message}`); return; }
-    const bodyDel = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
-    const delFail = describeUpdate(bodyDel, '削除', 'missing');
-    if (delFail) { setActionError(delFail); fetchMyReports(); return; }
-    setHardDeleteTargetId(null);
+  // 完全削除（window.confirm は使わない・理由つきの確認の窓 DeleteReasonDialog）。
+  // 🚨 消すのは lib/deleteApplication。履歴（shift_report_history）は本体の削除で on delete cascade により一緒に消える
+  //    （2026-10-23 に外部キーを確かめた。前は履歴を先に別に消していた）
+  const hardDeleteReport = async (reason: string) => {
+    if (!hardDeleteTarget) return;
+    setActionError(''); setHardDeleteBusy(true); setHardDeleteErr(null);
+    const res = await deleteApplications('shift', [hardDeleteTarget.id], reason);
+    setHardDeleteBusy(false);
+    if (res.error) { setHardDeleteErr(res.error); fetchMyReports(); return; }
+    setHardDeleteTarget(null);
     fetchMyReports(); fetchPending();
     setSuccessMsg('削除しました');
   };
@@ -1760,6 +1764,12 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const modals = (
     <>
       {/* 取り消し理由モーダル */}
+      {hardDeleteTarget && (
+        <DeleteReasonDialog busy={hardDeleteBusy} error={hardDeleteErr}
+          detail={(() => { const nm = (hardDeleteTarget.applicant as { name: string | null } | null)?.name ?? ''; const types = (hardDeleteTarget.application_types?.length ? hardDeleteTarget.application_types : [hardDeleteTarget.application_type]).map(t => TYPE_INFO[t]?.label ?? t).join('＋'); return `${nm ? nm + 'さん　' : ''}${types}　${hardDeleteTarget.work_date}`; })()}
+          onCancel={() => { if (!hardDeleteBusy) setHardDeleteTarget(null); }}
+          onConfirm={reason => void hardDeleteReport(reason)} />
+      )}
       {cancelTarget && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
@@ -2292,19 +2302,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </button>
                             )}
                             {isAdmin && (
-                              hardDeleteTargetId === r.id ? (
-                                <>
-                                  <button onClick={() => hardDeleteReport(r)}
-                                    style={{ fontSize: 11, color: '#fff', background: '#dc3545', border: '1px solid #dc3545', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                    完全削除する（取り消せません）
-                                  </button>
-                                  <button onClick={() => setHardDeleteTargetId(null)}
-                                    style={{ fontSize: 11, color: '#6c757d', background: 'none', border: '1px solid #6c757d', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
-                                    やめる
-                                  </button>
-                                </>
-                              ) : (
-                                <button onClick={() => setHardDeleteTargetId(r.id)}
+                              (
+                                <button onClick={() => { setHardDeleteErr(null); setHardDeleteTarget(r); }}
                                   style={{ fontSize: 11, color: '#6c757d', background: 'none', border: '1px solid #6c757d', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
                                   完全削除
                                 </button>

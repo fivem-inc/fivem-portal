@@ -19,6 +19,8 @@ import ShiftAdjustChoice from '../ShiftAdjustChoice';
 import PartialShiftToggle from '../PartialShiftToggle';
 import { usePartialSlotMap } from '../../hooks/usePartialSlotMap';
 import { isPartialShiftCase, partialCover, partialCoverLabel, PARTIAL_SHIFT_NOTE } from '../../lib/partialShiftAdjust';
+import DeleteReasonDialog from '../DeleteReasonDialog';
+import { deleteApplications } from '../../lib/deleteApplication';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar, typeLabelFor } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 import { describeUpdate } from '../../lib/statusUpdate';
@@ -471,13 +473,14 @@ const OvertimeAdminTab: React.FC = () => {
     fetchOtReports();
   };
 
-  const doOtDelete = async () => {
+  // 🚨 消すのは lib/deleteApplication（理由は必須・消した記録は「修正依頼」の「削除の記録」に残る・2026-10-23）
+  const [otDeleteErr, setOtDeleteErr] = useState<string | null>(null);
+  const doOtDelete = async (reason: string) => {
     if (!otDeleteTarget) return;
-    setOtActing(true);
+    setOtActing(true); setOtDeleteErr(null);
     const targetId = otDeleteTarget.id;
-    const { data: deleted, error } = await supabase.from('overtime_reports').delete().eq('id', targetId).select('id');
-    if (error) { setOtErr('削除に失敗しました：' + error.message); setOtActing(false); return; }
-    if (!deleted || deleted.length === 0) { setOtErr('削除できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
+    const res = await deleteApplications('overtime', [targetId], reason);
+    if (res.error) { setOtDeleteErr(res.error); setOtActing(false); fetchOtReports(); return; }
     // 削除後に同期→レコード無しとしてカレンダーイベントも削除される
     const gcalOk = await syncOvertimeGcal(targetId);
     setOtDeleteTarget(null); setOtActing(false);
@@ -1664,17 +1667,10 @@ const OvertimeAdminTab: React.FC = () => {
 
           {/* 削除確認 */}
           {otDeleteTarget && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 360 }}>
-                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#dc3545', marginBottom: 12 }}>削除の確認</div>
-                <div style={{ fontSize: 13, color: text, marginBottom: 6 }}>{otDeleteTarget.applicantName}　{otDeleteTarget.work_date}　差分{formatSignedMin(otDeleteTarget.diff_minutes ?? 0)}</div>
-                <div style={{ fontSize: 12, color: subText, marginBottom: 16 }}>このレコードを完全に削除します。元に戻せません。</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setOtDeleteTarget(null)} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
-                  <button onClick={doOtDelete} disabled={otActing} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>{otActing ? '削除中...' : '削除する'}</button>
-                </div>
-              </div>
-            </div>
+            <DeleteReasonDialog busy={otActing} error={otDeleteErr}
+              detail={`${otDeleteTarget.applicantName}さん　${(otDeleteTarget.application_types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, otDeleteTarget)).join('・')}　${otDeleteTarget.work_date}　差分${formatSignedMin(otDeleteTarget.diff_minutes ?? 0)}`}
+              onCancel={() => { if (!otActing) { setOtDeleteTarget(null); setOtDeleteErr(null); } }}
+              onConfirm={reason => void doOtDelete(reason)} />
           )}
 
           {/* 取消確認（判子。記録は残る。取消依頼への対応にも使う） */}

@@ -15,6 +15,8 @@ import CorrectionNotice from '../CorrectionNotice';
 import { ApprovedByLines } from './ApprovedByLines';
 import { useLatestCorrections } from '../../lib/correctionNotice';
 import ShiftRegWarn from '../ShiftRegWarn';
+import DeleteReasonDialog from '../DeleteReasonDialog';
+import { deleteApplications } from '../../lib/deleteApplication';
 import { useRegisteredShifts } from '../../hooks/useRegisteredShifts';
 
 type AppType = ShiftAppType;
@@ -315,19 +317,21 @@ const ShiftReportsTab: React.FC = () => {
     fetchReports();
   };
 
-  const handleDelete = (r: ShiftReport) => {
-    setConfirmDialog({ message: `「${r.applicantName}」の報告を完全削除しますか？`, onConfirm: async () => {
-      setActionError('');
-      // 履歴は shift_reports の削除で on delete cascade により自動削除される
-      const { data: deleted, error } = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
-      if (error) { setActionError(`削除に失敗しました：${error.message}`); return; }
-      if (!deleted || deleted.length === 0) {
-        setActionError('削除できませんでした（権限が不足しているか、すでに削除済みです）');
-        return;
-      }
-      setSuccessMsg('削除しました');
-      fetchReports();
-    } });
+  // ［削除］（理由は必須・消すのは lib/deleteApplication・消した記録は「修正依頼」の「削除の記録」に残る・2026-10-23）
+  const [delTarget, setDelTarget] = useState<ShiftReport | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState<string | null>(null);
+  const handleDelete = (r: ShiftReport) => { setActionError(''); setDelErr(null); setDelTarget(r); };
+  const doDelete = async (reason: string) => {
+    if (!delTarget) return;
+    setDelBusy(true); setDelErr(null);
+    // 履歴は shift_reports の削除で on delete cascade により自動削除される
+    const res = await deleteApplications('shift', [delTarget.id], reason);
+    setDelBusy(false);
+    if (res.error) { setDelErr(res.error); fetchReports(); return; }
+    setDelTarget(null);
+    setSuccessMsg('削除しました');
+    fetchReports();
   };
 
   // 論理取消（判子）。status='cancelled' にすると、紐づくopen依頼はトリガーが自動で対応済みにし本人へ通知する。
@@ -460,6 +464,12 @@ const ShiftReportsTab: React.FC = () => {
 
   return (
     <div style={{ background: bg, minHeight: '60vh', padding: '0 0 40px' }}>
+      {delTarget && (
+        <DeleteReasonDialog busy={delBusy} error={delErr}
+          detail={`${delTarget.applicantName ?? ''}さん　${getTypes(delTarget).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${delTarget.work_date}`}
+          onCancel={() => { if (!delBusy) setDelTarget(null); }}
+          onConfirm={reason => void doDelete(reason)} />
+      )}
       {confirmDialog && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
           <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>

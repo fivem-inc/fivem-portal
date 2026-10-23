@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import DeletionLogSection from './DeletionLogSection';
 import { resolveCorrectionRequest, declineCorrectionRequest } from '../../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../../lib/correctionRequest';
 import { isOvertimeType, typeLabelFor } from '../../lib/overtimeTypes';
@@ -308,6 +309,9 @@ const CorrectionRequestsTab: React.FC = () => {
           )}
         </>
       )}
+
+      {/* 削除の記録（2026-10-23）。修正依頼とは別に、［削除］で消した申請の記録を出す */}
+      <DeletionLogSection isDark={isDarkMode} />
     </div>
   );
 };
