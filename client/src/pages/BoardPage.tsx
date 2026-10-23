@@ -2511,7 +2511,7 @@ const BoardPage: React.FC = () => {
             <span style={{ fontSize: 12, color: subColor }}>受け付けていません</span>
           </div>
           <div style={{ marginTop: 8 }}>
-            <button type="button" onClick={() => void enableNoticeReply(notice)}
+            <button data-net="write" type="button" onClick={() => void enableNoticeReply(notice)}
               style={{ padding: '5px 12px', background: cardBg, border: '1.5px solid #2563eb', borderRadius: 20, color: '#2563eb', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
               返信を受け付ける
             </button>
@@ -2576,7 +2576,7 @@ const BoardPage: React.FC = () => {
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <button type="button" disabled={replySending || !(draftFor(g.partnerId) || '').trim()}
+              <button data-net="write" type="button" disabled={replySending || !(draftFor(g.partnerId) || '').trim()}
                 onClick={() => void sendNoticeReply(notice, g.partnerId, draftFor(g.partnerId) || '')}
                 style={{ padding: '6px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: replySending || !(draftFor(g.partnerId) || '').trim() ? 0.5 : 1 }}>
                 {replySending ? '送信中...' : '送信'}
@@ -2713,7 +2713,7 @@ const BoardPage: React.FC = () => {
               {msg.edited_at && <span style={{ fontSize: 10, color: subColor }}>(編集済み)</span>}
             </div>
             <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
+              <button data-net="write" type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
                 title={favMessageIds.has(msg.id) ? 'お気に入り解除' : 'お気に入りに追加'}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
@@ -2723,7 +2723,7 @@ const BoardPage: React.FC = () => {
                      （修正する・取消・削除）は送信者と管理者にしか出ないので、そこに混ぜると
                      人によってボタンの数が変わり、アーカイブの位置まで動いてしまう。 */}
               {archiveBtn && !isReply && (
-                <button type="button" onClick={e => { e.stopPropagation(); archiveBtn.onToggle(); }}
+                <button data-net="write" type="button" onClick={e => { e.stopPropagation(); archiveBtn.onToggle(); }}
                   title={archiveBtn.archived
                     ? (isOutboxView ? '送信トレイに戻す' : '受信トレイに戻す')
                     : 'アーカイブ'}
@@ -2901,7 +2901,7 @@ const BoardPage: React.FC = () => {
                       style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${isAnswerRequired && !answerText.trim() ? '#ef4444' : border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
                     />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <button type="button" disabled={isAnswerRequired && !answerText.trim()} onClick={async () => {
+                      <button data-net="write" type="button" disabled={isAnswerRequired && !answerText.trim()} onClick={async () => {
                         if (!user) return;
                         if (isAnswerRequired && !answerText.trim()) return;
                         const now = new Date().toISOString();
@@ -3081,7 +3081,7 @@ const BoardPage: React.FC = () => {
                 wrapStyle={{ flex: 1, minWidth: 0 }}
                 style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit' }}
               />
-              <button type="button" onClick={() => { if (replyBody.trim()) setShowReplySendConfirm(true); }} disabled={sending || !replyBody.trim()}
+              <button data-net="write" type="button" onClick={() => { if (replyBody.trim()) setShowReplySendConfirm(true); }} disabled={sending || !replyBody.trim()}
                 style={{ padding: '8px 14px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, opacity: sending || !replyBody.trim() ? 0.5 : 1, alignSelf: 'flex-end' }}>
                 送信
               </button>
@@ -3758,7 +3758,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button type="button" onClick={() => setEditingNoticeId(null)}
                     style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button type="button" onClick={() => saveNoticeEdit(inboxDetail.id)}
+                  <button data-net="write" type="button" onClick={() => saveNoticeEdit(inboxDetail.id)}
                     disabled={!editingNoticeSubj.trim() || !editingNoticeBody.trim()}
                     style={{ flex: 1, padding: '8px 0', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
                 </div>
@@ -3782,7 +3782,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button type="button" onClick={() => setDeleteConfirmId(null)}
                     style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button type="button" onClick={() => deleteNotice(inboxDetail.id)}
+                  <button data-net="write" type="button" onClick={() => deleteNotice(inboxDetail.id)}
                     style={{ flex: 1, padding: '8px 0', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>削除する</button>
                 </div>
               </div>
@@ -4006,12 +4006,12 @@ const BoardPage: React.FC = () => {
                       <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
+                      <button data-net="write" type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
                         title={favMessageIds.has(msg.id) ? 'お気に入り解除' : 'お気に入りに追加'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#666' : '#ccc') }}>
                         {favMessageIds.has(msg.id) ? '★' : '☆'}
                       </button>
-                      <button type="button" onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !isArchived); }}
+                      <button data-net="write" type="button" onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !isArchived); }}
                         title={isArchived ? '受信トレイに戻す' : 'アーカイブ'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}>
                         {isArchived ? <UnarchiveIcon size={14} /> : <ArchiveIcon size={14} />}
@@ -4350,7 +4350,7 @@ const BoardPage: React.FC = () => {
               </button>
             )}
           </div>
-          <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}
+          <button data-net="write" type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}
             disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || sending}
             style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
             {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
@@ -4451,7 +4451,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button type="button" onClick={() => setEditingNoticeId(null)}
                     style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button type="button" onClick={() => saveNoticeEdit(outboxDetail.id)}
+                  <button data-net="write" type="button" onClick={() => saveNoticeEdit(outboxDetail.id)}
                     disabled={!editingNoticeSubj.trim() || !editingNoticeBody.trim()}
                     style={{ flex: 1, padding: '8px 0', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
                 </div>
@@ -4476,7 +4476,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button type="button" onClick={() => setDeleteConfirmId(null)}
                     style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button type="button" onClick={() => deleteNotice(outboxDetail.id)}
+                  <button data-net="write" type="button" onClick={() => deleteNotice(outboxDetail.id)}
                     style={{ flex: 1, padding: '8px 0', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>完全削除する</button>
                 </div>
               </div>
@@ -4638,7 +4638,7 @@ const BoardPage: React.FC = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{msg.id in inboxRecipients ? `${recipientIds.length}人` : '—'}</span>
                           {/* 🚨 処理は unarchiveOutboxMsg 1か所に集約している（開いた中の☆の隣も同じこれを呼ぶ） */}
-                          <button type="button" onClick={e => { e.stopPropagation(); unarchiveOutboxMsg(msg); }}
+                          <button data-net="write" type="button" onClick={e => { e.stopPropagation(); unarchiveOutboxMsg(msg); }}
                           title="送信トレイに戻す"
                           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}>
                             <UnarchiveIcon size={14} />
@@ -4704,7 +4704,7 @@ const BoardPage: React.FC = () => {
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{msg.id in inboxRecipients ? `${recipientIds.length}人` : '—'}</span>
-                          <button type="button"
+                          <button data-net="write" type="button"
                             onClick={e => { e.stopPropagation(); archiveOutboxMsg(msg.id); }}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}
                             title="アーカイブ"><ArchiveIcon size={14} /></button>
@@ -4919,7 +4919,7 @@ const BoardPage: React.FC = () => {
             wrapStyle={{ flex: 1, minWidth: 0 }}
             style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, fontFamily: 'inherit', lineHeight: 1.4 }}
           />
-          <button
+          <button data-net="write"
             type="button"
             onClick={() => { if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}
             disabled={sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) || !!newScheduleProblem}
@@ -5063,7 +5063,7 @@ const BoardPage: React.FC = () => {
                         <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
                         <span style={{ fontSize: 11, color: subColor }}>{fmtFull(msg.created_at)}</span>
                       </div>
-                      <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
+                      <button data-net="write" type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
                     </div>
                     {/* タイトル */}
                     {(msg.subject || msg.title) && (
@@ -5567,7 +5567,7 @@ const BoardPage: React.FC = () => {
                   style={{ ...backBtn(isDark), flex: 1 }}>
                   キャンセル
                 </button>
-                <button type="button" onClick={() => { setShowSendConfirm(false); sendMessage(); }}
+                <button data-net="write" type="button" onClick={() => { setShowSendConfirm(false); sendMessage(); }}
                   style={{ ...primaryBtn(), flex: 2 }}>
                   送信する
                 </button>
@@ -5590,7 +5590,7 @@ const BoardPage: React.FC = () => {
                 style={{ ...backBtn(isDark), flex: 1 }}>
                 キャンセル
               </button>
-              <button type="button" onClick={() => { setShowReplySendConfirm(false); sendMessage(threadMsgId); }}
+              <button data-net="write" type="button" onClick={() => { setShowReplySendConfirm(false); sendMessage(threadMsgId); }}
                 style={{ ...primaryBtn(), flex: 2 }}>
                 送信する
               </button>

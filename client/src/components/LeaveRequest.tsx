@@ -2178,7 +2178,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                         <div style={{ marginTop: 8, background: '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
                           <div style={{ fontSize: 12, color: '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
+                            <button data-net="write" onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
                               style={{ flex: 1, padding: '6px 0', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                               {cancelingId === req.id ? '取消中…' : '取り消す'}
                             </button>
@@ -2196,7 +2196,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                               style={{ flex: 1, padding: '6px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                               編集
                             </button>
-                            <button onClick={() => setCancelConfirmId(req.id)}
+                            <button data-net="write" onClick={() => setCancelConfirmId(req.id)}
                               style={{ flex: 1, padding: '6px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                               取消
                             </button>
@@ -2210,7 +2210,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                         <div style={{ marginTop: 8, background: '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
                           <div style={{ fontSize: 12, color: '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
+                            <button data-net="write" onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
                               style={{ flex: 1, padding: '6px 0', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                               {cancelingId === req.id ? '取消中…' : '取り消す'}
                             </button>
@@ -2222,7 +2222,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                         </div>
                       ) : (
                         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                          <button onClick={() => setCancelConfirmId(req.id)}
+                          <button data-net="write" onClick={() => setCancelConfirmId(req.id)}
                             style={{ flex: 1, padding: '6px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                             取消
                           </button>
@@ -2321,7 +2321,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <div style={{ marginBottom: 12, fontSize: 13, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px' }}>{submitWarn}</div>
             )}
             <div style={{ display: 'flex', gap: 12 }}>
-              <button
+              <button data-net="write"
                 onClick={() => setShowConfirm(false)}
                 style={{ ...backBtn(isDark), flex: 1 }}
               >

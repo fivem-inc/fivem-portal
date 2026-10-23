@@ -58,7 +58,7 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
 
       {/* open中：取り下げのみ（他の依頼に出し直したいとき用） */}
       {isOpenReq && (
-        <button type="button" onClick={handleWithdraw} disabled={withdrawing}
+        <button data-net="write" type="button" onClick={handleWithdraw} disabled={withdrawing}
           style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d', cursor: withdrawing ? 'default' : 'pointer' }}>
           {withdrawing ? '取り下げ中…' : '依頼を取り下げる'}
         </button>
@@ -67,11 +67,11 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
       {/* 未依頼 or 対応済み/不可/取下げ後：修正を依頼（主）＋取消を依頼（サブ） */}
       {canReRequest && (
         <>
-          <button type="button" onClick={() => setModalKind('edit')}
+          <button data-net="write" type="button" onClick={() => setModalKind('edit')}
             style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, border: `2px solid ${PURPLE}`, background: '#ede9fe', color: PURPLE, fontWeight: 'bold', cursor: 'pointer' }}>
             📩 {latest ? 'もう一度 修正を依頼' : '管理者に修正を依頼'}
           </button>
-          <button type="button" onClick={() => setModalKind('cancel')}
+          <button data-net="write" type="button" onClick={() => setModalKind('cancel')}
             style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d', cursor: 'pointer' }}>
             取消を依頼
           </button>

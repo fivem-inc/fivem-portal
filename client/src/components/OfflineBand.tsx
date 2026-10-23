@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useOnline } from '../hooks/useOnline';
 import { OFFLINE_BAND_TEXT } from '../lib/netFailure';
 
@@ -10,6 +10,12 @@ import { OFFLINE_BAND_TEXT } from '../lib/netFailure';
 const OfflineBand: React.FC = () => {
   // つながっているかは hooks/useOnline（圏外の間にボタンを押せなくする所と共用・2026-10-23）
   const offline = !useOnline();
+  // 圏外の間は html に印を付ける。index.css の決まりで、送るボタン（data-net="write"）が灰色になって押せなくなる（段6）
+  useEffect(() => {
+    const el = document.documentElement;
+    if (offline) el.setAttribute('data-offline', '1'); else el.removeAttribute('data-offline');
+    return () => el.removeAttribute('data-offline');
+  }, [offline]);
   const bandRef = useRef<HTMLDivElement>(null);
   const [h, setH] = useState(0);
 

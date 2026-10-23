@@ -4740,7 +4740,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             {/* 要報告：実績を報告するを主役に。残業ゼロも報告できる旨を案内 */}
                             {canReport && (
                               <>
-                                <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
+                                <button data-net="write" onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
                                   style={{ ...primaryBtn(), width: '100%' }}>
                                   実績を報告する
                                 </button>
@@ -4767,7 +4767,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                       受理はやり直しになります。
                                     </p>
                                     <div style={{ display: 'flex', gap: 6 }}>
-                                      <button onClick={() => { setModifyTargetId(null); cancelAndCopy(r); }} disabled={actingId === r.id}
+                                      <button data-net="write" onClick={() => { setModifyTargetId(null); cancelAndCopy(r); }} disabled={actingId === r.id}
                                         style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
                                         修正をはじめる
                                       </button>
@@ -4778,7 +4778,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                     </div>
                                   </div>
                                 ) : (
-                                <button onClick={() => { setModifyTargetId(r.id); setCancelTargetId(null); }} disabled={actingId === r.id}
+                                <button data-net="write" onClick={() => { setModifyTargetId(r.id); setCancelTargetId(null); }} disabled={actingId === r.id}
                                   style={{ width: '100%', marginTop: canReport ? 8 : 0, padding: '11px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
                                   内容を修正する（取り消して再申請）
                                 </button>
@@ -4791,7 +4791,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               </>
                             )}
                             {canResubmit && (
-                              <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
+                              <button data-net="write" onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
                                 style={{ width: '100%', padding: '11px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
                                 修正して再提出
                               </button>
@@ -4809,7 +4809,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                         : <>取り消すと元に戻せません。</>}
                                   </p>
                                   <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => doCancel(r)} disabled={actingId === r.id}
+                                    <button data-net="write" onClick={() => doCancel(r)} disabled={actingId === r.id}
                                       style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>
                                       取消を確定
                                     </button>
@@ -4822,7 +4822,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               ) : (
                                 // 取消は常に控えめ（中央・小さめ・同じ文言）。主役は実績報告・内容の確認。
                                 <div style={{ textAlign: 'center', marginTop: 10 }}>
-                                  <button onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
+                                  <button data-net="write" onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
                                     style={{ ...backBtn(isDark), padding: '6px 16px', fontSize: 12 }}>
                                     この申請を取消する
                                   </button>

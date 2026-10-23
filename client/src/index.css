@@ -204,3 +204,12 @@ select.expense-input {
   resize: none !important;
   overflow: hidden;
 }
+
+/* 圏外の間は、データを書き換えるボタン（data-net="write"）を灰色にして押せなくする（電波が弱いとき 段6・2026-10-23 ユーザー確定）。
+   印は components/OfflineBand が html に付ける（data-offline="1"）。説明の文は付けない（上の黄色い帯で分かる） */
+html[data-offline="1"] [data-net="write"] {
+  opacity: 0.45 !important;
+  filter: grayscale(1);
+  pointer-events: none !important;
+  cursor: not-allowed !important;
+}

@@ -1808,7 +1808,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>
                 閉じる
               </button>
-              <button type="button" onClick={executeCancelReport}
+              <button data-net="write" type="button" onClick={executeCancelReport}
                 style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                 取り消す
               </button>
@@ -1938,7 +1938,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                     style={{ ...primaryBtn({ disabled: confirmingId === r.id }), flex: 2 }}>
                     {confirmingId === r.id ? '処理中...' : '✓ 受理'}
                   </button>
-                  <button onClick={() => { setEditTarget(r); setShowForm(true); }}
+                  <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }}
                     style={{ ...backBtn(isDark), flex: 1 }}>
                     修正
                   </button>
@@ -1946,7 +1946,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                     style={{ flex: 1, padding: '10px 0', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, fontSize: 13, color: '#856404', cursor: 'pointer' }}>
                     差戻
                   </button>
-                  <button onClick={() => { setCancelTarget(r); setCancelReason(''); }}
+                  <button data-net="write" onClick={() => { setCancelTarget(r); setCancelReason(''); }}
                     style={{ flex: 1, padding: '10px 0', background: 'none', border: '1px solid #dc3545', borderRadius: 8, fontSize: 13, color: '#dc3545', cursor: 'pointer' }}>
                     取消
                   </button>
@@ -2304,13 +2304,13 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               {(STATUS_INFO[r.status] ?? STATUS_INFO['pending']).label}
                             </span>
                             {canSelfEdit && (
-                              <button onClick={() => { setEditTarget(r); setShowForm(true); }}
+                              <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }}
                                 style={{ fontSize: 11, color: isDark ? '#90caf9' : BTN_BLUE, background: 'none', border: `1px solid ${isDark ? '#90caf9' : BTN_BLUE}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
                                 修正
                               </button>
                             )}
                             {canSelfEdit && (
-                              <button onClick={() => { setCancelTarget(r); setCancelReason(''); }}
+                              <button data-net="write" onClick={() => { setCancelTarget(r); setCancelReason(''); }}
                                 style={{ fontSize: 11, color: '#dc3545', background: 'none', border: '1px solid #dc3545', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
                                 取消
                               </button>
