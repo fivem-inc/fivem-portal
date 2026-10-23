@@ -89,6 +89,8 @@ import TimeInput from './TimeInput';
 import { useOvertimeUnifyCutoff, useOvertimeUnifyCleanup, cutoffLabel } from '../lib/overtimeUnify';
 import { formatLeavePeriod } from '../lib/leaveDates';
 import { leavePurposeLabel } from '../lib/encouragementDay';
+import { saveCopy, loadCopy } from '../lib/offlineCopy';
+import { isNetworkFailure as isNetFail, timeoutSignal } from '../lib/netFailure';
 
 // 休暇申請フォームの下書き
 interface LeaveDraft {
@@ -656,9 +658,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         .from('leave_requests')
         .select('*')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        // 電波が弱いと応答が返らず空のまま待ち続けるので、10秒で打ち切って控えに切り替える（段6）
+        .abortSignal(timeoutSignal(10000));
       setHistoryFailed(!!error);
       if (error) console.error('[休暇] 履歴を読み込めませんでした:', error.message);
+      // 通信のせいで読めなかったら、端末の控え（スマホ・タブレットだけ・lib/offlineCopy）を出す。前の一覧が出ていればそれを優先
+      if (error && isNetFail(error)) {
+        const copy = await loadCopy<LeaveRecord[]>(user.id, 'leave_history');
+        if (copy && copy.length > 0) { setHistory(prev => (prev.length > 0 ? prev : copy)); setHistoryFailed(false); }
+      }
       if (!error && data) {
         const allIds = [...new Set([
           ...data.map((r: AdminLeaveRequest) => r.approver_id),
@@ -670,7 +679,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             .from('profiles').select('id, name, role_title').in('id', allIds);
           if (profiles) profiles.forEach((p: { id: string; name: string; role_title: string }) => { profileMap[p.id] = p; });
         }
-        setHistory(data.map((r: AdminLeaveRequest) => ({
+        const list = data.map((r: AdminLeaveRequest) => ({
           ...r,
           leave_type_other: r.leave_type_other ?? null,
           leave_dates: r.leave_dates ?? null,
@@ -682,7 +691,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           rejected_reason: r.rejected_reason ?? null,
           approver: profileMap[r.approver_id ?? ''] || null,
           approver2: profileMap[r.approver2_id ?? ''] || null,
-        })));
+        }));
+        setHistory(list);
+        // 端末の控え（電波が弱いとき 段6）：新しい順に100件まで
+        void saveCopy(user.id, 'leave_history', list.slice(0, 100));
       }
       setLoadingHistory(false);
     };

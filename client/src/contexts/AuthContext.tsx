@@ -5,6 +5,7 @@ import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
 import { bootMark } from '../lib/bootMark';
 import { fetchAccessState, mdLabel } from '../lib/retire';
 import { readStoredAuthUser } from '../lib/authStorage';
+import { clearOfflineCopies, keepOnlyCopiesOf } from '../lib/offlineCopy';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
@@ -72,6 +73,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     //    トークンが差し替わっても中身の人は同じなので、在籍の確認をやり直す意味がない
     if (appliedUserId.current === (sessionUser?.id ?? null)) return;
     appliedUserId.current = sessionUser?.id ?? null;
+    // 端末の控え（電波が弱いとき 段6・2026-10-23）：ログインが無くなったら全部消す・ログインした人が決まったら、ほかの人の控えは消す。
+    // 🚨 ログアウトのボタン以外（退職の猶予切れ・無効化・ほかのタブ・強制ログアウトの SIGNED_OUT）でも必ずここを通る。待たない
+    if (!sessionUser) void clearOfflineCopies(); else void keepOnlyCopiesOf(sessionUser.id);
     if (!sessionUser) { setOnLeave(null); setUser(null); return; }
     // 🚨 待ち時間の上限は必須。
     //    災害時の輻輳（繋がりにくい状態）では応答が返らないことがあり、

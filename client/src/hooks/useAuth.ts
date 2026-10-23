@@ -8,6 +8,7 @@ import { IDLE_CONFIG_CACHE_KEY, readIdleLogoutSetting, writeIdleLogoutSetting } 
 import { readDeviceId, writeDeviceId } from '../lib/deviceInfo';
 import { recordLogout } from '../lib/loginHistory';
 import { withTimeout } from '../lib/netFailure';
+import { clearOfflineCopies } from '../lib/offlineCopy';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -563,6 +564,8 @@ export const useAuth = (): UseAuthReturn => {
       const keepDeviceId = readDeviceId();
       localStorage.clear();
       sessionStorage.clear();
+      // 端末の控え（電波が弱いとき 段6・IndexedDB）も消す。待ち時間の上限つき（消せなくても移動は続ける・次に開いたとき AuthContext が消す）
+      await withTimeout(clearOfflineCopies(), 1500, undefined);
       writeRawPendingQueue(keepSafetyQueue);
       if (keepIdleLogout) writeIdleLogoutSetting(keepIdleLogout);
       if (keepIdleCfg) localStorage.setItem(IDLE_CONFIG_CACHE_KEY, keepIdleCfg);
