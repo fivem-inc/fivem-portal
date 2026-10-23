@@ -28,7 +28,8 @@ import HelpLinkButton from '../components/HelpLinkButton';
 import { subscribe as subscribeRefresh } from '../lib/refreshBus';
 import { TOPICS_BOARD } from '../lib/badgeTopics';
 import LoadFailedNotice from '../components/LoadFailedNotice';
-import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure } from '../lib/netFailure';
+import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure, timeoutSignal } from '../lib/netFailure';
+import { saveCopy, loadCopy } from '../lib/offlineCopy';
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
 const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
 
@@ -99,6 +100,29 @@ interface BoardMessage {
 }
 
 type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search' | 'favorites';
+
+// ── 端末の控え（電波が弱いとき 段6・2026-10-23）──────────────────────
+// 受信トレイ・アーカイブ・送信トレイを、スマホ・タブレットだけ端末に控える（lib/offlineCopy）。圏外のときに出す。
+// 🚨 控えるのは自分あて・自分が送った分の本文と、自分の既読・自分の読了／回答だけ。
+//    ほかの人の情報（宛先・写し（CC）の一覧・既読の人・ほかの人の回答）は控えない。送り主の名前だけ添える（一覧に名前を出すため）
+// 🚨 新しい順に50件・90日以内
+const COPY_MAX_MSGS = 50;
+const COPY_MAX_DAYS = 90;
+interface BoardCopy {
+  messages: BoardMessage[];
+  readIds: string[];
+  myConf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]>;
+  senders: { id: string; name: string | null }[];
+  replyCounts?: Record<string, number>;
+}
+/** 控えに入れるお知らせを選んで整える（写しの一覧は「自分が写しか」だけ残す） */
+function copyMessages(list: BoardMessage[], me: string): BoardMessage[] {
+  const since = Date.now() - COPY_MAX_DAYS * 86400_000;
+  return list
+    .filter(m => new Date(m.created_at).getTime() >= since)
+    .slice(0, COPY_MAX_MSGS)
+    .map(m => ({ ...m, cc_user_ids: (m.cc_user_ids ?? []).includes(me) ? [me] : [], recipient_presets: null, recipient_extra_ids: null, broadcast_recipients: null, profile: null }));
+}
 
 interface SimpleProfile {
   id: string;
@@ -444,6 +468,9 @@ const BoardPage: React.FC = () => {
   const [prevChannelLastSeen, setPrevChannelLastSeen] = useState<string | null>(null);
   const [readCounts,  setReadCounts]  = useState<Record<string, number>>({});
   const [allProfiles, setAllProfiles] = useState<SimpleProfile[]>([]);
+  // 控え（電波 段6）を作るときに送り主の名前を引くため、いまの一覧を ref でも持つ
+  const allProfilesRef = useRef<SimpleProfile[]>([]);
+  allProfilesRef.current = allProfiles;
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
   const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
   const [noticeCCUserIds, setNoticeCCUserIds] = useState<string[]>([]);  // 管理者・代表者自動CC
@@ -522,6 +549,8 @@ const BoardPage: React.FC = () => {
   const setInboxDetailId = useCallback((v: string | null) => patchBoardParams({ bin: v }), [patchBoardParams]);
   const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
   const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
+  // 受信のアーカイブが読めなかったか（2026-10-23）。読めなかったときは「アーカイブはありません」と出さない
+  const [archivedFailed, setArchivedFailed] = useState(false);
   const [inboxDetailRecipients,   setInboxDetailRecipients]   = useState<string[]>([]);
   const [inboxRemindSending,      setInboxRemindSending]      = useState(false);
   const [archiveBulkPeriod,       setArchiveBulkPeriod]       = useState<'1m' | '3m' | '1y' | 'all' | ''>('');
@@ -825,7 +854,8 @@ const BoardPage: React.FC = () => {
     (lsRes.data || []).forEach((r: any) => { ls[r.channel_id] = r.last_seen_at; });
     setLastSeen(ls);
 
-    setAllProfiles((profRes.data || []) as SimpleProfile[]);
+    // 🚨 読めなかったときは空で上書きしない（圏外のとき、端末の控えから入れた送り主の名前を消さない・電波 段6）
+    if (!profRes.error) setAllProfiles((profRes.data || []) as SimpleProfile[]);
     if (settingsRes.data && settingsRes.data.length > 0) {
       setShowReadDetail(settingsRes.data[0].value !== 'false');
     }
@@ -1082,6 +1112,29 @@ const BoardPage: React.FC = () => {
   // 🚨 読めなかったときに「お知らせはありません」と出さない（2026-10-21 電波 段5・圏外でアプリが開けるようになるため）
   const [inboxFailed, setInboxFailed] = useState(false);
 
+  // 端末の控え（電波 段6）を出す。🚨 前の一覧が出ていればそちらを優先（控えで上書きしない）
+  const restoreBoardCopy = useCallback((c: BoardCopy, setList: React.Dispatch<React.SetStateAction<BoardMessage[]>>) => {
+    setList(prev => (prev.length > 0 ? prev : c.messages));
+    setInboxReadIds(prev => (prev.size > 0 ? prev : new Set(c.readIds)));
+    setConfirmations(prev => ({ ...c.myConf, ...prev }));
+    if (c.replyCounts) setUnreadReplyCounts(prev => (Object.keys(prev).length > 0 ? prev : c.replyCounts!));
+    setAllProfiles(prev => (prev.length > 0 ? prev : c.senders.map(p => ({ id: p.id, name: p.name, role_title: null, employment_type: null, group_names: null }))));
+  }, []);
+  /** 控えを作る（本文・自分の既読・自分の読了／回答・送り主の名前だけ） */
+  const makeBoardCopy = (list: BoardMessage[], readIds: Iterable<string>, conf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]>, names: SimpleProfile[], replyCounts?: Record<string, number>): BoardCopy | null => {
+    if (!user) return null;
+    const messages = copyMessages(list, user.id);
+    const ids = new Set(messages.map(m => m.id));
+    const myConf: BoardCopy['myConf'] = {};
+    for (const id of ids) { const mine = (conf[id] ?? []).filter(c => c.user_id === user.id); if (mine.length) myConf[id] = mine; }
+    const senderIds = new Set(messages.map(m => m.user_id));
+    return {
+      messages, readIds: [...readIds].filter(id => ids.has(id)), myConf,
+      senders: names.filter(p => senderIds.has(p.id)).map(p => ({ id: p.id, name: p.name })),
+      replyCounts: replyCounts ? Object.fromEntries(Object.entries(replyCounts).filter(([k]) => ids.has(k))) : undefined,
+    };
+  };
+
   const loadInbox = useCallback(async () => {
     if (!user) return;
     const seq = ++inboxLoadSeq.current;
@@ -1093,10 +1146,20 @@ const BoardPage: React.FC = () => {
       .select('message_id')
       .eq('user_id', user.id)
       .eq('archived', false)
-      .eq('hidden', false);
+      .eq('hidden', false)
+      // 電波が弱いと応答が返らず空のまま待ち続けるので、10秒で打ち切って端末の控えに切り替える（電波 段6）
+      .abortSignal(timeoutSignal(10000));
     if (!isLatest()) return;
+    // 通信のせいで読めなかったら、端末の控え（スマホ・タブレットだけ）を出す
+    const tryInboxCopy = async (err: unknown): Promise<boolean> => {
+      if (!isNetworkFailure(err)) return false;
+      const c = await loadCopy<BoardCopy>(user.id, 'board_inbox');
+      if (!c || c.messages.length === 0 || !isLatest()) return false;
+      restoreBoardCopy(c, setInboxMessages); setInboxFailed(false); setInboxLoaded(true);
+      return true;
+    };
     // 🚨 失敗したら空で上書きしない（通信断で「お知らせはありません」と出て、削除と区別が付かなくなる）
-    if (recErr) { console.error('受信トレイの読み込みに失敗:', recErr.code, recErr.message); setInboxFailed(true); setInboxLoaded(true); return; }
+    if (recErr) { console.error('受信トレイの読み込みに失敗:', recErr.code, recErr.message); if (await tryInboxCopy(recErr)) return; setInboxFailed(true); setInboxLoaded(true); return; }
     const msgIds = (recData || []).map((r: any) => r.message_id);
     if (msgIds.length === 0) { setInboxMessages([]); setInboxFailed(false); setInboxLoaded(true); return; }
 
@@ -1117,7 +1180,7 @@ const BoardPage: React.FC = () => {
         .in('id', msgIds).not('parent_id', 'is', null).is('channel_id', null).neq('user_id', user.id),
     ]);
     if (!isLatest()) return;
-    if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); setInboxFailed(true); setInboxLoaded(true); return; }
+    if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); if (await tryInboxCopy(msgErr)) return; setInboxFailed(true); setInboxLoaded(true); return; }
 
     // status='scheduled'（未送信）は受信トレイに出さない。cronがstatus='sent'に切り替えるまで非表示
     // ※クライアント時計とscheduled_atの比較ではなく、DBが確定させたstatusで判定する（送信時刻の表示崩れ・表示タイミングのズレを防ぐ）
@@ -1149,6 +1212,10 @@ const BoardPage: React.FC = () => {
 
     // confirmations を読む（deadline_type / requires_confirmation があるもの）
     const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+    // 端末の控え（電波 段6）：自分の既読・自分の読了／回答・送り主の名前だけ添える
+    const inboxList = (msgData || []).filter((m: any) => m.status !== 'scheduled') as BoardMessage[];
+    const readForCopy = readErr ? [] : (readData || []).map((r: any) => r.message_id as string);
+    let confForCopy: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
     if (confirmMsgIds.length > 0) {
       const { data: confData, error: confErr } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
       if (confErr) { console.error('受信トレイの読了・完了の読み込みに失敗:', confErr.code, confErr.message); return; } // 空で上書きしない
@@ -1158,27 +1225,50 @@ const BoardPage: React.FC = () => {
         confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
       });
       setConfirmations(prev => ({ ...prev, ...confMap }));
+      confForCopy = confMap;
     }
-  }, [user]);
+    const inboxCopy = makeBoardCopy(inboxList, readForCopy, confForCopy, allProfilesRef.current);
+    if (inboxCopy) void saveCopy(user.id, 'board_inbox', inboxCopy);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, restoreBoardCopy]);
 
+  // 🚨 2026-10-23：前は error を見ずに、読めないと空の一覧にしていた（圏外で「アーカイブはありません」と出た）。
+  //    読めなかったら前の一覧を残し、通信のせいなら端末の控え（電波 段6）を出す。どちらも無ければ［再読み込み］の赤い枠
   const loadArchived = useCallback(async () => {
     if (!user) return;
-    const { data: recData } = await supabase
+    const fail = async (err: { code?: string; message: string }) => {
+      console.error('受信のアーカイブの読み込みに失敗:', err.code, err.message);
+      if (isNetworkFailure(err)) {
+        const c = await loadCopy<BoardCopy>(user.id, 'board_archive');
+        if (c && c.messages.length > 0) { restoreBoardCopy(c, setArchivedMessages); setArchivedFailed(false); return; }
+      }
+      setArchivedFailed(true);
+    };
+    const { data: recData, error: recErr } = await supabase
       .from('board_message_recipients')
       .select('message_id')
       .eq('user_id', user.id)
       .eq('archived', true)
-      .eq('hidden', false);   // 🚨 削除したものはアーカイブ一覧からも消す（これが「削除」の実体）
+      .eq('hidden', false)   // 🚨 削除したものはアーカイブ一覧からも消す（これが「削除」の実体）
+      .abortSignal(timeoutSignal(10000));
+    if (recErr) { await fail(recErr); return; }
     const msgIds = (recData || []).map((r: any) => r.message_id);
-    if (msgIds.length === 0) { setArchivedMessages([]); return; }
-    const { data: msgData } = await supabase
+    if (msgIds.length === 0) { setArchivedMessages([]); setArchivedFailed(false); return; }
+    const { data: msgData, error: msgErr } = await supabase
       .from('board_messages')
       .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });
-    setArchivedMessages((msgData || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
-  }, [user]);
+    if (msgErr) { await fail(msgErr); return; }
+    const list = (msgData || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })) as BoardMessage[];
+    setArchivedMessages(list);
+    setArchivedFailed(false);
+    // 端末の控え（電波 段6）。既読・読了は受信トレイの控えと同じ考え方（ここでは本文と送り主の名前だけ）
+    const archCopy = makeBoardCopy(list, [], {}, allProfilesRef.current);
+    if (archCopy) void saveCopy(user.id, 'board_archive', archCopy);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, restoreBoardCopy]);
 
   const archiveMessage = async (msgId: string, archive: boolean) => {
     if (!user) return;
@@ -1224,7 +1314,19 @@ const BoardPage: React.FC = () => {
     ]);
     // 🚨 どれか1つでも読めなかったら一覧を書き換えない。片付けた記録（hidden）だけ読めないと、片付けたものが一覧に戻ったように見える
     const loadErr = ownErr ?? ccErr ?? hiddenErr;
-    if (loadErr) { console.error('[board] 送信トレイの読み込みに失敗:', loadErr.code, loadErr.message); setOutboxFailed(true); return; }
+    if (loadErr) {
+      console.error('[board] 送信トレイの読み込みに失敗:', loadErr.code, loadErr.message);
+      // 通信のせいなら端末の控え（電波 段6）。🚨 控えに宛先・既読の人は入っていない（本文と件名だけ）
+      if (isNetworkFailure(loadErr)) {
+        const [cs, ca] = await Promise.all([loadCopy<BoardCopy>(user.id, 'board_outbox'), loadCopy<BoardCopy>(user.id, 'board_outbox_archive')]);
+        if ((cs?.messages.length ?? 0) + (ca?.messages.length ?? 0) > 0) {
+          if (cs) restoreBoardCopy(cs, setOutboxMessages);
+          if (ca) setOutboxArchivedMessages(prev => (prev.length > 0 ? prev : ca.messages));
+          setOutboxFailed(false); return;
+        }
+      }
+      setOutboxFailed(true); return;
+    }
     setOutboxFailed(false);
     const hiddenIds = new Set((hiddenData || []).map((h: { message_id: string }) => h.message_id));
     const ownIds = new Set((data || []).map((m: any) => m.id));
@@ -1236,6 +1338,11 @@ const BoardPage: React.FC = () => {
     const archData = everything.filter(m => m.outbox_hidden);
     setOutboxMessages(allSent);
     setOutboxArchivedMessages(archData);
+    // 端末の控え（電波 段6）：本文と件名だけ（宛先・写し・既読の人は入れない）
+    const sentCopy = makeBoardCopy(allSent as BoardMessage[], [], {}, allProfilesRef.current);
+    const archOutCopy = makeBoardCopy(archData as BoardMessage[], [], {}, allProfilesRef.current);
+    if (sentCopy) void saveCopy(user.id, 'board_outbox', sentCopy);
+    if (archOutCopy) void saveCopy(user.id, 'board_outbox_archive', archOutCopy);
 
     // recipients を取得
     // 🚨 2026-09-16：**写し（CC）で入ってきた分とアーカイブ分も対象にする**。
@@ -3857,7 +3964,9 @@ const BoardPage: React.FC = () => {
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>お知らせを開いています…</div>
             ) : !inboxLoaded && inboxFilter !== 'archived' ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>読み込んでいます…</div>
-            ) : inboxFailed && filteredInbox.length === 0 ? (
+            ) : inboxFilter === 'archived' && archivedFailed && filteredInbox.length === 0 ? (
+              <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => { setArchivedFailed(false); void loadArchived(); }} />
+            ) : inboxFilter !== 'archived' && inboxFailed && filteredInbox.length === 0 ? (
               <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => { setInboxLoaded(false); setInboxFailed(false); void loadInbox(); }} />
             ) : filteredInbox.length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
@@ -4527,7 +4636,7 @@ const BoardPage: React.FC = () => {
                           <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
+                          <span style={{ fontSize: 10, color: subColor }}>{msg.id in inboxRecipients ? `${recipientIds.length}人` : '—'}</span>
                           {/* 🚨 処理は unarchiveOutboxMsg 1か所に集約している（開いた中の☆の隣も同じこれを呼ぶ） */}
                           <button type="button" onClick={e => { e.stopPropagation(); unarchiveOutboxMsg(msg); }}
                           title="送信トレイに戻す"
@@ -4594,7 +4703,7 @@ const BoardPage: React.FC = () => {
                           <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
+                          <span style={{ fontSize: 10, color: subColor }}>{msg.id in inboxRecipients ? `${recipientIds.length}人` : '—'}</span>
                           <button type="button"
                             onClick={e => { e.stopPropagation(); archiveOutboxMsg(msg.id); }}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}
