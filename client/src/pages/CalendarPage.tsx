@@ -27,7 +27,8 @@ import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { PageTabs } from '../components/PageTabs';
 import ShiftAdjustTab from '../components/ShiftAdjustTab';
-import { TOGGLE_BLUE } from '../lib/buttonStyles';
+import { TOGGLE_BLUE, tintBtn } from '../lib/buttonStyles';
+import ApplicationRequestSheet from '../components/ApplicationRequestSheet';
 import { ENC_PURPOSE_MARK, ENC_REASON_MARK } from '../lib/encouragementDay';
 import { PLACE_OPTION_FILTER, placeGroupsFromRows, allPlaces, placesInText, hasMoveWords, timesInText, type PlaceGroup } from '../lib/workPlaces';
 
@@ -612,6 +613,9 @@ const AbsenceInputSheet: React.FC<{
   const [isAbsent, setIsAbsent] = useState(absDraft?.isAbsent ?? false);
   // 対象日（全種別共通）。同じ内容を選んだ日すべてに登録する。既定は開いた日の1日だけ
   const [targetDates, setTargetDates] = useState<Set<string>>(() => new Set(absDraft?.targetDates ?? absDraft?.absentDates ?? [date]));
+  // 正社員を選んだときの［残業の申請を依頼する］［休暇の申請を依頼する］で開く「申請の依頼」の窓（2026-10-23 ユーザー確定）
+  const [requestSheet, setRequestSheet] = useState<{ kind: 'overtime' | 'leave'; recipientId: string } | null>(null);
+  const [requestSentMsg, setRequestSentMsg] = useState('');
   const [isLate, setIsLate] = useState(absDraft?.isLate ?? false);
   const [isLateStart, setIsLateStart] = useState(absDraft?.isLateStart ?? false);
   const [isEarlyLeave, setIsEarlyLeave] = useState(absDraft?.isEarlyLeave ?? false);
@@ -1205,6 +1209,40 @@ const AbsenceInputSheet: React.FC<{
             {profiles.length === 0 && !profilesError && <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>対象者の一覧を読み込んでいます…</div>}
             <StaffPicker profiles={profiles} grouped={grouped} selectedIds={userIds} onToggle={toggleUser} onClear={() => { setUserIds(new Set()); setConflicts([]); }} />
           </div>
+          {/* 正社員を選んだとき（2026-10-23 ユーザー確定）：ふだんは本人の残業申請・休暇申請で入る（申請はカレンダーにも出る）。
+              ここで予定も入れると同じ日のことが2つになるので、申請の依頼へ案内する。種別は絞らない（急な欠勤・遅刻など、ここで入れる場面があるため） */}
+          {(() => {
+            const fullTimers = profiles.filter(p => userIds.has(p.id) && employmentCategory(p) === '社員');
+            if (fullTimers.length === 0) return null;
+            const first = fullTimers[0];
+            return (
+              <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 10, padding: '10px 12px', marginTop: 10, color: '#0d47a1', fontSize: 13, lineHeight: 1.7, textAlign: 'left' }}>
+                <b>正社員の方は、原則として本人が残業申請・休暇申請で届け出ます。</b><br />
+                勤務地変更・時間の変更・遅出・早退・休日出勤・休暇など、予定が決まっているときは、本人に申請の依頼を送ってください。
+                <div style={{ display: 'flex', gap: 8, margin: '8px 0 6px', flexWrap: 'wrap' }}>
+                  <button type="button" style={{ ...tintBtn(false), flex: 1, minWidth: 140, padding: '8px 10px' }}
+                    onClick={() => { setRequestSentMsg(''); setRequestSheet({ kind: 'overtime', recipientId: first.id }); }}>残業の申請を依頼する</button>
+                  <button type="button" style={{ ...tintBtn(false), flex: 1, minWidth: 140, padding: '8px 10px' }}
+                    onClick={() => { setRequestSentMsg(''); setRequestSheet({ kind: 'leave', recipientId: first.id }); }}>休暇の申請を依頼する</button>
+                </div>
+                {fullTimers.length > 1 && <div style={{ fontSize: 12 }}>※ 依頼は1人ずつ送ります（{first.name}さんが入った状態で開きます）。</div>}
+                急な欠勤・遅刻・早退などで本人が申請できないときは、このまま下から登録できます。
+                {requestSentMsg && <div style={{ marginTop: 6, background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724', borderRadius: 8, padding: '6px 10px' }}>{requestSentMsg}</div>}
+              </div>
+            );
+          })()}
+          {requestSheet && (
+            <ApplicationRequestSheet
+              requesterId={currentUserId}
+              requesterName={profiles.find(p => p.id === currentUserId)?.name ?? ''}
+              isDark={false}
+              initialKind={requestSheet.kind}
+              initialRecipientId={requestSheet.recipientId}
+              initialDates={[...targetDates].filter(Boolean).sort()}
+              onClose={() => setRequestSheet(null)}
+              onSubmitted={() => { setRequestSheet(null); setRequestSentMsg('申請の依頼を送りました。'); }}
+            />
+          )}
         </div>
 
         {/* 種別 */}

@@ -58,10 +58,15 @@ interface Props {
   isDark: boolean;
   onClose: () => void;
   onSubmitted: () => void;
+  /** 最初から入れておく種類・相手・日付（勤怠カレンダーで正社員を選んだときの［残業の申請を依頼する］など・2026-10-23）。
+   *  🚨 種類は押したボタンで本人が選んだものなので入れてよい（何も押さずに開いたときは今までどおり何も選ばない） */
+  initialKind?: Kind;
+  initialRecipientId?: string;
+  initialDates?: string[];
 }
 
 const ApplicationRequestSheet: React.FC<Props> = ({
-  requesterId, requesterName, isDark, onClose, onSubmitted,
+  requesterId, requesterName, isDark, onClose, onSubmitted, initialKind, initialRecipientId, initialDates,
 }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
@@ -71,11 +76,11 @@ const ApplicationRequestSheet: React.FC<Props> = ({
 
   // 🚨 最初は何も選ばない（2026-10-15 ユーザー確定）。休暇の受理ページから開いても「休暇」を選んでおかない
   //    （選ばれたまま調整休の依頼を作り、本人が申請できなかった実例があるため）。選ぶまで下の入力は出さない
-  const [kind, setKind] = useState<Kind | null>(null);
+  const [kind, setKind] = useState<Kind | null>(initialKind ?? null);
   // 残業の依頼の申請内容（必須）。終日の3つは本人の申請画面に最初から入る（lib/appRequests）
   const [otContent, setOtContent] = useState<AppRequestOtContent | null>(null);
-  const [recipientId, setRecipientId] = useState('');
-  const [dates, setDates] = useState<string[]>(['']);
+  const [recipientId, setRecipientId] = useState(initialRecipientId ?? '');
+  const [dates, setDates] = useState<string[]>(initialDates && initialDates.length > 0 ? initialDates : ['']);
   const [memo, setMemo] = useState('');
   const [dueDate, setDueDate] = useState('');
   // 相談した日（任意）。🚨 依頼を作った日（created_at）では代用しない。口頭で話した日と
