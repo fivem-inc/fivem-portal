@@ -3,7 +3,7 @@
 //
 // ・いまログインしている端末：人を選ぶと一覧。［この端末をログアウト］（パソコンもスマホも・確認つき）
 //   → その端末の通知の登録も消える（端末が分かるときだけ）。効くのは最長1時間ほど後（いまの通行証が切れるまで）
-// ・記録（90日分）：ログイン／ログアウト／自動ログアウト（共有）／強制ログアウト／使っていないため。新しい順・500件まで
+// ・記録（90日分）：ログイン／ログアウト／自動ログアウト（共有）／強制ログアウト／使っていないため。新しい順・500件まで。期間のボタン（今日／7日／30日／90日・最初は7日）と、高さの決まった枠（見出しは上に残す）・行を押すと端末番号（2026-10-23）
 // ・使っていないパソコンの自動ログアウト：最後に使ってから N 日（app_settings 'pc_idle_session_days'・既定30・0で止める）。
 //   保存の前に「今夜ログアウトされる見込み」を出す（admin_pc_idle_preview）
 // 🚨 表は管理者しか読めない（RLS）。書くのは DB の関数だけ
@@ -48,6 +48,24 @@ const okBox: React.CSSProperties = { marginTop: 8, padding: '8px 10px', borderRa
 const smallBtn: React.CSSProperties = { padding: '7px 14px', fontSize: 13 };
 
 type KindFilter = 'all' | 'pc' | 'mobile';
+// 表の期間（2026-10-23 ユーザー確定：ページが下に長く続くので、最初は7日・表は高さの決まった枠の中で動かす）
+type Period = 'today' | '7' | '30' | '90';
+const PERIODS: { key: Period; label: string }[] = [
+  { key: 'today', label: '今日' }, { key: '7', label: '7日' }, { key: '30', label: '30日' }, { key: '90', label: '90日' },
+];
+/** 期間の始まり（今日＝日本時間の今日の0時から） */
+const periodStart = (p: Period): number => {
+  const now = Date.now();
+  if (p === 'today') { const j = new Date(now + 9 * 3600_000); return Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate()) - 9 * 3600_000; }
+  return now - Number(p) * 86400_000;
+};
+/** 表の端末の欄は短く（「スマホ（iPhone）・Safari（ホーム画面のアプリ）」→「iPhone・アプリ」・「パソコン（Windows）・Chrome」→「パソコン・Chrome」）。
+ *  元の書き方は lib/deviceInfo の describeUserAgent／currentDevice */
+const shortDevice = (label: string): string => label
+  .replace(/^(スマホ|タブレット)（(.+?)）/, '$2')
+  .replace(/^パソコン（Mac）/, 'Mac')
+  .replace(/^パソコン（.+?）/, 'パソコン')
+  .replace(/・[^・]*（ホーム画面のアプリ）$/, '・アプリ');
 type StaffOpt = { id: string; name: string; active: boolean };
 
 const LoginHistorySection: React.FC = () => {
@@ -58,6 +76,9 @@ const LoginHistorySection: React.FC = () => {
   const [err, setErr] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [q, setQ] = useState('');
+  const [period, setPeriod] = useState<Period>('7');
+  // 行を押すと端末番号を出す（1行だけ）
+  const [openRow, setOpenRow] = useState<number | null>(null);
   const [personId, setPersonId] = useState('');
   // 一覧は「誰の一覧か」と一緒に持つ（古い応答で入れ替わらないように）
   const [sessions, setSessions] = useState<{ uid: string; rows: SessionRow[] } | null>(null);
@@ -190,13 +211,15 @@ const LoginHistorySection: React.FC = () => {
 
   const shown = useMemo(() => {
     const qq = q.trim();
+    const from = periodStart(period);
     return (events ?? []).filter(e => {
+      if (new Date(e.at).getTime() < from) return false;
       if (kind === 'pc' && e.device_kind !== 'pc') return false;
       if (kind === 'mobile' && e.device_kind !== 'phone' && e.device_kind !== 'tablet') return false;
       if (qq && !(names[e.user_id] ?? '').includes(qq)) return false;
       return true;
     });
-  }, [events, kind, q, names]);
+  }, [events, kind, q, names, period]);
 
   // 確認の名前は「一覧の持ち主」から引く（選択欄の今の値ではない）
   const ownerName = sessions ? (names[sessions.uid] ?? '') : '';
@@ -264,7 +287,12 @@ const LoginHistorySection: React.FC = () => {
 
       {/* 記録の一覧 */}
       <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>名前を押すと、上にその人のいまの端末が出ます。</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{ fontSize: 12, color: sub, marginRight: 2 }}>期間</span>
+        {PERIODS.map(p => <button key={p.key} type="button" style={chip(period === p.key)} onClick={() => setPeriod(p.key)}>{p.label}</button>)}
+      </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: sub, marginRight: 2 }}>端末</span>
         <button type="button" style={chip(kind === 'all')} onClick={() => setKind('all')}>すべて</button>
         <button type="button" style={chip(kind === 'pc')} onClick={() => setKind('pc')}>パソコン</button>
         <button type="button" style={chip(kind === 'mobile')} onClick={() => setKind('mobile')}>スマホ・タブレット</button>
@@ -274,22 +302,28 @@ const LoginHistorySection: React.FC = () => {
       {events === null && !err ? (
         <div style={{ fontSize: 13, color: sub }}>読み込み中…</div>
       ) : shown.length === 0 ? (
-        <div style={{ fontSize: 13, color: sub, padding: 12, background: cardBg, border: `1px solid ${border}`, borderRadius: 8 }}>記録はありません</div>
+        <div style={{ fontSize: 13, color: sub, padding: 12, background: cardBg, border: `1px solid ${border}`, borderRadius: 8 }}>この期間の記録はありません</div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <>
+        <div style={{ fontSize: 12.5, color: text, marginBottom: 6 }}>
+          {PERIODS.find(p => p.key === period)?.label}{period === 'today' ? 'は' : 'で'} <b>{shown.length}件</b>（新しい順・行を押すと端末番号が出ます）
+        </div>
+        {/* 表は高さの決まった枠の中だけで上下に動かす。見出しの行は枠の上に残す（2026-10-23） */}
+        <div style={{ overflow: 'auto', maxHeight: '50vh', border: `1px solid ${border}`, borderRadius: 8 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, color: text }}>
             <thead>
-              <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
+              <tr>
                 {['日時', '名前', 'できごと', '端末'].map(h => (
-                  <th key={h} style={{ padding: '6px 6px', borderBottom: `1px solid ${border}`, textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                  <th key={h} style={{ padding: '6px 6px', borderBottom: `1px solid ${border}`, textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1, background: isDarkMode ? '#495057' : '#f8f9fa' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {shown.map(e => (
-                <tr key={e.id} style={{ borderBottom: `1px solid ${border}` }}>
-                  <td style={{ padding: '5px 6px' }}>{fmt(e.at)}</td>
-                  <td style={{ padding: '5px 6px' }}>
+                <tr key={e.id} onClick={() => setOpenRow(o => (o === e.id ? null : e.id))}
+                  style={{ borderBottom: `1px solid ${border}`, cursor: 'pointer', background: openRow === e.id ? (isDarkMode ? '#2c3e50' : '#e8f4fd') : undefined }}>
+                  <td style={{ padding: '5px 6px', whiteSpace: 'nowrap' }}>{fmt(e.at)}</td>
+                  <td style={{ padding: '5px 6px', whiteSpace: 'nowrap' }} onClick={ev => ev.stopPropagation()}>
                     <button type="button" disabled={busy} onClick={() => openPerson(e.user_id, true)}
                       style={{ background: 'transparent', border: 'none', padding: 0, color: TOGGLE_BLUE, textDecoration: 'underline', cursor: busy ? 'default' : 'pointer', fontSize: 12.5, textAlign: 'left' }}>
                       {names[e.user_id] ?? '…'}
@@ -300,14 +334,18 @@ const LoginHistorySection: React.FC = () => {
                     {e.event === 'forced_logout' && e.actor_id && <span style={{ color: sub }}>（{names[e.actor_id] ?? ''}）</span>}
                   </td>
                   <td style={{ padding: '5px 6px' }}>
-                    {e.device_label ? deviceText(e.device_label, deviceShortCode(e.device_id, e.device_kind), e.shared_pc) : '—'}
+                    {e.device_label ? `${shortDevice(e.device_label)}${e.shared_pc ? '・共有' : ''}` : '—'}
+                    {openRow === e.id && e.device_label && (
+                      <div style={{ fontSize: 11.5, color: sub }}>{deviceText(e.device_label, deviceShortCode(e.device_id, e.device_kind), null)}</div>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {events && events.length >= 500 && <div style={{ fontSize: 11.5, color: sub, marginTop: 6 }}>新しい500件まで表示しています</div>}
         </div>
+        {events && events.length >= 500 && <div style={{ fontSize: 11.5, color: sub, marginTop: 6 }}>新しい500件まで読んでいます（それより前は出ません）</div>}
+        </>
       )}
 
       {/* 使っていないパソコンの自動ログアウト */}
