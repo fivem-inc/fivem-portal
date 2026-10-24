@@ -22,7 +22,8 @@ export const COPY_MAX_AGE_MS = 14 * 86400_000;
 /** 控えの種類（鍵の後ろ半分）。種類を足したらここにも */
 export type CopyKind =
   | 'leave_history' | 'overtime_own' | 'expense_own' | 'shift_report_own' | 'trip_own'
-  | 'board_inbox' | 'board_outbox' | 'board_outbox_archive' | 'board_archive';
+  | 'board_inbox' | 'board_outbox' | 'board_outbox_archive' | 'board_archive'
+  | 'board_channels';
 
 interface CopyRow<T> { key: string; userId: string; kind: CopyKind; at: number; data: T }
 

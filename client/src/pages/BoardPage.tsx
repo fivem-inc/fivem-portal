@@ -124,6 +124,21 @@ function copyMessages(list: BoardMessage[], me: string): BoardMessage[] {
     .map(m => ({ ...m, cc_user_ids: (m.cc_user_ids ?? []).includes(me) ? [me] : [], recipient_presets: null, recipient_extra_ids: null, broadcast_recipients: null, profile: null }));
 }
 
+/**
+ * グループ・DM の控え（電波 段6 の続き・2026-10-24 ユーザー確定：通信があるときに読み込んだ分をそのまま・最大500件）。
+ * 🚨 他人の情報は最小限：参加者は ID だけ（既読・未読の数のため）、名前は送り主と DM の相手だけ、既読は数だけ、読了・回答は自分の分だけ。
+ *    一斉送信の宛先（broadcast_recipients）は外す。添付は元から持っていない
+ */
+interface ChannelCopy {
+  channels: Channel[];
+  members: { channel_id: string; user_id: string }[];
+  messages: BoardMessage[];
+  lastSeen: Record<string, string>;
+  readCounts: Record<string, number>;
+  myConf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]>;
+  names: { id: string; name: string | null }[];
+}
+
 interface SimpleProfile {
   id: string;
   name: string | null;
@@ -785,6 +800,19 @@ const BoardPage: React.FC = () => {
   // opts.silent … 前面に戻ったときの読み直し用。一覧を一瞬消さない（setLoadingData を触らない）
   // グループ・DMの一覧を読めなかった（2026-10-21 電波 段5・読めないのに「ありません」と出さない）
   const [channelsFailed, setChannelsFailed] = useState(false);
+  // グループ・DM を端末の控えから出しているか（2026-10-24）。控えには参加者の名前・既読の人が無いので、そこを出さない
+  const [channelsFromCopy, setChannelsFromCopy] = useState(false);
+  /** 控えの名前を足す（受信トレイの控えとグループ・DM の控えのどちらが先に来ても、知らない人の分だけ足す） */
+  const mergeCopyNames = useCallback((names: { id: string; name: string | null }[]) => {
+    setAllProfiles(prev => {
+      const known = new Set(prev.map(p => p.id));
+      const add = names.filter(p => !known.has(p.id)).map(p => ({ id: p.id, name: p.name, role_title: null, employment_type: null, group_names: null }));
+      return add.length > 0 ? [...prev, ...add] : prev;
+    });
+  }, []);
+  // いま出ているグループ・DM の数（控えで上書きしないための目印・loadAll は user だけで作り直すので state を直接見られない）
+  const channelsCountRef = useRef(0);
+  useEffect(() => { channelsCountRef.current = channels.length; }, [channels]);
   const loadAll = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user) return;
     if (!opts?.silent) setLoadingData(true);
@@ -793,9 +821,32 @@ const BoardPage: React.FC = () => {
     const { data: myMem, error: myMemErr } = await supabase
       .from('board_channel_members')
       .select('channel_id')
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      // 電波が弱いと応答が返らず待ち続けるので、10秒で打ち切って端末の控えに切り替える（2026-10-24）
+      .abortSignal(timeoutSignal(10000));
+    // 通信のせいで読めなかったら、端末の控え（スマホ・タブレットだけ）を出す。🚨 前の一覧が出ていればそちらを残す
+    const tryChannelCopy = async (err: unknown): Promise<boolean> => {
+      if (!isNetworkFailure(err)) return false;
+      const c = await loadCopy<ChannelCopy>(user.id, 'board_channels');
+      if (!c || c.channels.length === 0) return false;
+      if (channelsCountRef.current > 0) { setChannelsFailed(false); setLoadingData(false); return true; }  // 前の一覧を残す
+      setChannels(c.channels);
+      setMembers(c.members.map(m => ({ ...m, profile: null })));
+      setMessages(c.messages);
+      setLastSeen(c.lastSeen);
+      setReadCounts(prev => ({ ...c.readCounts, ...prev }));
+      setConfirmations(prev => ({ ...c.myConf, ...prev }));
+      mergeCopyNames(c.names);
+      setChannelsFromCopy(true);
+      setChannelsFailed(false); setLoadingData(false);
+      return true;
+    };
     // 🚨 読めなかったときに「グループがありません」「DMがありません」と出さない（2026-10-21 電波 段5）。前の一覧は残す
-    if (myMemErr) { console.error('グループ・DMの読み込みに失敗:', myMemErr.code, myMemErr.message); setChannelsFailed(true); setLoadingData(false); return; }
+    if (myMemErr) {
+      console.error('グループ・DMの読み込みに失敗:', myMemErr.code, myMemErr.message);
+      if (await tryChannelCopy(myMemErr)) return;
+      setChannelsFailed(true); setLoadingData(false); return;
+    }
     const cids = (myMem || []).map((m: { channel_id: string }) => m.channel_id);
 
     if (cids.length === 0) {
@@ -825,14 +876,20 @@ const BoardPage: React.FC = () => {
     if (canManageRes.error) console.error('グループ編集権限の確認に失敗:', canManageRes.error.code, canManageRes.error.message);
     setCanManageGroups(canManageRes.data === true);
 
-    if (chRes.error) { console.error('グループ・DMの読み込みに失敗:', chRes.error.code, chRes.error.message); setChannelsFailed(true); setLoadingData(false); return; }
+    if (chRes.error) {
+      console.error('グループ・DMの読み込みに失敗:', chRes.error.code, chRes.error.message);
+      if (await tryChannelCopy(chRes.error)) return;
+      setChannelsFailed(true); setLoadingData(false); return;
+    }
     setChannelsFailed(false);
+    setChannelsFromCopy(false);
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
     const now = new Date().toISOString();
     setMessages((msgRes.data || []).filter((m: any) => !m.scheduled_at || m.scheduled_at <= now).map((m: any) => ({ ...m, profile: null })));
 
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
+    let copyConf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]> = {};
     const confirmMsgIds = (msgRes.data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     if (confirmMsgIds.length > 0) {
       const { data: confData, error: confErr } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
@@ -848,6 +905,7 @@ const BoardPage: React.FC = () => {
       //    「✓ 読了済み」が付かない（2026-09-08 実機報告の原因の1つ）。
       //    自分が送ったお知らせは loadOutbox が後から入れ直すので気づかれにくかった
       if (!confErr) setConfirmations(prev => ({ ...prev, ...confMap })); // 失敗したときは今の表示を残す（空で上書きしない）
+      if (!confErr) copyConf = confMap;
     }
 
     const ls: Record<string, string> = {};
@@ -861,16 +919,32 @@ const BoardPage: React.FC = () => {
     }
 
     // Read counts
+    let readForCopy: Record<string, number> = {};
     const msgIds = (msgRes.data || []).map((m: any) => m.id);
     if (msgIds.length > 0) {
       const { data: rcData } = await supabase.from('board_reads').select('message_id').in('message_id', msgIds);
       const rc: Record<string, number> = {};
       (rcData || []).forEach((r: any) => { rc[r.message_id] = (rc[r.message_id] || 0) + 1; });
       setReadCounts(prev => ({ ...prev, ...rc }));
+      readForCopy = rc;
+    }
+
+    // 端末の控え（スマホ・タブレットだけ・2026-10-24）。読み込んだ分をそのまま（最大500件）。他人の情報は最小限（ChannelCopy の説明）
+    {
+      const chList = (chRes.data || []) as Channel[];
+      const memList = (memRes.data || []).map((m: { channel_id: string; user_id: string }) => ({ channel_id: m.channel_id, user_id: m.user_id }));
+      const msgList = (msgRes.data || []).filter((m: any) => !m.scheduled_at || m.scheduled_at <= now)
+        .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })) as BoardMessage[];
+      const myConf: ChannelCopy['myConf'] = {};
+      for (const [id, list] of Object.entries(copyConf)) { const mine = list.filter(c => c.user_id === user.id); if (mine.length) myConf[id] = mine; }
+      const dmPartners = new Set(memList.filter(m => chList.some(c => c.id === m.channel_id && c.type === 'dm')).map(m => m.user_id));
+      const nameIds = new Set<string>([...msgList.map(m => m.user_id), ...dmPartners]);
+      const names = ((profRes.data || []) as SimpleProfile[]).filter(p => nameIds.has(p.id)).map(p => ({ id: p.id, name: p.name }));
+      if (!profRes.error) void saveCopy<ChannelCopy>(user.id, 'board_channels', { channels: chList, members: memList, messages: msgList, lastSeen: ls, readCounts: readForCopy, myConf, names });
     }
 
     setLoadingData(false);
-  }, [user]);
+  }, [user, mergeCopyNames]);
 
   const loadFavorites = useCallback(async () => {
     if (!user) return;
@@ -1118,8 +1192,8 @@ const BoardPage: React.FC = () => {
     setInboxReadIds(prev => (prev.size > 0 ? prev : new Set(c.readIds)));
     setConfirmations(prev => ({ ...c.myConf, ...prev }));
     if (c.replyCounts) setUnreadReplyCounts(prev => (Object.keys(prev).length > 0 ? prev : c.replyCounts!));
-    setAllProfiles(prev => (prev.length > 0 ? prev : c.senders.map(p => ({ id: p.id, name: p.name, role_title: null, employment_type: null, group_names: null }))));
-  }, []);
+    mergeCopyNames(c.senders);
+  }, [mergeCopyNames]);
   /** 控えを作る（本文・自分の既読・自分の読了／回答・送り主の名前だけ） */
   const makeBoardCopy = (list: BoardMessage[], readIds: Iterable<string>, conf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]>, names: SimpleProfile[], replyCounts?: Record<string, number>): BoardCopy | null => {
     if (!user) return null;
@@ -2969,7 +3043,8 @@ const BoardPage: React.FC = () => {
                 const canSeeReadDetail =
                   rdSetting === 'all' ||
                   (rdSetting === 'permitted' && canSendInChannel(selectedChannelId ?? ''));
-                return (canSeeReadDetail) ? (
+                // 🚨 控えから出しているときは既読の人の一覧が無いので、数だけ（押せない）にする（2026-10-24）
+                return (canSeeReadDetail && !channelsFromCopy) ? (
                   <button type="button" onClick={async () => {
                     const { data } = await supabase.from('board_reads').select('user_id, read_at').eq('message_id', msg.id);
                     setReadDetailUsers((data || []).map((r: any) => ({ user_id: r.user_id, read_at: r.read_at })));
@@ -3350,7 +3425,8 @@ const BoardPage: React.FC = () => {
           ) : (
             <>
               <div style={{ fontSize: 13, color: subColor, marginBottom: 8 }}>参加メンバー ({currentMembers.length}人)</div>
-              {currentMembers.map(m => {
+              {/* 🚨 控えから出しているときは参加者の名前が無い（控えに入れていない）ので、人数だけにする（2026-10-24） */}
+              {!channelsFromCopy && currentMembers.map(m => {
                 const p = allProfiles.find(ap => ap.id === m.user_id);
                 return (
                   <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: `1px solid ${border}` }}>
