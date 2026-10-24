@@ -8,7 +8,7 @@ import AppRequestCard from '../components/AppRequestCard';
 import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
-import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_SLOW_TEXT, timeoutSignal } from '../lib/netFailure';
+import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_SLOW_TEXT, TRIP_PENDING_LOAD_FAILED_TEXT, timeoutSignal } from '../lib/netFailure';
 import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import LoadFailedNotice from '../components/LoadFailedNotice';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
@@ -3657,12 +3657,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [tripLoaded, setTripLoaded] = useState(false);
   const [tripReplaceFor, setTripReplaceFor] = useState<string | null>(null);
   const [tripNotice, setTripNotice] = useState('');
+  // 読めなかったとき（2026-10-24）。前の一覧は残す・赤い枠と［再読み込み］
+  const [tripLoadFailed, setTripLoadFailed] = useState(false);
   // フォームを作り直すための番号（一覧から別の日の下書きを開いたとき・フォームは開いたときに下書きを読むため）
   const [formKey, setFormKey] = useState(0);
   const fetchTripDays = useCallback(async () => {
     const r = await loadMyTripPendingDays();
     setTripLoaded(true);
-    if (r.error) { console.error('[出張の申請がまだの日] 読み込めませんでした', r.error); return; }
+    if (r.error) { console.error('[出張の申請がまだの日] 読み込めませんでした', r.error); setTripLoadFailed(true); return; }
+    setTripLoadFailed(false);
     setTripDays(r.days.filter(d => d.form === 'overtime'));
   }, []);
   useEffect(() => { void fetchTripDays(); }, [fetchTripDays]);
@@ -4346,6 +4349,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               </div>
             )}
             {/* 📋 出張の申請がまだの日（2026-10-14）。出すまで毎日残る。🚨 件数は履歴タブの数字に足さない（何の件数か分からなくなるため） */}
+            {!editTarget && tripLoadFailed && <LoadFailedNotice text={TRIP_PENDING_LOAD_FAILED_TEXT} onRetry={() => void fetchTripDays()} />}
             {!editTarget && tripDays.length > 0 && (
               <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}` }}>
                 <div style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#f5e3b0' : '#5c4400', marginBottom: 4 }}>📋 出張の申請がまだの日（{tripDays.length}件）</div>

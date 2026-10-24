@@ -3,7 +3,7 @@ import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '..
 import { useUnavailableIds } from '../hooks/useUnavailableIds';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT, isNetworkFailure, timeoutSignal } from '../lib/netFailure';
+import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT, TRIP_PENDING_LOAD_FAILED_TEXT, isNetworkFailure, timeoutSignal } from '../lib/netFailure';
 import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import { submitOnce } from '../lib/submitOnce';
 import PendingSubmitLine from '../components/PendingSubmitLine';
@@ -1576,12 +1576,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [tripLoaded, setTripLoaded] = useState(false);
   const [tripReplaceFor, setTripReplaceFor] = useState<string | null>(null);
   const [tripErr, setTripErr] = useState('');
+  // 読めなかったとき（2026-10-24）。前の一覧は残す・赤い枠と［再読み込み］
+  const [tripLoadFailed, setTripLoadFailed] = useState(false);
   const tripStartDate = useTripApplyStart();
   const tripNotesOn = !!tripStartDate && todayStr() >= tripStartDate;
   const fetchTripDays = useCallback(async () => {
     const r = await loadMyTripPendingDays();
     setTripLoaded(true);
-    if (r.error) { console.error('[出張の申請がまだの日] 読み込めませんでした', r.error); return; }
+    if (r.error) { console.error('[出張の申請がまだの日] 読み込めませんでした', r.error); setTripLoadFailed(true); return; }
+    setTripLoadFailed(false);
     setTripDays(r.days.filter(d => d.form === 'shift_report'));
   }, []);
   useEffect(() => { void fetchTripDays(); }, [fetchTripDays]);
@@ -2034,6 +2037,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <button onClick={() => setTripErr('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText }}>✕</button>
               </div>
             )}
+            {tripNotesOn && tripLoadFailed && <LoadFailedNotice text={TRIP_PENDING_LOAD_FAILED_TEXT} onRetry={() => void fetchTripDays()} />}
             {/* 📋 出張の申請がまだの日（2026-10-14）。出すまで毎日残る */}
             {tripDays.length > 0 && (
               <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 10, background: isDark ? '#3a2e10' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffcc80'}`, textAlign: 'left' }}>
