@@ -1619,7 +1619,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     tripParamDone.current = true;
     const day = tripDays.find(d => d.work_date === tripParam);
     if (day) { setTab('apply'); void pickTrip(day); }
-    else setTripErr(`${tripDayLabel(tripParam)} の勤務変更はすでにあります。［履歴］で確かめられます。`);
+    // 🚨 一覧に無い日は「報告済み」だけではない（登録シフトどおりの出張・締めた期間など・2026-10-24）
+    else setTripErr(`${tripDayLabel(tripParam)} は勤務変更の下書きの対象ではありません（報告済み、または登録シフトどおりの出張です）。［履歴］で確かめられます。`);
     setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('trip'); return n; });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripParam, tripDays, tripLoaded]);
@@ -2078,7 +2079,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <li>報告先は、出勤する校の担当のリーダー・マネージャー（またはフロア責任者）を選択してください。</li>
                 <li>受理されると「受理済み」に変わります。</li>
                 <li>間違えた場合、受理前はご自身で修正・取消ができます。受理後は「📩 修正依頼」から依頼してください。</li>
-                {tripNotesOn && <li>出張報告（到着か終了）を送った日は、上の「📋 出張の申請がまだの日」から、日付と勤務地が入った下書きを開けます。実際の時刻と理由を入れて報告してください。</li>}
+                {tripNotesOn && <li>出張報告（到着か終了）を送った日は、上の「📋 出張の申請がまだの日」から、日付と勤務地が入った下書きを開けます。実際の時刻と理由を入れて報告してください。登録シフトに入っている出張先へ、シフトの時間内に行った日は、下書きを作成しません。</li>}
                 {/* 🚨 報告できる期間の上限（2026-09-09）。休暇と同じ上限にそろえている。
                     判定は lib/breakCalc の leaveRequestMaxDate 1か所 */}
                 <li>報告できるのは<b>1年先まで</b>です（{jpDateLabel(leaveRequestMaxDate(todayStr()))}まで）。</li>

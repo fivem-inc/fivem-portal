@@ -17,7 +17,7 @@ import HelpLinkButton from './HelpLinkButton';
 import type { AuthUser, BusinessTripReport } from '../types';
 import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE, PAGE_TAB_GREEN } from '../lib/buttonStyles';
 import { toJstDateStr } from '../lib/breakCalc';
-import { loadMyTripPendingDays, tripDraftNote, useTripApplyStart } from '../lib/tripPending';
+import { loadMyTripDayOnRoster, loadMyTripPendingDays, tripDraftNote, tripRosterNote, useTripApplyStart } from '../lib/tripPending';
 
 // 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
 interface TripHistoryRow {
@@ -470,7 +470,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         const today = toJstDateStr(new Date());
         const pend = await loadMyTripPendingDays();
         const day = pend.days.find(x => x.work_date === today);
-        setTripNote(day ? tripDraftNote(reportType, day) : null);
+        // パートの方の予定どおりの出張は下書きを出さない（2026-10-24）。そのときは理由の1行（到着なら終了の報告を促す）
+        const onRoster = !day && tripDraftOn && await loadMyTripDayOnRoster(today);
+        setTripNote(day ? tripDraftNote(reportType, day) : onRoster ? tripRosterNote(reportType) : null);
       }
       setSubmitted(true);
       setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);

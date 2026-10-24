@@ -55,6 +55,22 @@ export function tripDraftNote(type: '到着' | '終了', day: TripPendingDay): {
   };
 }
 
+/**
+ * パートの方の「予定どおりの出張」（登録シフト・シフト表に入っている行き先で、シフトの時間内）を送ったあとの1行（2026-10-24 ユーザー確定 案1）。
+ * 🚨 下書きを出さない判定は DB の trip_day_on_roster 1か所（my_trip_pending_days と my_trip_day_on_roster が使う）。画面で判定し直さない
+ */
+export function tripRosterNote(type: '到着' | '終了'): { type: '到着' | '終了'; note: string } {
+  if (type === '到着') return { type, note: '登録シフトどおりの出張のため、勤務変更の下書きは作成していません。出張の終了後は、終了の報告を送ってください。' };
+  return { type, note: '登録シフトどおりの出張のため、勤務変更の下書きは作成していません。シフトと違う勤務があった場合は、勤務変更で報告してください。' };
+}
+
+/** 本人のその日が予定どおりの出張で、下書きを出していないか（読めなければ false＝何も添えない） */
+export async function loadMyTripDayOnRoster(date: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('my_trip_day_on_roster', { p_date: date });
+  if (error) { console.error('[予定どおりの出張] 読み込めませんでした', error); return false; }
+  return data === true;
+}
+
 /** "M/D（曜）"（ほかの画面と同じ形） */
 export function tripDayLabel(date: string, withDow = true): string {
   const [y, m, d] = date.split('-').map(Number);
