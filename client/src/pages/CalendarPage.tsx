@@ -240,10 +240,10 @@ interface OvertimeEvent {
   isPending: boolean;
 }
 
-/** 残業の表示ラベル（種別は最大2つまで。gcal-sync のタイトルと同じ考え方）
+/** 残業の表示ラベル（種別は全部・優先順。gcal-sync のタイトルと同じ考え方・2026-10-24 に2つまでをやめた）
  *  🚨 札の文字は typeLabelFor（押した事情で「遅出(イベント・会議など)」などに変わる・2026-09-26）。本人ページ・管理画面・Google カレンダーと同じ表記 */
 const otEventLabel = (ev: OvertimeEvent): string =>
-  ev.types.slice(0, 2).map(t => typeLabelFor(t, ev)).join('＋') + (ev.originOf ? '(振替元)' : '');
+  ev.types.map(t => typeLabelFor(t, ev)).join('＋') + (ev.originOf ? '(振替元)' : '');
 
 /** 残業の時刻表示。何時に来るか／何時に帰るかのうち、その種別で大事な方を出す */
 const otEventTime = (ev: OvertimeEvent): string => {

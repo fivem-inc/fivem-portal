@@ -398,7 +398,7 @@ serve(async (req) => {
           { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
       }
 
-      // タイトル生成：名前｜種別(最大2つ)｜時刻［校］。実績があれば実績、なければ予定の時間帯を使う。
+      // タイトル生成：名前｜種別（全部・優先順）｜時刻［校］。実績があれば実績、なければ予定の時間帯を使う。
       const { data: prof } = await supabase.from('profiles').select('name').eq('id', report.applicant_id).maybeSingle()
       const otName = String(prof?.name ?? '').replace(/　/g, ' ')
       const segs = (report.segments ?? []) as { phase: string; seg_no: number; start_min: number; end_min: number }[]
@@ -418,7 +418,9 @@ serve(async (req) => {
         if (t === 'early_end_adj' && SITUATION_SUFFIX[String(report.early_situation ?? '')]) return `早退(${SITUATION_SUFFIX[String(report.early_situation)]})`
         return OVERTIME_TYPES[t].label
       }
-      const labels = syncTypes.slice(0, 2).map(labelOf).join('＋')
+      // 🚨 種類は全部書く（2026-10-24 ユーザー確定。前は2つまでで、3つ目の勤務地変更などが名前から外れて分かりにくかった）。
+      //    画面の見本（client/src/lib/overtimeTypes.ts の buildGcalSummary）と同じにする
+      const labels = syncTypes.map(labelOf).join('＋')
       const primary = syncTypes[0]
       let timeStr = ''
       if (firstStart != null && lastEnd != null) {

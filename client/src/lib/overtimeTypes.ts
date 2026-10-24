@@ -303,7 +303,9 @@ export function buildGcalSummary(input: GcalSummaryInput): string | null {
   const syncTypes = calendarTypesInOrder(input.types);
   if (syncTypes.length === 0) return null;
   const primary = syncTypes[0];
-  const label = syncTypes.slice(0, 2).map(t => gcalLabelOf(t, input.situation)).join('＋');
+  // 🚨 種類は全部書く（2026-10-24 ユーザー確定。前は2つまでで、残業＋早出＋勤務地変更 の勤務地変更が名前から外れて分かりにくかった）。
+  //    gcal-sync（supabase/functions/gcal-sync/index.ts の labels）と同じにする
+  const label = syncTypes.map(t => gcalLabelOf(t, input.situation)).join('＋');
 
   let timeStr = '';
   if (input.firstStartMin != null && input.lastEndMin != null) {
