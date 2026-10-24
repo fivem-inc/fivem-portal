@@ -396,7 +396,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
   const [bannerOut, setBannerOut] = useState<{ left: number; width: number } | null>(null);
   useEffect(() => {
     if (!bannerEl) { setBannerOut(null); return; }
-    const top = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-height'), 10) || 60;
+    const cs = getComputedStyle(document.documentElement);
+    // 圏外の黄色い帯の分も足す（components/OfflineBand の --offline-band-h）
+    const top = (parseInt(cs.getPropertyValue('--topbar-height'), 10) || 60) + (parseInt(cs.getPropertyValue('--offline-band-h'), 10) || 0);
     const io = new IntersectionObserver(([e]) => {
       const r = e.boundingClientRect;
       setBannerOut(!e.isIntersecting && r.top < top ? { left: r.left, width: r.width } : null);
@@ -2361,7 +2363,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean; board?: ShiftBoard; leaves
             <div ref={setBannerEl} style={{ ...row, marginBottom: 8 }}>{body}</div>
             {/* 画面を下へ動かして帯が隠れたら、上に固定して出す（同じ中身） */}
             {bannerOut && (
-              <div style={{ ...row, position: 'fixed', top: 'var(--topbar-height, 60px)', left: bannerOut.left, width: bannerOut.width, zIndex: 250, boxSizing: 'border-box', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>{body}</div>
+              <div style={{ ...row, position: 'fixed', top: 'calc(var(--topbar-height, 60px) + var(--offline-band-h, 0px))', left: bannerOut.left, width: bannerOut.width, zIndex: 250, boxSizing: 'border-box', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>{body}</div>
             )}
           </>
         );

@@ -3001,7 +3001,7 @@ const BoardPage: React.FC = () => {
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     const parentSender = allProfiles.find(p => p.id === parentMsg.user_id)?.name || '不明';
     return (
-      <div ref={threadColRef} style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
+      <div ref={threadColRef} style={{ position: 'fixed', top: 'calc(var(--topbar-height, 60px) + var(--offline-band-h, 0px))' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
         {/* Thread header */}
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, position: 'sticky', top: 0, zIndex: 10 }}>
           <button type="button" onClick={() => { navigate(-1); /* 書きかけは残す（リプライごとに保存・2026-10-14） */ }}
@@ -5358,7 +5358,7 @@ const BoardPage: React.FC = () => {
       )}
       {/* サイドバーヘッダー */}
       {(showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
+        <div style={{ position: 'fixed', top: 'calc(var(--topbar-height, 60px) + var(--offline-band-h, 0px))' as string, left: 0, zIndex: 50, background: cardBg, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
           {/* 🚨 justifyContent は付けない（flex-start）。ボタン群は自分の marginLeft:'auto' で
                  右端へ行く。space-between にすると、PC で題名が280pxの右端へ飛んで
                  「💬 連絡板」と離れてしまう。 */}
@@ -5381,7 +5381,7 @@ const BoardPage: React.FC = () => {
       )}
       {/* コンテンツヘッダー（モバイル: サイドバー非表示時、デスクトップ: 常時） */}
       {(!showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, background: cardBg, boxSizing: 'border-box' }}>
+        <div style={{ position: 'fixed', top: 'calc(var(--topbar-height, 60px) + var(--offline-band-h, 0px))' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, background: cardBg, boxSizing: 'border-box' }}>
         <div style={{ padding: '8px 14px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
           {isMobile && (
             <button type="button" onClick={() => navigate(-1)}

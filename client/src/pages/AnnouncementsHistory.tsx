@@ -11,6 +11,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { backBtn } from '../lib/buttonStyles';
+import LoadFailedNotice from '../components/LoadFailedNotice';
+import { isNetworkFailure, NOTICE_LOAD_FAILED_TEXT } from '../lib/netFailure';
 
 interface Row { id: string; title: string; body: string; created_at: string; starts_at: string | null; ends_at: string | null; active: boolean }
 
@@ -29,6 +31,9 @@ const AnnouncementsHistory: React.FC = () => {
   const [acks, setAcks] = useState<Map<string, string>>(new Map());
   const [open, setOpen] = useState<string | null>(null);
   const [err, setErr] = useState('');
+  // 通信のせいで読めなかったとき（2026-10-24・圏外で英語の文が出ていた）。前の一覧は残す・［再読み込み］
+  const [netFailed, setNetFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -36,7 +41,11 @@ const AnnouncementsHistory: React.FC = () => {
         supabase.from('announcements').select('id, title, body, created_at, starts_at, ends_at, active').eq('active', true).order('created_at', { ascending: false }).limit(200),
         supabase.from('home_acks').select('item_key, acked_at').like('item_key', 'ann:%'),
       ]);
-      if (a.error) { setErr('読み込めませんでした：' + a.error.message); setRows([]); return; }
+      if (a.error) {
+        if (isNetworkFailure(a.error)) { setNetFailed(true); setErr(''); return; }
+        setNetFailed(false); setErr('読み込めませんでした：' + a.error.message); setRows([]); return;
+      }
+      setNetFailed(false); setErr('');
       const m = new Map<string, string>();
       for (const r of (h.data ?? []) as { item_key: string; acked_at: string }[]) {
         const id = r.item_key.split(':')[1];
@@ -48,7 +57,7 @@ const AnnouncementsHistory: React.FC = () => {
       const now = Date.now();
       setRows(((a.data ?? []) as Row[]).filter(r => !r.starts_at || new Date(r.starts_at).getTime() <= now));
     })();
-  }, []);
+  }, [reloadKey]);
 
   const sorted = useMemo(() => {
     if (!rows) return [];
@@ -74,9 +83,10 @@ const AnnouncementsHistory: React.FC = () => {
       <p style={{ fontSize: 12.5, color: sub, margin: '0 0 12px', lineHeight: 1.7 }}>
         管理者からのお知らせの一覧です。押すと本文が開きます。掲載期限が切れたのにまだ確認していないものを、いちばん上に出しています。
       </p>
+      {netFailed && <LoadFailedNotice text={NOTICE_LOAD_FAILED_TEXT} onRetry={() => setReloadKey(k => k + 1)} />}
       {err && <p style={{ color: '#842029', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>{err}</p>}
-      {rows === null && <p style={{ color: sub, fontSize: 13 }}>読み込み中…</p>}
-      {rows !== null && sorted.length === 0 && !err && <p style={{ color: sub, fontSize: 13 }}>お知らせはありません。</p>}
+      {rows === null && !netFailed && <p style={{ color: sub, fontSize: 13 }}>読み込み中…</p>}
+      {rows !== null && sorted.length === 0 && !err && !netFailed && <p style={{ color: sub, fontSize: 13 }}>お知らせはありません。</p>}
       <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 12, overflow: 'hidden' }}>
         {sorted.map((r, i) => {
           const now = Date.now();
