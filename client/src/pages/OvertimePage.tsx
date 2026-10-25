@@ -5224,6 +5224,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             latest={corrections.get(r.id) ?? null}
                             canRequest
                             onSubmitted={reloadCorrections}
+                            // 振替休日の休む日に出勤（在宅など）することになったとき（2026-10-26 ユーザー確定）
+                            note={(r.application_types ?? []).includes('furikae_off')
+                              ? '振替休日を出勤に変えたいときは、取り消したあと休日出勤と勤務地変更で出し直します' : undefined}
                           />
                         )}
                       </div>

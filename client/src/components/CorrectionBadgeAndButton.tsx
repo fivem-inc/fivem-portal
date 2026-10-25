@@ -16,12 +16,13 @@ interface Props {
   latest: CorrectionRequestRow | null;   // この申請に紐づく最新の依頼（無ければnull）
   canRequest: boolean;                    // 依頼ボタンを出す条件（承認後など）
   onSubmitted: () => void;                // 送信・取り下げ後に親が再取得する
+  note?: string;                          // 依頼の画面に出す案内の1行（任意）
 }
 
 const PURPLE = '#534AB7';
 
 const CorrectionBadgeAndButton: React.FC<Props> = ({
-  targetType, targetId, targetLabel, fields, requesterName, isDark, latest, canRequest, onSubmitted,
+  targetType, targetId, targetLabel, fields, requesterName, isDark, latest, canRequest, onSubmitted, note,
 }) => {
   const [modalKind, setModalKind] = useState<CorrectionRequestKind | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -87,6 +88,7 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
           requesterName={requesterName}
           isDarkMode={isDark}
           initialKind={modalKind}
+          note={note}
           onClose={() => setModalKind(null)}
           onSubmitted={() => { setModalKind(null); onSubmitted(); }}
         />

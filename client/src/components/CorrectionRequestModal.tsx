@@ -19,6 +19,7 @@ interface Props {
   requesterName: string;
   isDarkMode: boolean;
   initialKind?: CorrectionRequestKind;  // カードのどちらの入口から開いたか（既定 edit）
+  note?: string;               // 申請の種類ごとの案内の1行（例：振替休日を出勤に変えたいとき・2026-10-26）
   onClose: () => void;
   onSubmitted: () => void;
 }
@@ -27,7 +28,7 @@ const PURPLE = '#534AB7';
 const RED = '#A32D2D';
 
 const CorrectionRequestModal: React.FC<Props> = ({
-  targetType, targetId, targetLabel, fields, requesterName, isDarkMode, initialKind = 'edit', onClose, onSubmitted,
+  targetType, targetId, targetLabel, fields, requesterName, isDarkMode, initialKind = 'edit', note, onClose, onSubmitted,
 }) => {
   const [kind, setKind] = useState<CorrectionRequestKind>(initialKind);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -109,7 +110,10 @@ const CorrectionRequestModal: React.FC<Props> = ({
         <div style={{ fontSize: 16, fontWeight: 'bold', color: text, marginBottom: 2 }}>
           {isCancel ? '管理者に取消を依頼' : '管理者に修正を依頼'}
         </div>
-        <div style={{ fontSize: 12, color: sub, marginBottom: 14 }}>{targetLabel}</div>
+        <div style={{ fontSize: 12, color: sub, marginBottom: note ? 8 : 14 }}>{targetLabel}</div>
+        {note && (
+          <div style={{ fontSize: 12, lineHeight: 1.6, marginBottom: 14, padding: '6px 10px', borderRadius: 8, background: isDarkMode ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDarkMode ? '#4a90d9' : '#90caf9'}`, color: isDarkMode ? '#fff' : '#1565c0' }}>{note}</div>
+        )}
 
         {/* 修正／取消の切替 */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
