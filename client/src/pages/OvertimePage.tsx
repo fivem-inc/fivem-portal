@@ -5,6 +5,7 @@ import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import AppRequestCard from '../components/AppRequestCard';
+import ApplicationRequestSheet from '../components/ApplicationRequestSheet';
 import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
@@ -154,6 +155,9 @@ interface OvertimeReport {
   /** 振替元の日がまだ来ていなかった振替休日（あとで振替元の実績を報告する・DB のトリガーが決める・2026-10-26） */
   furikae_report_needed?: boolean | null;
   /** 振替元の予定（実績報告の直前の値・DB のトリガーが写す） */
+  /** 振替元の日に勤務しなかった（本人が［この日は勤務しませんでした］・2026-10-26 段5。書けるのは Edge Function だけ） */
+  furikae_not_worked_at?: string | null;
+  furikae_not_worked_reason?: string | null;
   furikae_planned?: { date?: string | null; location?: string | null; start?: string | null; end?: string | null; break_minutes?: number | null; labor_minutes?: number | null; diff_minutes?: number | null } | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
@@ -623,6 +627,12 @@ const OvertimeForm: React.FC<{
     && (editTarget.status === 'request_confirmed' || (editTarget.status === 'returned' && !!editTarget.request_confirmed_at));
   // ［勤務時間が申請と異なりました］を押したか（報告の差し戻しのあとは、初めから直す欄を出す）
   const [furikaeDiffer, setFurikaeDiffer] = useState(() => !!editTarget && editTarget.status === 'returned');
+  // ［この日は勤務しませんでした］（2026-10-26 段5）。理由は選ぶ形（その他だけ書く）。書き込みは Edge Function（overtime-approve の not_worked）だけ
+  const [notWorkedOpen, setNotWorkedOpen] = useState(false);
+  const [nwReason, setNwReason] = useState<'体調不良' | '行事の中止' | 'その他' | ''>('');
+  const [nwOther, setNwOther] = useState('');
+  const [nwSending, setNwSending] = useState(false);
+  const [nwError, setNwError] = useState('');
 
   const [mode, setMode] = useState<'advance' | 'posthoc'>(() => {
     if (editTarget) return editTarget.is_post_hoc ? 'posthoc' : 'advance';
@@ -1838,6 +1848,60 @@ const OvertimeForm: React.FC<{
               {asPlannedNote && (
                 <p style={{ margin: '6px 0 0', fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '6px 10px' }}>{asPlannedNote}</p>
               )}
+              {/* 振替元の日に勤務しなかった（2026-10-26 段5・モック③）。押し間違えないよう、上の2つから離して枠だけのボタンで */}
+              {(editTarget.status !== 'request_confirmed' || furikaeGate !== 'none') && (!notWorkedOpen ? (
+                <button type="button" onClick={() => { setNotWorkedOpen(true); setNwError(''); }}
+                  style={{ ...backBtn(isDark), width: '100%', marginTop: 18, fontSize: 13.5 }}>
+                  この日は勤務しませんでした
+                </button>
+              ) : (() => {
+                const origin = editTarget.furikae_origin_date ?? '';
+                const om = `${origin.slice(5).replace('-', '/')}（${dowLabel(origin || editTarget.work_date)}）`;
+                const wm = `${editTarget.work_date.slice(5).replace('-', '/')}（${dowLabel(editTarget.work_date)}）`;
+                const self = editTarget.reviewer_id === user.id;
+                const who = editTarget.reviewer?.name ?? '申請先の方';
+                const why = nwReason === 'その他' ? nwOther.trim() : nwReason;
+                const send = async () => {
+                  if (!nwReason) { setNwError('理由を選んでください'); return; }
+                  if (nwReason === 'その他' && !nwOther.trim()) { setNwError('理由を入力してください'); return; }
+                  setNwSending(true); setNwError('');
+                  const { data, error } = await supabase.functions.invoke('overtime-approve', { body: { report_id: editTarget.id, action: 'not_worked', comment: why } });
+                  const res = data as { success?: boolean; error?: string } | null;
+                  setNwSending(false);
+                  if (error || !res?.success) { setNwError('送れませんでした：' + (res?.error ?? error?.message ?? '通信を確認してください')); return; }
+                  onSaved(undefined, self
+                    ? `振替元 ${om} に勤務しなかったことを記録しました。休む日 ${wm} を出勤に戻すか、有休などに切り替えてください（履歴のカードから）`
+                    : `${who}さんに伝えました。休む日 ${wm} の扱いが決まるまでお待ちください`);
+                };
+                return (
+                  <div style={{ marginTop: 18, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 12px 14px' }}>
+                    <p style={{ margin: '0 0 8px', fontSize: 12.5, color: text, lineHeight: 1.7 }}>
+                      {self
+                        ? `${om} に勤務しなかったことを記録します。休む日 ${wm} は、記録したあと「出勤に戻す」か「有休などに切り替える」かを決めます。`
+                        : `${om} に勤務しなかったことを${who}さんに伝えます。休む日 ${wm} の扱い（出勤に戻す・有休などに切り替える）は${who}さんと決めます。`}
+                    </p>
+                    <span style={{ ...labelStyle, marginBottom: 4 }}>理由{req}</span>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {(['体調不良', '行事の中止', 'その他'] as const).map(v => (
+                        <button key={v} type="button" onClick={() => { setNwReason(v); setNwError(''); }}
+                          style={{ padding: '6px 14px', borderRadius: 16, fontSize: 13, fontWeight: 'bold', border: 'none', cursor: 'pointer',
+                            background: nwReason === v ? TOGGLE_BLUE : '#e3f2fd', color: nwReason === v ? '#fff' : '#1565c0' }}>{v}</button>
+                      ))}
+                    </div>
+                    {nwReason === 'その他' && (
+                      <input type="text" value={nwOther} onChange={e => setNwOther(e.target.value)} maxLength={200}
+                        placeholder="理由を入力してください" style={{ ...fieldStyle, marginTop: 6 }} />
+                    )}
+                    <p style={{ margin: '8px 0 0', fontSize: 12, color: '#856404', lineHeight: 1.6 }}>少しでも働いた場合は［勤務時間が申請と異なりました］を選んでください</p>
+                    {nwError && <p style={{ margin: '6px 0 0', fontSize: 12.5, color: '#dc3545' }}>{nwError}</p>}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button type="button" onClick={() => { setNotWorkedOpen(false); setNwError(''); }} style={{ ...backBtn(isDark), flex: 1 }}>戻る</button>
+                      <button type="button" data-net="write" onClick={send} disabled={nwSending}
+                        style={{ ...primaryBtn({ disabled: nwSending }), flex: 2 }}>{nwSending ? '送信中...' : self ? '記録する' : '伝える'}</button>
+                    </div>
+                  </div>
+                );
+              })())}
             </>
           ) : (
             <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 12px 14px' }}>
@@ -2970,8 +3034,8 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 送信（インライン確認） */}
-      {!showConfirm ? (
+      {/* 送信（インライン確認）。🚨 ［この日は勤務しませんでした］の窓を開いている間は出さない（取り違えて「予定どおり」で送らないように） */}
+      {furikaeReportMode && notWorkedOpen ? null : !showConfirm ? (
         <button ref={submitBtnRef} onClick={handleSubmit} disabled={saving}
           style={{ ...primaryBtn({ disabled: saving }), width: '100%', ...(submitFlash ? { boxShadow: '0 0 0 4px rgba(13,110,253,0.35)' } : {}), transition: 'box-shadow 0.4s' }}>
           {clockOnlyMode ? 'この内容で記録する（確定）' : (isReportPhase || furikaeReportMode) ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
@@ -3626,6 +3690,28 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     fetchOwnCard();
   };
 
+  // 振替元の日に勤務しなかった振替休日を、申請先（または自己受理の本人）が取り消す（2026-10-26 段5）。
+  // switchTo＝「有休・時間外調整休・欠勤にする」を選んだとき＝取り消したあと、申請の依頼の入口を出す
+  const [notWorkedDone, setNotWorkedDone] = useState<{ applicantId: string; applicantName: string; workDate: string; switchTo: boolean } | null>(null);
+  const [notWorkedAsk, setNotWorkedAsk] = useState<{ id: string; switchTo: boolean } | null>(null);
+  const [appReqSheet, setAppReqSheet] = useState<{ kind: 'leave' | 'overtime'; recipientId: string; date: string } | null>(null);
+  const doCancelNotWorked = async (r: OvertimeReport, switchTo: boolean) => {
+    setActingId(r.id);
+    setActionError('');
+    const res = await callApproveFunction(r.id, 'cancel');
+    if (!res.ok) {
+      setActionError('取消に失敗しました：' + (res.error ?? ''));
+    } else {
+      setNotWorkedDone({ applicantId: r.applicant_id, applicantName: r.applicant?.name ?? '', workDate: r.work_date, switchTo });
+      if (res.gcalOk === false) setGcalWarning({ message: '取消は完了しましたが、Googleカレンダーからの削除に失敗しました。', reportId: r.id });
+    }
+    setNotWorkedAsk(null);
+    setActingId(null);
+    fetchPendingForMe();
+    fetchOwn();
+    fetchOwnCard();
+  };
+
   const doReturn = async (r: OvertimeReport) => {
     if (!returnComment.trim()) return;
     setActingId(r.id);
@@ -4093,6 +4179,40 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   //    見出し（← と題名）とエラーの枠は、タブの上のいつもの場所に出るので、ここには置かない
   const confirmBody = isConfirmView ? (
     <>
+          {/* 振替元の日に勤務しなかった振替休日を取り消したあと（2026-10-26 段5）。切り替えるときは申請の依頼の入口を出す */}
+          {notWorkedDone && (
+            <div style={{ background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#155724', lineHeight: 1.7 }}>
+                振替休日を取り消しました（休む日 {notWorkedDone.workDate.slice(5).replace('-', '/')}（{dowLabel(notWorkedDone.workDate)}））。
+                {notWorkedDone.switchTo
+                  ? (canApplicationRequest && notWorkedDone.applicantId !== user.id
+                    ? `${notWorkedDone.applicantName}さんに、休む日の申請を依頼してください（有休は休暇の申請・時間外調整休と欠勤は残業の申請）。`
+                    : '休む日を有休・時間外調整休・欠勤にするときは、休暇申請・残業申請から出し直してください。')
+                  : `${notWorkedDone.applicantId !== user.id ? `${notWorkedDone.applicantName}さんの` : ''}休む日は出勤になります。`}
+              </p>
+              {notWorkedDone.switchTo && canApplicationRequest && notWorkedDone.applicantId !== user.id && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  <button type="button" style={{ ...tintBtn(false), flex: 1, minWidth: 140, padding: '8px 10px' }}
+                    onClick={() => setAppReqSheet({ kind: 'leave', recipientId: notWorkedDone.applicantId, date: notWorkedDone.workDate })}>休暇の申請を依頼する</button>
+                  <button type="button" style={{ ...tintBtn(false), flex: 1, minWidth: 140, padding: '8px 10px' }}
+                    onClick={() => setAppReqSheet({ kind: 'overtime', recipientId: notWorkedDone.applicantId, date: notWorkedDone.workDate })}>残業の申請を依頼する</button>
+                </div>
+              )}
+              <button type="button" onClick={() => setNotWorkedDone(null)} style={{ ...backBtn(isDark), marginTop: 8, padding: '6px 14px', fontSize: 12.5 }}>閉じる</button>
+            </div>
+          )}
+          {appReqSheet && (
+            <ApplicationRequestSheet
+              requesterId={user.id}
+              requesterName={profileName ?? ''}
+              isDark={isDark}
+              initialKind={appReqSheet.kind}
+              initialRecipientId={appReqSheet.recipientId}
+              initialDates={[appReqSheet.date]}
+              onClose={() => setAppReqSheet(null)}
+              onSubmitted={() => { setAppReqSheet(null); setNotWorkedDone(null); }}
+            />
+          )}
           {pendingForMe.length === 0 && (
             <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '24px 16px', textAlign: 'center' }}>
               <p style={{ margin: 0, fontSize: 14, color: subText }}>確認待ちの申請はありません</p>
@@ -4201,7 +4321,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         //    「何時間ぶんの振替なのか」が分からず、受理してよいか判断できない
                         <><span style={{ color: subText }}>振替元　　：</span>{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}{r.furikae_origin_start
                           // 振替元の実績の確認（2026-10-26）：予定と実績を並べる（予定は DB のトリガーが写した控え）
-                          ? (r.status === 'reported' && r.furikae_planned?.start
+                          ? (r.status === 'reported' && r.furikae_not_worked_at
+                            ? `・予定 ${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)} → 勤務しなかった`
+                            : r.status === 'reported' && r.furikae_planned?.start
                             ? `・予定 ${r.furikae_planned.start.slice(0, 5)}〜${(r.furikae_planned.end ?? '').slice(0, 5)} → 実績 ${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）`
                             : `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）`)
                           : ''}<br /></>
@@ -4339,11 +4461,43 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   ) : (
                     <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>シフト調整は、マネージャーが受理後に判断します</p>
                   ))}
+                  {r.furikae_not_worked_at ? (
+                    <div style={{ margin: '0 0 10px', padding: '10px 12px', borderRadius: 8, background: '#fff8e1', border: '1px solid #ffe0a3' }}>
+                      <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
+                        {r.applicant?.name ?? ''}さんから、振替元 {(r.furikae_origin_date ?? '').slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date ?? r.work_date)}）に勤務しなかったと連絡がありました{r.furikae_not_worked_reason ? `（${r.furikae_not_worked_reason}）` : ''}。<br />
+                        休む日 {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）の扱いを選んでください
+                      </p>
+                      {notWorkedAsk?.id === r.id ? (
+                        <>
+                          <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#664d03', lineHeight: 1.6 }}>
+                            {notWorkedAsk.switchTo
+                              ? `振替休日を取り消します。そのあと、${r.applicant?.name ?? ''}さんに休む日の申請（有休・時間外調整休・欠勤）を依頼してください。`
+                              : `振替休日を取り消します。休む日 ${r.work_date.slice(5).replace('-', '/')} は出勤になります。`}
+                          </p>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button type="button" onClick={() => setNotWorkedAsk(null)} style={{ ...backBtn(isDark), flex: 1 }}>戻る</button>
+                            <button type="button" data-net="write" onClick={() => doCancelNotWorked(r, notWorkedAsk.switchTo)} disabled={actingId === r.id}
+                              style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 2 }}>取り消す</button>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button type="button" onClick={() => setNotWorkedAsk({ id: r.id, switchTo: false })}
+                            style={{ ...primaryBtn(), flex: 1, minWidth: 140, padding: '10px 8px', fontSize: 13 }}>取り消す（{r.work_date.slice(5).replace('-', '/')} は出勤）</button>
+                          <button type="button" onClick={() => setNotWorkedAsk({ id: r.id, switchTo: true })}
+                            style={{ ...tintBtn(false), flex: 1, minWidth: 140, padding: '10px 8px', fontSize: 13 }}>有休・時間外調整休・欠勤にする</button>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                   <div style={{ display: 'flex', gap: 8 }}>
+                    {/* 🚨 勤務しなかった連絡がある振替休日は受理しない（受理すると働いた時間として確定する・Edge Function も断る） */}
+                    {!r.furikae_not_worked_at && (
                     <button onClick={() => doApprove(r)} disabled={actingId === r.id}
                       style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 1 }}>
                       {isAdvance ? '事前申請を受理' : '受理'}
                     </button>
+                    )}
                     <button onClick={() => { setReturnTargetId(r.id); setReturnComment(''); }}
                       style={{ ...backBtn(isDark), flex: 1 }}>
                       差し戻し
@@ -4918,9 +5072,37 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         )}
                         {furikaeCancelLocked && !cancelLockedByPeriod && r.furikae_origin_date && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>
-                            🔒 {r.work_date < r.furikae_origin_date ? `休む日（${r.work_date.slice(5).replace('-', '/')}）` : `振替元の日（${r.furikae_origin_date.slice(5).replace('-', '/')}）`}が来たため、ご自分では取り消せません。取り消すときは管理者に依頼してください
+                            🔒 {r.work_date < r.furikae_origin_date ? `休む日（${r.work_date.slice(5).replace('-', '/')}）` : `振替元の日（${r.furikae_origin_date.slice(5).replace('-', '/')}）`}が来たため、ご自分では取り消せません。{r.furikae_origin_date <= otTodayStr ? '振替元の日に勤務しなかった場合は［実績を報告する］から［この日は勤務しませんでした］を押してください。それ以外は管理者に依頼してください' : '取り消すときは管理者に依頼してください'}
                           </p>
                         )}
+                        {/* 振替元の日に勤務しなかったと伝えたあと（2026-10-26 段5）。自己受理の方は自分で出勤に戻せる */}
+                        {r.furikae_not_worked_at && r.status === 'reported' && r.furikae_origin_date && (() => {
+                          const om = `${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）`;
+                          const wm = `${r.work_date.slice(5).replace('-', '/')}（${dowLabel(r.work_date)}）`;
+                          const self = r.reviewer_id === user.id;
+                          return (
+                            <div style={{ margin: '8px 0 0', padding: '8px 10px', borderRadius: 8, background: '#fff8e1', border: '1px solid #ffe0a3' }}>
+                              <p style={{ margin: 0, fontSize: 12, color: '#664d03', lineHeight: 1.7 }}>
+                                {self
+                                  ? `振替元 ${om} に勤務しなかったと記録しています。休む日 ${wm} を出勤に戻すか、有休などに切り替えてください（有休・時間外調整休・欠勤にするときは、取り消したあと休暇申請・残業申請から出し直してください）。`
+                                  : `振替元 ${om} は勤務しなかったと${r.reviewer?.name ?? '申請先の方'}さんに伝えました。休む日 ${wm} の扱いが決まるまでお待ちください。`}
+                              </p>
+                              {self && (notWorkedAsk?.id === r.id ? (
+                                <div style={{ marginTop: 8 }}>
+                                  <p style={{ margin: '0 0 6px', fontSize: 12, color: '#664d03' }}>振替休日を取り消します。休む日 {wm} は出勤になります。</p>
+                                  <div style={{ display: 'flex', gap: 8 }}>
+                                    <button type="button" onClick={() => setNotWorkedAsk(null)} style={{ ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 13 }}>戻る</button>
+                                    <button type="button" data-net="write" onClick={() => doCancelNotWorked(r, false)} disabled={actingId === r.id}
+                                      style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 2, padding: '8px 0', fontSize: 13 }}>取り消す</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button type="button" onClick={() => setNotWorkedAsk({ id: r.id, switchTo: false })}
+                                  style={{ ...backBtn(isDark), marginTop: 8, padding: '6px 14px', fontSize: 12.5 }}>振替休日を取り消す（休む日は出勤）</button>
+                              ))}
+                            </div>
+                          );
+                        })()}
                         {selfCancelStatus && cancelLockedByPeriod && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月17日以降）、取消は管理者に依頼してください</p>
                         )}

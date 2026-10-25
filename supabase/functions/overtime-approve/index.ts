@@ -65,7 +65,8 @@ serve(async (req) => {
     // shift_needed：遅出・早退・勤務地変更を事前申請の受理で「シフト調整：必要」にする（2026-10-20・docs/計画-遅出早退勤務地変更のシフト調整.md）。
     //   🚨 送られてこない（undefined）なら何もしない＝古い画面でも壊れない。true で条件に合わないときは黙って捨てずにエラーにする
     const { report_id, action, comment, shift_not_needed, on_behalf, shift_needed } = await req.json()
-    if (!report_id || !['approve', 'return', 'cancel'].includes(action)) {
+    // not_worked：振替休日の振替元の日に勤務しなかった（本人が［この日は勤務しませんでした］・2026-10-26 段5）
+    if (!report_id || !['approve', 'return', 'cancel', 'not_worked'].includes(action)) {
       return json({ success: false, error: '不正なリクエストです' }, 400)
     }
     if (action === 'return' && !String(comment ?? '').trim()) {
@@ -75,7 +76,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey)
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -236,10 +237,62 @@ serve(async (req) => {
           if (fErr) console.error('[overtime-approve] 元の申請先へのお知らせに失敗:', fErr.message)
         }
       }
+    } else if (action === 'not_worked') {
+      // 🚨 本人だけ。振替元の実績を報告する振替休日で、事前受理済み（または実績の差し戻しのあと）・振替元の日が来ていること
+      if (caller.id !== r.applicant_id) return json({ success: false, error: '権限がありません' }, 403)
+      const jstToday = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
+      const okState = r.status === 'request_confirmed' || (r.status === 'returned' && !!r.request_confirmed_at)
+      if (!isFurikaeReport || !originDate || !okState) return json({ success: false, error: 'この申請では使えません' }, 409)
+      if (originDate > jstToday) return json({ success: false, error: '振替元の日が来てから押してください' }, 409)
+      const why = String(comment ?? '').trim()
+      if (!why) return json({ success: false, error: '理由を選んでください' }, 400)
+      if (why.length > 200) return json({ success: false, error: '理由は200字までにしてください' }, 400)
+      const { data: snap } = await db.from('overtime_reports').select('*').eq('id', r.id).maybeSingle()
+      const { data: updated, error } = await db.from('overtime_reports')
+        .update({ status: 'reported', furikae_not_worked_at: new Date().toISOString(), furikae_not_worked_reason: why,
+          change_reason: `振替元の日に勤務しませんでした（${why}）`, return_comment: null })
+        .eq('id', r.id).eq('status', r.status).select('id')
+      if (error) return json({ success: false, error: '更新に失敗しました: ' + error.message }, 500)
+      if (!updated || updated.length === 0) {
+        return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
+      }
+      await db.from('overtime_report_history').insert({
+        report_id: r.id, changed_by: caller.id, change_kind: 'edited',
+        change_summary: `振替元の日に勤務しなかった（${why}）`, snapshot: snap ?? r,
+      })
+      // 申請先（上長）へ。🚨 新しい通知の種類は作らない（設定が無い＝全員に送る作りのため）＝実績報告が届いたときと同じ種類
+      if (r.reviewer_id && r.reviewer_id !== r.applicant_id) {
+        notification = {
+          user_id: r.reviewer_id,
+          message: `🕐 ${applicantName}さんから、振替元 ${originDate.slice(5).replace('-', '/')}（${dowLabel(originDate)}）に勤務しなかったと連絡がありました`,
+          sub_message: `休む日 ${String(r.work_date).slice(5).replace('-', '/')}（${dowLabel(r.work_date)}）の扱いを選んでください`,
+          source_type: 'overtime_request:pending_approval',
+          reference_id: r.id,
+          event_key: 'overtime:new_request',
+          read: false,
+        }
+      }
     } else if (action === 'return') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、差し戻しはできません。' }, 403)
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では差し戻せません' }, 409)
+      // 勤務しなかった連絡の差し戻し（押し間違いなど）：事前受理の状態に戻し、印を消す＝本人はもう一度ふつうに報告できる（2026-10-26 段5）
+      if (r.furikae_not_worked_at && r.status === 'reported') {
+        const { data: back, error: bErr } = await db.from('overtime_reports')
+          .update({ status: 'request_confirmed', furikae_not_worked_at: null, furikae_not_worked_reason: null, change_reason: null, return_comment: String(comment).trim() })
+          .eq('id', r.id).eq('status', 'reported').select('id')
+        if (bErr) return json({ success: false, error: '更新に失敗しました: ' + bErr.message }, 500)
+        if (!back || back.length === 0) return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
+        notification = {
+          user_id: r.applicant_id,
+          message: '🕐 振替元の日に勤務しなかった連絡が差し戻されました',
+          sub_message: `振替元 ${originDate}（${dowLabel(originDate)}）　理由：${String(comment).trim()}`,
+          source_type: 'overtime_request',
+          reference_id: r.id,
+          event_key: 'overtime:returned',
+          read: false,
+        }
+      } else {
       // 受理と同じ理由で、差し戻しも件数を見る（0件なら差し戻せていないので通知を出さない）
       const { data: updated, error } = await db.from('overtime_reports')
         .update({ status: 'returned', return_comment: String(comment).trim() })
@@ -257,9 +310,11 @@ serve(async (req) => {
         event_key: 'overtime:returned',
         read: false,
       }
+      }
     } else {
-      // cancel（本人取消）
-      if (caller.id !== r.applicant_id && !isAdmin) return json({ success: false, error: '権限がありません' }, 403)
+      // cancel（本人取消）。🚨 振替元の日に勤務しなかった連絡がある振替休日は、申請先（上長・自己受理なら本人）も取り消せる（2026-10-26 段5）
+      const notWorkedCancel = !!r.furikae_not_worked_at && r.status === 'reported' && caller.id === r.reviewer_id
+      if (caller.id !== r.applicant_id && !isAdmin && !notWorkedCancel) return json({ success: false, error: '権限がありません' }, 403)
       if (!['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status)) {
         return json({ success: false, error: 'この状態では取消できません' }, 409)
       }
@@ -268,12 +323,12 @@ serve(async (req) => {
       // ※新規申請の締めロック（DBトリガー enforce_overtime_submission_window）と同じ17日で統一。
       let notifyAfterClose = false
       if (!isAdmin) {
-        if (r.status === 'reported') {
+        if (r.status === 'reported' && !notWorkedCancel) {
           return json({ success: false, error: '実績報告済みのため取り消せません。申請先の担当者に取り下げ（差し戻し）を依頼してください' }, 403)
         }
         // 振替元の日がまだ来ていなかった振替休日：休む日・振替元の日のどちらかが来たら本人は取り消せない（2026-10-26 ユーザー確定）。
         // 🚨 画面（lib/furikaeReport の furikaeSelfCancelLocked）と同じ判定。片方だけ直さないこと
-        if (isFurikaeReport && originDate) {
+        if (isFurikaeReport && originDate && !notWorkedCancel) {
           const jstToday = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
           const firstDay = String(r.work_date) < originDate ? String(r.work_date) : originDate
           if (jstToday >= firstDay) {
@@ -308,7 +363,7 @@ serve(async (req) => {
       slackEventKey = 'overtime:cancelled'
       // 事前受理で「振替休日が受理されました」を受け取った人（休暇の受理のお知らせと同じ相手）にも取消を知らせる（2026-10-26 ユーザー確定）。
       // 🚨 スマホには出さない（event_key なし）。失敗しても取消は成功のまま
-      if (isFurikaeReport && r.status === 'request_confirmed') {
+      if (isFurikaeReport && (r.status === 'request_confirmed' || notWorkedCancel)) {
         try {
           const { data: st } = await db.from('notification_settings').select('enabled, recipient')
             .eq('event_key', 'leave:approved_fyi').eq('channel', 'site').maybeSingle()
@@ -338,7 +393,18 @@ serve(async (req) => {
           console.error('[overtime-approve] 振替休日の取消のお知らせに失敗:', e instanceof Error ? e.message : String(e))
         }
       }
-      if (r.reviewer_id && r.reviewer_id !== caller.id && ['requested', 'request_confirmed', 'reported'].includes(r.status)) {
+      // 勤務しなかった連絡を受けて申請先が取り消したときは、本人へ知らせる
+      if (notWorkedCancel && caller.id !== r.applicant_id) {
+        notification = {
+          user_id: r.applicant_id,
+          message: `🕐 振替元の日に勤務しなかったため、振替休日が取り消されました（休む日 ${String(r.work_date).slice(5).replace('-', '/')}（${dowLabel(r.work_date)}））`,
+          sub_message: '休む日を有休・時間外調整休などにするときは、申請を出し直してください',
+          source_type: 'overtime_request:cancelled_fyi',
+          reference_id: r.id,
+          event_key: 'overtime:cancelled',
+          read: false,
+        }
+      } else if (r.reviewer_id && r.reviewer_id !== caller.id && ['requested', 'request_confirmed', 'reported'].includes(r.status)) {
         notification = {
           user_id: r.reviewer_id,
           message: `${applicantName}さんが残業・時間調整の申請を取り消しました`,
