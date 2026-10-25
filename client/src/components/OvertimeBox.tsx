@@ -132,7 +132,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', winFrom).lte('date', winTo),
       supabase.from('overtime_reports')
-        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, late_situation, early_situation, furikae_report_needed, furikae_origin_date, furikae_origin_start, furikae_origin_end, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', winFrom).lte('work_date', winTo),
       supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments, ot_content')
         .eq('recipient_id', userId).eq('kind', 'overtime').eq('status', 'open').order('created_at', { ascending: true }),

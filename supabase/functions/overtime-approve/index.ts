@@ -75,7 +75,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey)
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -87,6 +87,10 @@ serve(async (req) => {
     const isFullDay = types.some(t => FULL_DAY.includes(t))
     const FULL_DAY_LABEL: Record<string, string> = { chosei_off: '時間外調整休', furikae_off: '振替休日', absence: '欠勤' }
     const fullDayLabel = types.map(t => FULL_DAY_LABEL[t]).filter(Boolean).join('・')
+    // 🚨 2026-10-26：振替元の日がまだ来ていなかった振替休日は、ふつうの事前申請と同じ（事前受理 → 振替元の実績を報告 → 確定）。
+    //    印（furikae_report_needed）は DB のトリガーが決める（切り替え app_settings 'furikae_report_on' がオフなら立たない）
+    const isFurikaeReport = r.furikae_report_needed === true
+    const originDate = String(r.furikae_origin_date ?? '')
 
     // 申請者名（通知・GCalタイトル用）
     const { data: prof } = await db.from('profiles').select('name').eq('id', r.applicant_id).maybeSingle()
@@ -122,11 +126,16 @@ serve(async (req) => {
         }
       }
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では受理できません' }, 409)
+      // 振替元の日に勤務しなかった連絡がある振替休日は受理しない（受理すると働いた時間として確定してしまう・段5で取消か切り替えを選ぶ）
+      if (r.furikae_not_worked_at) {
+        return json({ success: false, error: '振替元の日に勤務しなかったと連絡がある申請です。受理ではなく、取り消すか休みの種類を切り替えてください' }, 409)
+      }
       const isAdvance = r.status === 'requested'
-      // 終日は実績報告が無いため、事前申請の受理でも confirmed 直行
+      // 終日は実績報告が無いため、事前申請の受理でも confirmed 直行（振替元の日がまだ来ていなかった振替休日を除く）
       // 事前受理は日時も残す。残さないと status が reported に進んだ時点で
       // 「事前に受理したのか、受理を飛ばして報告されたのか」が分からなくなる（2026-08-25）
-      const next: Record<string, unknown> = (isAdvance && !isFullDay)
+      const toRequestConfirmed = isAdvance && (!isFullDay || isFurikaeReport)
+      const next: Record<string, unknown> = toRequestConfirmed
         ? { status: 'request_confirmed', request_confirmed_at: new Date().toISOString() }
         : { status: 'confirmed', confirmed_by: caller.id, confirmed_at: new Date().toISOString() }
       // 「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者か（休暇の受理と同じ）
@@ -153,7 +162,8 @@ serve(async (req) => {
       }
       // 終日の受理で「調整不要」を選んだとき（2026-10-13）。受理と同じ1回の保存で書く（別々だと受理だけ通ることがある）。
       // 🚨 選べるのは「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者だけ（休暇の受理と同じ）
-      if (isFullDay && shift_not_needed === true) {
+      // 🚨 振替休日の実績の確定（reported → confirmed）では書かない（事前受理のときに選んだ値を上書きしないため・2026-10-26）
+      if (isFullDay && isAdvance && shift_not_needed === true) {
         const canShift = await canShiftAdjust()
         if (canShift) {
           next.shift_adjust_not_needed = true
@@ -171,16 +181,21 @@ serve(async (req) => {
       if (!updated || updated.length === 0) {
         return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
       }
+      // 振替休日の実績（振替元の勤務）の確定は、その旨と振替元の日を出す
+      const furikaeActual = isFurikaeReport && !isAdvance && !!originDate
       notification = {
         user_id: r.applicant_id,
-        message: isFullDay ? `🕐 ${fullDayLabel}の申請が受理されました` : (isAdvance ? '🕐 事前申請が受理されました' : '🕐 残業・時間調整の実績が確認されました'),
-        sub_message: `${r.work_date}（${dowLabel(r.work_date)}）${isFullDay ? `　${fullDayLabel}` : `　${formatSignedMin(r.diff_minutes ?? 0)}`}`,
+        message: furikaeActual ? '🕐 振替元の勤務（実績）が確認されました'
+          : isFullDay ? `🕐 ${fullDayLabel}の申請が受理されました` : (isAdvance ? '🕐 事前申請が受理されました' : '🕐 残業・時間調整の実績が確認されました'),
+        sub_message: furikaeActual
+          ? `振替元 ${originDate}（${dowLabel(originDate)}）　休む日 ${r.work_date}（${dowLabel(r.work_date)}）`
+          : `${r.work_date}（${dowLabel(r.work_date)}）${isFullDay ? `　${fullDayLabel}` : `　${formatSignedMin(r.diff_minutes ?? 0)}`}`,
         source_type: 'overtime_request',
         reference_id: r.id,
-        event_key: (isAdvance && !isFullDay) ? 'overtime:request_confirmed' : 'overtime:confirmed',
+        event_key: toRequestConfirmed ? 'overtime:request_confirmed' : 'overtime:confirmed',
         read: false,
       }
-      slackEventKey = (isAdvance && !isFullDay) ? 'overtime:request_confirmed' : 'overtime:confirmed'
+      slackEventKey = toRequestConfirmed ? 'overtime:request_confirmed' : 'overtime:confirmed'
 
       // 経理が代わりに受理したとき（申請先が別の人のときだけ）
       if (on_behalf === true && r.reviewer_id && r.reviewer_id !== caller.id) {
@@ -256,6 +271,15 @@ serve(async (req) => {
         if (r.status === 'reported') {
           return json({ success: false, error: '実績報告済みのため取り消せません。申請先の担当者に取り下げ（差し戻し）を依頼してください' }, 403)
         }
+        // 振替元の日がまだ来ていなかった振替休日：休む日・振替元の日のどちらかが来たら本人は取り消せない（2026-10-26 ユーザー確定）。
+        // 🚨 画面（lib/furikaeReport の furikaeSelfCancelLocked）と同じ判定。片方だけ直さないこと
+        if (isFurikaeReport && originDate) {
+          const jstToday = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
+          const firstDay = String(r.work_date) < originDate ? String(r.work_date) : originDate
+          if (jstToday >= firstDay) {
+            return json({ success: false, error: '休む日・振替元の日のどちらかが来たため、ご自分では取り消せません。振替元の日に勤務しなかった場合は［この日は勤務しませんでした］、それ以外は管理者に取消を依頼してください' }, 403)
+          }
+        }
         const [ppy, ppm] = String(r.pay_period_start ?? '').split('-').map(Number)
         if (ppy && ppm) {
           const payY = ppm === 12 ? ppy + 1 : ppy
@@ -282,6 +306,38 @@ serve(async (req) => {
         report_id: r.id, changed_by: caller.id, change_kind: 'cancelled', change_summary: '取消', snapshot,
       })
       slackEventKey = 'overtime:cancelled'
+      // 事前受理で「振替休日が受理されました」を受け取った人（休暇の受理のお知らせと同じ相手）にも取消を知らせる（2026-10-26 ユーザー確定）。
+      // 🚨 スマホには出さない（event_key なし）。失敗しても取消は成功のまま
+      if (isFurikaeReport && r.status === 'request_confirmed') {
+        try {
+          const { data: st } = await db.from('notification_settings').select('enabled, recipient')
+            .eq('event_key', 'leave:approved_fyi').eq('channel', 'site').maybeSingle()
+          if ((st as { enabled?: boolean } | null)?.enabled === true) {
+            let rcp: unknown = {}
+            try { rcp = JSON.parse(String((st as { recipient?: string }).recipient || '{}')) } catch { rcp = {} }
+            const { data: ids, error: rErr } = await db.rpc('resolve_role_recipients', { p_applicant: r.applicant_id, p_recipient: rcp })
+            if (rErr) throw rErr
+            const [, fm, fd] = String(r.work_date).split('-').map(Number)
+            const rows = ((ids ?? []) as (string | { resolve_role_recipients: string })[])
+              .map(x => typeof x === 'string' ? x : x.resolve_role_recipients)
+              .filter(uid => uid && uid !== r.applicant_id)
+              .map(uid => ({
+                user_id: uid,
+                message: `🕐 振替休日が取り消されました「${applicantName}（${fm}/${fd}（${dowLabel(r.work_date)}））」`,
+                sub_message: null,
+                source_type: 'overtime:fullday_fyi',
+                event_key: null,
+                reference_id: String(r.work_date),
+              }))
+            if (rows.length) {
+              const { error: fErr } = await db.from('notifications').insert(rows)
+              if (fErr) throw fErr
+            }
+          }
+        } catch (e) {
+          console.error('[overtime-approve] 振替休日の取消のお知らせに失敗:', e instanceof Error ? e.message : String(e))
+        }
+      }
       if (r.reviewer_id && r.reviewer_id !== caller.id && ['requested', 'request_confirmed', 'reported'].includes(r.status)) {
         notification = {
           user_id: r.reviewer_id,

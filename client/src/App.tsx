@@ -84,6 +84,8 @@ import AdminAccessNotice from './components/admin/AdminAccessNotice';
 import { attrsFor, previewRoleOptions } from './lib/roleAttrs';
 import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
+import { isFurikaeReportRow, isFurikaeUnreported } from './lib/furikaeReport';
+import type { FurikaeRow } from './lib/furikaeReport';
 import { useExpenses } from './hooks/useExpenses';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useAdminSetupAlerts } from './hooks/useAdminSetupAlerts';
@@ -888,15 +890,16 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
     if (!userId || !canOvertime) { setCount(0); setDates([]); return; }
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD(JST)
     const { data } = await supabase.from('overtime_reports')
-      .select('id, work_date, application_types')
+      .select('id, work_date, application_types, status, furikae_report_needed, furikae_origin_date')
       .eq('applicant_id', userId)
       // 🚨 requested（受理まち）も含める（2026-08-25）。
       //    受理を待たずに実績を報告できるようにしたので、ここが request_confirmed だけだと
       //    「毎朝のリマインドは届くのに、ホームのバナーもナビの件数も0のまま」という食い違いになる
       .in('status', ['requested', 'request_confirmed']);
-    const list = ((data ?? []) as { work_date: string; application_types: string[] | null }[])
-      .filter(r => r.work_date < today && !isFullDayReport(r.application_types))
-      .map(r => r.work_date).sort();
+    // 振替元の日がまだ来ていなかった振替休日は、振替元の日で数える（2026-10-26・lib/furikaeReport・催促と同じ）
+    const list = ((data ?? []) as (FurikaeRow & { work_date: string; application_types: string[] | null })[])
+      .filter(r => isFurikaeReportRow(r) ? isFurikaeUnreported(r, today) : (r.work_date < today && !isFullDayReport(r.application_types)))
+      .map(r => (isFurikaeReportRow(r) ? r.furikae_origin_date as string : r.work_date)).sort();
     setCount(list.length); setDates(list);
   }, [userId, canOvertime, setCount, setDates]);
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）

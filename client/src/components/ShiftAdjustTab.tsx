@@ -750,7 +750,8 @@ const SlotDetail: React.FC<{
     for (const o of ((ot as { applicant_id: string; application_types: string[] | null; status: string; origin_of: string | null }[] | null) ?? [])) {
       if (o.origin_of) continue;   // 振替休日の振替元（休日出勤した日）の行は休みではない
       if (!isFullDayReport(o.application_types)) continue;
-      if (o.status === 'confirmed') b[o.applicant_id] = b[o.applicant_id] ?? 'この日は休み';
+      // 🚨 振替元の実績を報告する振替休日（2026-10-26）は受理済み（request_confirmed）・報告済み（reported）でも休み
+      if (['confirmed', 'request_confirmed', 'reported'].includes(o.status)) b[o.applicant_id] = b[o.applicant_id] ?? 'この日は休み';
       else if (o.status === 'requested') pr[o.applicant_id] = 'この日は休みの申請中';
     }
     setBusy(b);

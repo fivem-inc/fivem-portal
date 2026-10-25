@@ -13,6 +13,7 @@
 import { supabase } from './supabaseClient';
 import { isFullDayReport } from './overtimeTypes';
 import { leaveDateList } from './leaveDates';
+import { isFurikaeReportRow, isFurikaeUnreported } from './furikaeReport';
 
 export type DayMarkKind = 'pre' | 'unreported' | 'reported' | 'posthoc' | 'returned' | 'teiji' | 'leave';
 
@@ -40,6 +41,8 @@ export interface DayMarkReport {
   diff_minutes: number | null;
   application_types: string[] | null;
   furikae_origin_date: string | null;
+  /** 振替元の日がまだ来ていなかった振替休日（振替元の実績を報告する・2026-10-26） */
+  furikae_report_needed?: boolean | null;
 }
 
 export interface DayMark {
@@ -94,7 +97,7 @@ export async function loadDayMarks(
 ): Promise<{ marks: Record<string, DayMark>; error: string | null }> {
   const [rep, chk, lv] = await Promise.all([
     supabase.from('overtime_reports')
-      .select('id, work_date, status, entry_type, is_post_hoc, diff_minutes, application_types, furikae_origin_date')
+      .select('id, work_date, status, entry_type, is_post_hoc, diff_minutes, application_types, furikae_origin_date, furikae_report_needed')
       .eq('applicant_id', userId)
       .neq('status', 'cancelled')
       .or(`and(work_date.gte.${from},work_date.lte.${to}),and(furikae_origin_date.gte.${from},furikae_origin_date.lte.${to})`),
@@ -130,7 +133,11 @@ export async function loadDayMarks(
     if (r.entry_type !== 'manual' || !r.furikae_origin_date) continue;
     const d = r.furikae_origin_date;
     if (d < from || d > to) continue;
-    marks[d] = { kind: dayMarkOfReport(r, today), reportId: r.id, status: r.status, furikaeOrigin: true };
+    // 振替元の実績を報告する振替休日は、振替元の日に「未報告／報告済」を付ける（休む日には付けない・2026-10-26）
+    const kind: DayMarkKind = isFurikaeReportRow(r)
+      ? (isFurikaeUnreported(r, today) ? 'unreported' : r.status === 'reported' ? 'reported' : dayMarkOfReport(r, today))
+      : dayMarkOfReport(r, today);
+    marks[d] = { kind, reportId: r.id, status: r.status, furikaeOrigin: true };
   }
   for (const r of reports) {
     if (r.entry_type !== 'manual' || r.work_date < from || r.work_date > to) continue;

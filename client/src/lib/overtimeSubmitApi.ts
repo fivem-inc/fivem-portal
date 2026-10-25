@@ -174,6 +174,16 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
  * 予定どおりの実績報告なら、受理を省いて確認済みにする（2026-10-13）。省けたら true。
  * 🚨 失敗・条件外は false（今までどおり「実績 確認待ち」のまま上長へ受理のお願いを出す）。送信そのものは止めない
  */
+/**
+ * 振替休日の新しい流れ（振替元の実績報告・同じ給与期間だけ）の切り替え app_settings 'furikae_report_on'（2026-10-26）。
+ * 🚨 読めなければ false（今までどおりの文を出す）。どちらでも DB のトリガーが正しい状態にするので、ここは画面の文と事前の確かめだけ
+ */
+export async function loadFurikaeReportSwitch(): Promise<boolean> {
+  const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'furikae_report_on').maybeSingle();
+  if (error) { console.error('[残業] 振替休日の切り替えを読めませんでした', error.message); return false; }
+  return (data as { value?: unknown } | null)?.value === true;
+}
+
 export async function confirmAsPlanned(reportId: string): Promise<boolean> {
   const { data, error } = await supabase.rpc('overtime_confirm_as_planned', { p_id: reportId });
   if (error) { console.error('[残業] 予定どおりの確認済みにできませんでした', error.message); return false; }

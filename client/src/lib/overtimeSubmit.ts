@@ -19,6 +19,8 @@ import { normalShiftWindow } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import { isFullDayReport } from './overtimeTypes';
 import { isPartialShiftCase } from './partialShiftAdjust';
+import { furikaePeriodNg, furikaeReportGate, isFurikaeReportRow } from './furikaeReport';
+import type { FurikaeRow } from './furikaeReport';
 import type { OvertimeType } from './overtimeTypes';
 
 /** 入力欄の1本ぶん（"HH:MM" か ""） */
@@ -236,6 +238,12 @@ export interface ValidateInput {
    * 足りなければ直すまで送れない。🚨 事後（実績）のときは渡さない＝本人は止めない（受理する人の画面に印が出る）
    */
   plannedLegal?: PlanBreakCheck | null;
+  /** 振替休日の新しい流れ（切り替え furikae_report_on）がオンか。オンなら休む日と振替元の日を同じ給与期間に限る（2026-10-26） */
+  furikaeSamePeriod?: boolean;
+  /** 振替休日の振替元の実績報告か（lib/furikaeReport）。理由・申請先は受理済みで変えない／時刻が変わったら理由が要る */
+  furikaeReport?: boolean;
+  /** 振替休日の実績報告で、振替元の時刻・休憩・校が予定から変わったか */
+  furikaeChanged?: boolean;
 }
 
 /**
@@ -284,6 +292,13 @@ export function validateOvertime(v: ValidateInput): string {
       if (v.furikaeOriginLocation === 'その他' && !v.furikaeOriginLocationCustom.trim()) return '振替元の勤務校を入力してください';
       if (!v.furikaeOriginStart || !v.furikaeOriginEnd) return '振替元の出勤・退勤の時刻を入力してください';
       if (!v.furikaeHasTime) return '振替元の時刻が正しくありません（開始・終了を確認してください）';
+      // 休む日と振替元の日は同じ給与期間だけ（2026-10-26 ユーザー確定・案C の文・DB の enforce_furikae_same_period と同じ）
+      if (v.furikaeSamePeriod) {
+        const ng = furikaePeriodNg(date, v.furikaeOriginDate);
+        if (ng) return ng;
+      }
+      // 振替元の実績報告：時刻などが予定と違えば理由が要る（ふつうの実績報告と同じ）
+      if (v.furikaeReport && v.furikaeChanged && !v.changeReason.trim()) return '予定から変わった理由を入力してください';
     }
     if (!v.reason.trim()) return '理由を入力してください';
     if (!v.reviewerId) return '申請先を選択してください';
@@ -365,11 +380,13 @@ export function overtimePhase(args: {
  * gateMin は lib/overtimeShift の reportGateMin で求めたもの（取れない行は null＝詰まらせない）。
  */
 export function canReportOvertime(
-  r: { status: string; application_types: OvertimeType[] | string[] | null; work_date: string },
+  r: { status: string; application_types: OvertimeType[] | string[] | null; work_date: string } & Omit<FurikaeRow, 'status' | 'work_date' | 'application_types'>,
   todayStr: string,
   nowMin: number,
   gateMin: number | null,
 ): boolean {
+  // 振替元の日がまだ来ていなかった振替休日（2026-10-26）：振替元の日で判定（ボタンの出し分けは furikaeReportGate）
+  if (isFurikaeReportRow(r as FurikaeRow)) return furikaeReportGate(r as FurikaeRow, todayStr, nowMin) !== 'none';
   if (!['requested', 'request_confirmed'].includes(r.status)) return false;
   if (isFullDayReport((r.application_types ?? []) as OvertimeType[])) return false; // 終日（調整休・振休・欠勤）は実績報告の概念がない
   if (r.work_date < todayStr) return true;                   // 勤務日を過ぎた分は無条件
@@ -432,6 +449,10 @@ export interface RecordInput {
   shiftNeeded?: boolean;
   /** 出張報告から作った申請の日（2026-10-14・表示だけ）。undefined のときは触らない（送り直し・実績報告で消さない） */
   fromTripDate?: string | null;
+  /** 振替元の日がまだ来ていない振替休日を新しく出す（切り替えオン・2026-10-26）＝自己受理でも「事前申請 受理済み」で入れる */
+  furikaePending?: boolean;
+  /** 振替休日の振替元の実績報告（lib/furikaeReport）＝自己受理は確定・上長あては実績の確認待ち */
+  furikaeReport?: boolean;
 }
 
 /**
@@ -447,7 +468,12 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     pay_period_start: calcPayPeriodStartJst(v.date),
     is_post_hoc: v.mode === 'posthoc',
     // 終日は実績報告の概念がないため、自己受理=確定・他者宛=申請（受理でconfirmed直行）
-    status: (fullDayMode
+    // 🚨 例外（2026-10-26）：振替元の日がまだ来ていない振替休日は、ふつうの事前申請と同じ（事前受理 → 振替元の実績報告 → 確定）
+    status: (v.furikaeReport
+      ? (isSelfReview ? 'confirmed' : 'reported')
+      : fullDayMode && v.furikaePending
+      ? (isSelfReview ? 'request_confirmed' : 'requested')
+      : fullDayMode
       ? (isSelfReview ? 'confirmed' : 'requested')
       : (phase === 'actual'
         ? ((isSelfReview || isPureZero) ? 'confirmed' : 'reported')
@@ -483,7 +509,8 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     reviewer_id: isSelfReview ? v.userId : v.reviewerId,
     // 自分で受理する終日の休み：送った時点で確定するので、ここで「シフト調整：必要／調整不要」を持つ（受理の画面の代わり・2026-10-14）。
     // 🚨 だれが・いつ決めたか（shift_adjusted_by/at）は DB のトリガーが入れる。権限が無ければ DB が断る
-    ...((fullDayMode && isSelfReview) ? { shift_adjust_not_needed: v.shiftNotNeeded === true } : {}),
+    // 🚨 振替元の実績報告では書かない（事前受理のときに選んだ値を上書きしないため・2026-10-26）
+    ...((fullDayMode && isSelfReview && !v.furikaeReport) ? { shift_adjust_not_needed: v.shiftNotNeeded === true } : {}),
     // 自分で受理する遅出・早退・勤務地変更の事前申請：送った時点で受理されるので、ここで「シフト調整：必要」を持つ（2026-10-20）。
     // 🚨 それ以外（上長あて・実績報告・事後）では触らない＝受理の画面・受理済みの欄で決めた値を上書きしない
     ...((!fullDayMode && isSelfReview && v.mode === 'advance' && phase === 'planned' && isPartialShiftCase(v.applicationTypes))
@@ -493,7 +520,9 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
     modified_from_id: v.modifiedFromId,
     ...(v.fromTripDate !== undefined ? { from_trip_date: v.fromTripDate } : {}),
-    ...((isSelfReview || isPureZero) ? { confirmed_by: v.userId, confirmed_at: v.nowIso } : {}),
+    // 🚨 振替元の日がまだ来ていない振替休日の自己受理は「確定」ではなく事前受理（下の request_confirmed_at）
+    ...((isSelfReview || isPureZero) && !(fullDayMode && v.furikaePending) ? { confirmed_by: v.userId, confirmed_at: v.nowIso } : {}),
+    ...((fullDayMode && v.furikaePending && isSelfReview) ? { request_confirmed_at: v.nowIso, confirmed_by: null, confirmed_at: null } : {}),
     // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・長岡さんの指摘）。
     //    上長が受理する経路（Edge Function overtime-approve）はこの日時を入れるのに、
     //    自己受理はそこを通らないので**空のまま**だった。空だと、あとで実績を報告したときに
@@ -505,7 +534,8 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     //    「事前受理 → 実績報告 → 差し戻し」の申請には事前受理の日時が残っている。終日には事前受理の段階が
     //    無い（受理で confirmed 直行）ので、残すと「事前受理済みの欠勤」という嘘の記録になる。
     // 🚨 時間のまま再提出するときは触らない。消すと受理ページの「⚠️ 事前申請の受理をしていません」が嘘で出る
-    ...((v.isResubmit && fullDayMode) ? { request_confirmed_at: null } : {}),
+    // 🚨 振替元の実績報告の出し直し（実績が差し戻されたあと）は消さない（事前受理は済んでいる・2026-10-26）
+    ...((v.isResubmit && fullDayMode && !v.furikaeReport && !(v.furikaePending && isSelfReview)) ? { request_confirmed_at: null } : {}),
     // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
     // 労働時間＝通常シフトどおり／差分0／押した時点で確定／確認者なし。
     // 打刻時刻は参考値であり、労働時間・差分の計算には一切使わない。
@@ -537,6 +567,8 @@ export function friendlyOvertimeDbError(msg: string, code?: string): string {
   // 申請先が休職中（2026-10-20・DB のトリガーが止める・文は DB が作る）
   const away = approverOnLeaveText(msg);
   if (away) return away;
+  // 休む日と振替元の日が別の給与期間（2026-10-26・DB の enforce_furikae_same_period・文は DB が作る＝案C）
+  if (msg.includes('FURIKAE_PERIOD|')) return msg.slice(msg.indexOf('FURIKAE_PERIOD|') + 'FURIKAE_PERIOD|'.length);
   if (msg.includes('OVERTIME_CLOSED')) return 'この対象日の給与期間は締め切りを過ぎています。経理に申請の許可を依頼してください。';
   if (msg.includes('FURIKAE_DUP_ORIGIN')) return '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
   if (msg.includes('FURIKAE_DUP_SAME_ORIGIN')) return '振替元の日は、すでに別の振替休日の振替元になっています。同じ日を2回振り替えることはできません。';

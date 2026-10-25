@@ -31,11 +31,24 @@ serve(async (req) => {
   //    受理されないと実績報告できない作りだったため、上長が受理を忘れると本人にも何も出ず放置されていた。
   const { data: rows } = await supabase
     .from("overtime_reports")
-    .select("applicant_id, work_date, application_types")
+    .select("applicant_id, work_date, application_types, status, furikae_report_needed, furikae_origin_date")
     .in("status", ["requested", "request_confirmed"]);
 
+  type Row = { applicant_id: string; work_date: string; application_types: string[] | null; status: string;
+    furikae_report_needed: boolean | null; furikae_origin_date: string | null };
   const byUser = new Map<string, string[]>();
-  for (const r of ((rows ?? []) as { applicant_id: string; work_date: string; application_types: string[] | null }[])) {
+  for (const r of ((rows ?? []) as Row[])) {
+    // 振替元の日がまだ来ていなかった振替休日（2026-10-26）：事前受理になっていて、振替元の日を過ぎたもの。日付も振替元の日。
+    // 🚨 申請中（受理まち）は本人が報告できないので数えない（上長へは remind-overtime-pending-review が催促する）。
+    //    画面の件数（lib/furikaeReport の isFurikaeUnreported）と同じ判定
+    if (r.furikae_report_needed) {
+      if (r.status === "request_confirmed" && r.furikae_origin_date && r.furikae_origin_date < todayJst) {
+        const arr = byUser.get(r.applicant_id) ?? [];
+        arr.push(r.furikae_origin_date);
+        byUser.set(r.applicant_id, arr);
+      }
+      continue;
+    }
     if (r.work_date < todayJst && !isFullDay(r.application_types)) {
       const arr = byUser.get(r.applicant_id) ?? [];
       arr.push(r.work_date);

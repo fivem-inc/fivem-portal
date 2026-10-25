@@ -12,6 +12,7 @@ import {
   effectiveLocationOf, validateOvertime, overtimePhase, isSameAsNormalShift,
 } from './overtimeSubmit';
 import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSubmit';
+import { isFurikaeReportRow } from './furikaeReport';
 import { buildWorkDiff, fullDayDiffMin, resolveNormalShift, reportGateMin, normalShiftSegsSorted } from './overtimeShift';
 import type { NormalShiftSnapshot, PatternRow } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
@@ -69,6 +70,11 @@ export interface GridReport {
   /** 元の申請で本人が選んだ「カレンダーに載せるか」。🚨 実績報告・再提出ではそのまま引き継ぐ（計画 §10-7） */
   show_on_calendar?: boolean | null;
   segments?: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[];
+  /** 振替元の実績を報告する振替休日（2026-10-26・lib/furikaeReport） */
+  furikae_report_needed?: boolean | null;
+  furikae_origin_date?: string | null;
+  furikae_origin_start?: string | null;
+  furikae_origin_end?: string | null;
 }
 
 /**
@@ -151,8 +157,8 @@ export function classifyGridDay(args: {
   if (main) {
     const types = main.application_types ?? [];
     if (main.status === 'requested' || main.status === 'request_confirmed') {
-      // 終日（調整休・振休・欠勤）の事前申請には実績報告が無い
-      if (isFullDayReport(types)) return 'done';
+      // 終日（調整休・振休・欠勤）の事前申請には実績報告が無い。🚨 振替元の実績を報告する振替休日は1件フォームで（2026-10-26）
+      if (isFullDayReport(types)) return (isFurikaeReportRow(main) && canReportOvertime(main, today, nowMin, gateMin)) ? 'form_only' : 'done';
       return canReportOvertime(main, today, nowMin, gateMin) ? 'report' : 'report_wait';
     }
     if (main.status === 'returned') {

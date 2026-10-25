@@ -58,9 +58,13 @@ serve(async (req) => {
 
   const { data: rows } = await supabase
     .from("overtime_reports")
-    .select("id, applicant_id, reviewer_id, work_date, created_at, advance_remind_sent_at")
+    .select("id, applicant_id, reviewer_id, work_date, created_at, advance_remind_sent_at, furikae_report_needed, furikae_origin_date")
     .eq("status", "requested")
     .eq("entry_type", "manual");
+  // 振替元の日がまだ来ていなかった振替休日（2026-10-26）は、休む日・振替元の日の早いほうを過ぎたら毎日の催促に入れる
+  //   （受理されないと本人が振替元の実績を報告できないため）
+  const baseDate = (r: Row & { furikae_report_needed?: boolean | null; furikae_origin_date?: string | null }) =>
+    (r.furikae_report_needed && r.furikae_origin_date && r.furikae_origin_date < r.work_date) ? r.furikae_origin_date : r.work_date;
 
   // 実績報告の受理がまだの分（届いてから N 日たったもの）
   const { data: setRow } = await supabase.from("overtime_settings").select("report_review_remind_days").eq("id", 1).maybeSingle();
@@ -81,7 +85,7 @@ serve(async (req) => {
   for (const r of all) {
     // 確認者が入っていない行（自己受理で確定済みのものなど）は宛先が決まらないので対象外
     if (!r.reviewer_id) continue;
-    if (r.work_date < todayJst) {
+    if (baseDate(r) < todayJst) {
       const arr = overdueByReviewer.get(r.reviewer_id) ?? [];
       arr.push(r);
       overdueByReviewer.set(r.reviewer_id, arr);

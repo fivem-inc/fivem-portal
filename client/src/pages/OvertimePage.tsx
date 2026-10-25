@@ -30,7 +30,7 @@ import {
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import PendingSubmitLine from '../components/PendingSubmitLine';
-import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
+import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, loadFurikaeReportSwitch, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import { checkDayOffConflict } from '../lib/dayOffConflict';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
@@ -44,6 +44,7 @@ import { isPointerDevice } from '../lib/idleLogout';
 import type { OvertimeStatus } from '../lib/overtimeStatus';
 import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES, situationOf } from '../lib/overtimeSubmit';
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
+import { isFurikaeReportRow, furikaeReportGate, furikaeOriginWindow, isFurikaeUnreported, furikaeSelfCancelLocked, furikaePeriodNg, payPeriodRangeLabel } from '../lib/furikaeReport';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftSegsSorted, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance, diffColor } from '../lib/overtimeBalance';
@@ -150,6 +151,10 @@ interface OvertimeReport {
   furikae_origin_end: string | null;
   furikae_origin_break_minutes: number | null;
   furikae_origin_labor_minutes: number | null;
+  /** 振替元の日がまだ来ていなかった振替休日（あとで振替元の実績を報告する・DB のトリガーが決める・2026-10-26） */
+  furikae_report_needed?: boolean | null;
+  /** 振替元の予定（実績報告の直前の値・DB のトリガーが写す） */
+  furikae_planned?: { date?: string | null; location?: string | null; start?: string | null; end?: string | null; break_minutes?: number | null; labor_minutes?: number | null; diff_minutes?: number | null } | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
   confirmed_at: string | null;
@@ -612,6 +617,12 @@ const OvertimeForm: React.FC<{
 
   const isReportPhase = !!editTarget && ['requested', 'request_confirmed'].includes(editTarget.status);
   const isResubmit = !!editTarget && editTarget.status === 'returned';
+  // 振替休日の振替元の実績報告（2026-10-26・lib/furikaeReport）。事前受理のあとの報告と、報告が差し戻されたあとの出し直し。
+  // 🚨 種別・休む日・振替元の日・理由・申請先は受理済みなので変えさせない。直せるのは振替元の時刻と校だけ
+  const furikaeReportMode = !!editTarget && isFurikaeReportRow(editTarget)
+    && (editTarget.status === 'request_confirmed' || (editTarget.status === 'returned' && !!editTarget.request_confirmed_at));
+  // ［勤務時間が申請と異なりました］を押したか（報告の差し戻しのあとは、初めから直す欄を出す）
+  const [furikaeDiffer, setFurikaeDiffer] = useState(() => !!editTarget && editTarget.status === 'returned');
 
   const [mode, setMode] = useState<'advance' | 'posthoc'>(() => {
     if (editTarget) return editTarget.is_post_hoc ? 'posthoc' : 'advance';
@@ -742,6 +753,9 @@ const OvertimeForm: React.FC<{
   });
   const [furikaeOriginStart, setFurikaeOriginStart] = useState<string>(() => (editTarget?.furikae_origin_start ? editTarget.furikae_origin_start.slice(0, 5) : draft?.furikaeOriginStart ?? ''));
   const [furikaeOriginEnd, setFurikaeOriginEnd] = useState<string>(() => (editTarget?.furikae_origin_end ? editTarget.furikae_origin_end.slice(0, 5) : draft?.furikaeOriginEnd ?? ''));
+  // 振替休日の新しい流れ（2026-10-26）がオンか。画面の文と、休む日・振替元の日の給与期間の確かめに使う（状態は DB が決める）
+  const [furikaeOn, setFurikaeOn] = useState(false);
+  useEffect(() => { loadFurikaeReportSwitch().then(setFurikaeOn, () => {}); }, []);
 
   // 経理から締め後申請を許可された対象日（work_date の集合）。締めロックの救済に使う。
   const [grantedWorkDates, setGrantedWorkDates] = useState<Set<string>>(new Set());
@@ -837,6 +851,8 @@ const OvertimeForm: React.FC<{
   // 通常シフト解決（スナップショット元）
   const normalShift: NormalShiftSnapshot = useMemo(() => {
     if (!date) return { day_kind: 'mon', calendar_kind: null, start_time: null, end_time: null, break_minutes: 0, labor_minutes: 0 };
+    // 振替元の実績報告は、出したときの休む日の通常シフトを使う（あいだに登録シフトが変わっても差分が動かないように・2026-10-26）
+    if (furikaeReportMode && editTarget?.normal_shift) return editTarget.normal_shift;
     const base = resolveNormalShift(patterns, date, calendarKind);
     if (!normOverride) return base;
     const s = timeToMin(normStart);
@@ -854,7 +870,7 @@ const OvertimeForm: React.FC<{
       start_time: normStart, end_time: normEnd,
       break_minutes: breakMinutes, labor_minutes: laborMinutes,
     };
-  }, [date, patterns, calendarKind, normOverride, normStart, normEnd]);
+  }, [date, patterns, calendarKind, normOverride, normStart, normEnd, furikaeReportMode, editTarget]);
 
   // 勤務地が未選択なら通常シフトの校を初期値として入れる（新規のみ）
   useEffect(() => {
@@ -1148,6 +1164,11 @@ const OvertimeForm: React.FC<{
   const fdLocation = normalShift.location ?? effectiveLocation;
   // 振替元の日付が過去（すでに出勤済み）＝事後の振替（ブロックせず注意表示）
   const furikaeIsPostHoc = fullDayType === 'furikae_off' && !!furikaeOriginDate && furikaeOriginDate < todayJstStr();
+  // 振替元の日がまだ来ていない振替休日を出す（切り替えオン）＝事前申請と同じく、振替元の日のあとに実績を報告する（2026-10-26）
+  const furikaePending = furikaeOn && !furikaeReportMode && fullDayType === 'furikae_off' && !!furikaeOriginDate && furikaeOriginDate >= todayJstStr();
+  // 休む日と振替元の日が別の給与期間（切り替えオン・案C の文）。選んだ瞬間に出す
+  const furikaePeriodMsg = furikaeOn && !furikaeReportMode && fullDayType === 'furikae_off' && date && furikaeOriginDate
+    ? furikaePeriodNg(date, furikaeOriginDate) : null;
 
   // 締めロック：新規申請のみ。対象日の給与期間が締め（支給月17日）を過ぎ、経理の許可（対象日そのもの）が無いとき送信不可。
   const targetPeriodStart = date ? calcPayPeriodStartJst(date) : '';
@@ -1297,7 +1318,30 @@ const OvertimeForm: React.FC<{
     if (JSON.stringify([...applicationTypes].sort()) !== JSON.stringify(diffBase.types)) ax.push('種別');
     return ax;
   }, [diffBase, fullDay, workSegments, breakMin, effectiveLocation, applicationTypes]);
-  const hasChanges = changedAxes.length > 0;
+  // 振替元の実績報告：予定（申請したときの振替元）から時刻・校が変わったか（2026-10-26）。
+  // 予定は、報告の前なら申請の値、報告が差し戻されたあとならトリガーが写した控え（furikae_planned）
+  const furikaeBase = useMemo(() => {
+    if (!furikaeReportMode || !editTarget) return null;
+    const p = editTarget.status === 'returned' ? editTarget.furikae_planned : null;
+    return {
+      start: ((p ? p.start : editTarget.furikae_origin_start) ?? '').slice(0, 5),
+      end: ((p ? p.end : editTarget.furikae_origin_end) ?? '').slice(0, 5),
+      location: (p ? p.location : editTarget.furikae_origin_location) ?? '',
+      labor: (p ? p.labor_minutes : editTarget.furikae_origin_labor_minutes) ?? 0,
+      breakMin: (p ? p.break_minutes : editTarget.furikae_origin_break_minutes) ?? 0,
+    };
+  }, [furikaeReportMode, editTarget]);
+  const furikaeChanged = !!furikaeBase && (furikaeOriginStart !== furikaeBase.start || furikaeOriginEnd !== furikaeBase.end
+    || effectiveFurikaeOriginLocation !== furikaeBase.location);
+  const hasChanges = furikaeReportMode ? furikaeChanged : changedAxes.length > 0;
+  // 履歴に残す「何が変わったか」（振替元の実績報告は振替元の時刻）
+  const historyAxes = furikaeReportMode ? (furikaeChanged ? ['振替元の時刻'] : []) : changedAxes;
+  // 報告のボタンをどこまで出すか（［申請どおり］は振替元の予定の終わりから・2026-10-26 ユーザー確定）。差し戻しの出し直しは制限なし
+  const furikaeGate = furikaeReportMode && editTarget?.status === 'request_confirmed'
+    ? furikaeReportGate(editTarget, todayJstStr(), new Date().getHours() * 60 + new Date().getMinutes())
+    : 'both';
+  // 振替元の予定の終わり（当日まだ終わる前に送ろうとしたときの注意に使う）
+  const furikaePlannedEndMin = furikaeReportMode && editTarget ? (furikaeOriginWindow(editTarget)?.endMin ?? null) : null;
   // 残業なし（実際は通常どおり）＝労働が通常シフトと同じ・種別なし。差分0は承認者確認をスキップ（自己確定）。
   const isPureZero = isReportPhase && !fullDay && diffMin === 0 && applicationTypes.length === 0;
   // 「残業なし（通常どおり）」ワンタップ：時間帯を通常シフトに、勤務地を通常校に、休憩自動・種別なしにリセット。
@@ -1357,7 +1401,11 @@ const OvertimeForm: React.FC<{
 
   // 🚨 送信前チェックの中身は lib/overtimeSubmit の validateOvertime（表の入力と共用）。
   //    ここに条件を書き戻さないこと。足すときは lib 側に足す
-  const validate = (): string => validateOvertime({
+  // 🚨 振替元の実績報告：予定の終わりより前に「予定どおり」のまま送らせない（2026-10-26・［申請どおり］を押せないのと同じ決まり）
+  const furikaeAsPlannedTooEarly = (): string => (furikaeReportMode && furikaeBase && !furikaeChanged
+    && editTarget && furikaeReportGate(editTarget, todayJstStr(), nowMinLive()) !== 'both')
+    ? `🕐 ${furikaeBase.end} 以降に報告できます。早く終わった場合は［勤務時間が申請と異なりました］から報告してください` : '';
+  const validate = (): string => furikaeAsPlannedTooEarly() || validateOvertime({
     date, mode, hasEditTarget: !!editTarget, today, advanceMaxDate, closeLocked, clockOnlyMode, normalShift,
     clockReason, clockReasonOther, fullDay, fullDayType, fdLocation,
     furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd, furikaeHasTime,
@@ -1367,6 +1415,7 @@ const OvertimeForm: React.FC<{
     isReportPhase, hasChanges, isPureZero, changeReason, typeDetect, lateChoice, earlyChoice,
     absenceReviewerOk: (!reviewerId || isSelfReview) ? undefined : reviewerIsManager(reviewerId),
     plannedLegal: isPlannedPhase && !fullDay && !clockOnlyMode ? planCheck : null,
+    furikaeSamePeriod: furikaeOn && !furikaeReportMode, furikaeReport: furikaeReportMode, furikaeChanged,
   });
 
   const handleSubmit = async () => {
@@ -1427,6 +1476,7 @@ const OvertimeForm: React.FC<{
         shiftNeeded: showPartialShiftChoice && selfShiftNeeded,
         // 出張報告から作った申請の印（表示だけ）。新規で、出張の日のままのときだけ付ける
         fromTripDate: (!editTarget && tripHint && tripHint.work_date === date) ? date : undefined,
+        furikaePending, furikaeReport: furikaeReportMode,
       }, toDbTime);
 
       // 🚨 書き込み（新規の登録／実績報告・再提出の書き換え／時間帯）は lib/overtimeSubmitApi の saveOvertimeReport（表の入力と共用）
@@ -1439,8 +1489,8 @@ const OvertimeForm: React.FC<{
         edit: editTarget ? {
           id: editTarget.id, status: editTarget.status, snapshot: editTarget,
           // 🚨 文は lib/overtimeFormParts の editHistorySummary（表入力と共用・2026-09-29）
-          historySummary: editHistorySummary({ isReportPhase, isPureZero, changedAxes, typeSwitched }),
-          historyChangeReason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
+          historySummary: editHistorySummary({ isReportPhase: isReportPhase || furikaeReportMode, isPureZero, changedAxes: historyAxes, typeSwitched }),
+          historyChangeReason: ((isReportPhase || furikaeReportMode) && hasChanges) ? changeReason.trim() : null,
         } : null,
       });
       // 「申請の依頼」から来ていれば、その依頼を「申請済み」にして申請と結び付ける（新規で本体が保存できたとき）。
@@ -1531,6 +1581,7 @@ const OvertimeForm: React.FC<{
       const reviewerName = reviewers.find(r => r.id === reviewerId)?.name ?? '';
       onSaved(gcalWarn, saved.recovered ? `${SEND_DELIVERED_TEXT}${SEND_DELIVERED_SUB}。`
         : asPlanned ? '予定どおりなので、受理を待たずに確認済みになりました'
+        : (furikaePending && furikaeOriginDate) ? `振替元 ${Number(furikaeOriginDate.slice(5, 7))}/${Number(furikaeOriginDate.slice(8, 10))}（${dowLabel(furikaeOriginDate)}）の勤務のあとに、実績を報告してください`
         : tripConfirmed ? 'シフト表どおりの出張のため、受理なしで確定しました'
         : trip ? `${reviewerName ? `${reviewerName}さんの` : ''}受理を待ちます${trip.reason ? `（受理が要る理由：${trip.reason}）` : ''}`
         : undefined);
@@ -1688,7 +1739,7 @@ const OvertimeForm: React.FC<{
       {editTarget && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: text }}>
-            {isReportPhase ? '📝 実績を報告する' : '再提出'}（{editTarget.work_date}）
+            {isReportPhase || (furikaeReportMode && isResubmit) ? '📝 実績を報告する' : '再提出'}（{furikaeReportMode && editTarget.furikae_origin_date ? `振替元 ${editTarget.furikae_origin_date}` : editTarget.work_date}）
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: subText }}>✕</button>
         </div>
@@ -1754,6 +1805,80 @@ const OvertimeForm: React.FC<{
       {isReportPhase && !fullDay && isPureZero && (
         <div style={{ marginBottom: 12, padding: '9px 12px', borderRadius: 8, background: isDark ? '#1b3a1e' : '#eaf6ec', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, fontSize: 12.5, color: isDark ? '#8fd19e' : '#1e7e34', textAlign: 'center', lineHeight: 1.6 }}>
           ✓ 残業なし（通常どおり）で報告します。承認者の確認は不要です。
+        </div>
+      )}
+
+      {/* 振替休日の振替元の実績報告（2026-10-26 ユーザー確定・モックのとおり）。
+          種別・休む日・振替元の日は受理済みなので固定。［申請どおり］は振替元の予定の終わりから、［異なりました］は開始から */}
+      {furikaeReportMode && editTarget && furikaeBase && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 12, border: `1px solid ${borderColor}` }}>
+            <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>📋 申請の内容（受理済み・変更できません）</span>
+            <div style={{ fontSize: 12.5, color: text, marginTop: 6, lineHeight: 1.7 }}>
+              休む日 {editTarget.work_date.slice(5).replace('-', '/')}（{dowLabel(editTarget.work_date)}）／振替元 {(editTarget.furikae_origin_date ?? '').slice(5).replace('-', '/')}（{dowLabel(editTarget.furikae_origin_date ?? editTarget.work_date)}）{furikaeBase.location ? ` ${furikaeBase.location}` : ''}<br />
+              予定 {furikaeBase.start}〜{furikaeBase.end}（休憩 {formatMin(furikaeBase.breakMin)}・労働 {formatMin(furikaeBase.labor)}）
+            </div>
+          </div>
+          {!furikaeDiffer ? (
+            <>
+              <div style={{ fontSize: 13.5, fontWeight: 'bold', color: isDark ? '#f8f9fa' : '#212529', marginBottom: 6 }}>実際の勤務内容を選択してください</div>
+              <button type="button" disabled={furikaeGate !== 'both'} onClick={goAsPlanned}
+                style={{ ...primaryBtn({ disabled: furikaeGate !== 'both' }), width: '100%', marginBottom: furikaeGate !== 'both' ? 4 : 8 }}>
+                ✓ 申請どおりに勤務しました
+              </button>
+              {furikaeGate !== 'both' && (
+                <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.6 }}>
+                  🕐 {furikaeBase.end} 以降に押せます。早く終わった場合は［勤務時間が申請と異なりました］から報告してください
+                </p>
+              )}
+              <button type="button" onClick={() => { setFurikaeDiffer(true); setAsPlannedNote(''); }}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+                勤務時間が申請と異なりました
+              </button>
+              {asPlannedNote && (
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '6px 10px' }}>{asPlannedNote}</p>
+              )}
+            </>
+          ) : (
+            <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 12px 14px' }}>
+              <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の実際の勤務時間{req}
+                <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（出勤〜退勤）</span>
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <TimeInput value={furikaeOriginStart} onChange={setFurikaeOriginStart} isDark={isDark} advance ariaLabel="振替元 開始時刻" style={{ flex: 1, minWidth: 0 }} />
+                <span style={{ color: subText }}>〜</span>
+                <TimeInput value={furikaeOriginEnd} onChange={setFurikaeOriginEnd} isDark={isDark} ariaLabel="振替元 終了時刻" style={{ flex: 1, minWidth: 0 }} />
+              </div>
+              {furikaeHasTime && (
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
+                  休憩 {formatMin(furikaeOriginBreak)}（自動）・労働 {formatMin(furikaeOriginLabor)}・合計時間数 {formatSignedMin(fdDiffMin)}
+                </p>
+              )}
+              <div style={{ marginTop: 8 }}>
+                <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務校</span>
+                <select value={furikaeOriginLocation} onChange={e => setFurikaeOriginLocation(e.target.value)} style={fieldStyle}>
+                  <option value="">選択してください</option>
+                  {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                  <option value="その他">その他（自由入力）</option>
+                </select>
+                {furikaeOriginLocation === 'その他' && (
+                  <input type="text" value={furikaeOriginLocationCustom} onChange={e => setFurikaeOriginLocationCustom(e.target.value)}
+                    placeholder="勤務校・場所を入力してください" style={{ ...fieldStyle, marginTop: 6 }} />
+                )}
+              </div>
+              {editTarget.status === 'request_confirmed' && (
+                <button type="button"
+                  onClick={() => {
+                    setFurikaeOriginStart(furikaeBase.start); setFurikaeOriginEnd(furikaeBase.end);
+                    if (furikaeBase.location) { setFurikaeOriginLocation(workplaces.includes(furikaeBase.location) ? furikaeBase.location : 'その他'); setFurikaeOriginLocationCustom(workplaces.includes(furikaeBase.location) ? '' : furikaeBase.location); }
+                    setFurikaeDiffer(false);
+                  }}
+                  style={{ ...backBtn(isDark), marginTop: 10, padding: '6px 14px', fontSize: 12.5 }}>
+                  申請の時刻に戻す
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1884,6 +2009,8 @@ const OvertimeForm: React.FC<{
               <p style={{ margin: '0 0 8px', fontSize: 13, color: text, lineHeight: 1.7 }}>
                 {selMark.dayCheck ? (
                   <>{dayTitle}は<b>定時</b>と記録しています（{new Date(selMark.dayCheck.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })} に記録）。</>
+                ) : selMark.furikaeOrigin && selMark.kind === 'unreported' ? (
+                  <>{dayTitle}は、振替休日の<b>振替元</b>です。勤務の<b>実績の報告がまだ</b>です。</>
                 ) : selMark.furikaeOrigin ? (
                   <>{dayTitle}は、振替休日の<b>振替元</b>として申請済みです。この日は別に申請できません。</>
                 ) : selMark.kind === 'returned' ? (
@@ -1904,7 +2031,7 @@ const OvertimeForm: React.FC<{
                   </>
                 ) : !selMark.furikaeOrigin && selMark.kind === 'returned' && selMark.reportId ? (
                   <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>直して出し直す</button>
-                ) : !selMark.furikaeOrigin && selMark.kind === 'unreported' && selMark.reportId ? (
+                ) : selMark.kind === 'unreported' && selMark.reportId ? (
                   <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>実績を報告する</button>
                 ) : !(markReport && onShowInHistory) ? (
                   <button type="button" onClick={onGoHistory} style={{ ...backBtn(isDark), width: '100%' }}>履歴を見る</button>
@@ -2138,7 +2265,8 @@ const OvertimeForm: React.FC<{
             {normalShift.calendar_kind === 'work_on_closed' && `・会社カレンダー：休館日だけど出勤日${normalShift.weekday_fallback ? `（${DAY_KIND_LABELS[normalShift.weekday_fallback]}曜のシフトを使用）` : ''}`}
             {!normalShift.calendar_kind && `・${DAY_KIND_LABELS[normalShift.day_kind]}曜パターン`}
           </p>
-          {!normOverride ? (
+          {/* 振替元の実績報告では休む日の通常シフトは出したときの控えを使う（直させない・2026-10-26） */}
+          {furikaeReportMode ? null : !normOverride ? (
             <button onClick={() => { setNormOverride(true); setNormStart(fmtTime(normalShift.start_time) === '-' ? '' : fmtTime(normalShift.start_time)); setNormEnd(fmtTime(normalShift.end_time) === '-' ? '' : fmtTime(normalShift.end_time)); }}
               style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 6, fontSize: 12, color: '#0d6efd', textDecoration: 'underline' }}>
               この日のシフトが違う場合は修正
@@ -2170,7 +2298,7 @@ const OvertimeForm: React.FC<{
       {/* 終日（調整休・欠勤）トグル。日付選択後に意味を持つためシフト表示カードの直後に配置。
           🚨 差し戻しの再提出でも出す（2026-09-25）。以前は編集中は出なかったので、欠勤で差し戻された申請を
              時間の申請に変えるには「取り消して出し直す」しかなかった。実績報告では出さない（fullDay の枠だけ） */}
-      {date && (!editTarget || isResubmit || fullDay) && (
+      {date && !furikaeReportMode && (!editTarget || isResubmit || fullDay) && (
         <div style={{ marginBottom: 12 }}>
           {(!editTarget || isResubmit) && (
             <button type="button"
@@ -2272,7 +2400,8 @@ const OvertimeForm: React.FC<{
               {/* 振替休日：① 振替元（実際に出勤した日・校・出退勤時刻）／② 休む日（対象日）。差分を自己完結で計算 */}
               {fullDayType === 'furikae_off' && (
                 <div style={{ marginTop: 12, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 12px 14px' }}>
-                  <p style={{ margin: '0 0 8px', fontSize: 12.5, fontWeight: 'bold', color: text }}>① 実際に出勤した日（振替元）</p>
+                  {/* 振替元の日がまだ来ていないときは予定の言い方（2026-10-26 ユーザー確定・10/25 の件のあと） */}
+                  <p style={{ margin: '0 0 8px', fontSize: 12.5, fontWeight: 'bold', color: text }}>{furikaePending ? '① 出勤する日（振替元）' : '① 実際に出勤した日（振替元）'}</p>
                   {/* 二重計上防止の案内（入力欄のすぐ上に常設） */}
                   <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginBottom: 10 }}>
                     <p style={{ margin: 0, fontSize: 11.5, color: '#856404', lineHeight: 1.6 }}>
@@ -2282,7 +2411,13 @@ const OvertimeForm: React.FC<{
                   <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務日{req}
                     <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（実際に出勤した日をタップ）</span>
                   </span>
+                  {furikaeOn && date && (
+                    <p style={{ margin: '0 0 4px', fontSize: 11.5, color: subText }}>休む日と同じ給与期間（{payPeriodRangeLabel(date)}）の日を選んでください</p>
+                  )}
                   <SingleDatePicker value={furikaeOriginDate} onChange={setFurikaeOriginDate} isDark={isDark} calendarKinds={calendarKinds} />
+                  {furikaePeriodMsg && (
+                    <div role="alert" style={{ marginTop: 6, padding: '8px 12px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 12.5, lineHeight: 1.6 }}>{furikaePeriodMsg}</div>
+                  )}
                   <div style={{ marginTop: 8 }}>
                     <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務校{req}
                       <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（シフトから自動・違えば修正。休日出勤で普段と違う場所なら「その他」）</span>
@@ -2300,7 +2435,7 @@ const OvertimeForm: React.FC<{
                   </div>
                   {/* 振替元の出退勤時刻（自動休憩） */}
                   <div style={{ marginTop: 10 }}>
-                    <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務時間{req}
+                    <span style={{ ...labelStyle, marginBottom: 4 }}>{furikaePending ? '振替元の勤務時間（予定）' : '振替元の勤務時間'}{req}
                       <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（出勤〜退勤）</span>
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2682,7 +2817,7 @@ const OvertimeForm: React.FC<{
       {!clockOnlyMode && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>理由{isReportPhase ? '' : req}</span>
-        {isReportPhase && !fullDay ? (
+        {(isReportPhase && !fullDay) || furikaeReportMode ? (
           <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, whiteSpace: 'pre-wrap', textAlign: 'center' }}>{reason || '—'}</div>
         ) : (<>
         <textarea data-err-field="reason" value={reason} onChange={e => { setReason(e.target.value); clearErr('reason'); }} rows={2}
@@ -2723,10 +2858,10 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 予定から変わった理由（実績報告フェーズで差分がある時だけ必須。残業なし＝通常どおりは理由不要） */}
-      {isReportPhase && !fullDay && hasChanges && !isPureZero && (
+      {((isReportPhase && !fullDay) || furikaeReportMode) && hasChanges && !isPureZero && (
         <div style={{ marginBottom: 12, background: isDark ? '#3a2c12' : '#fff8e1', border: `1px solid ${isDark ? '#7a5a1e' : '#ffe0a3'}`, borderRadius: 8, padding: '10px 12px' }}>
           <div style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#ffcf87' : '#8a6d1a', marginBottom: 6 }}>
-            予定から変わっています（{changedAxes.join('・')}）
+            予定から変わっています（{historyAxes.join('・')}）
           </div>
           <span style={{ ...labelStyle, color: isDark ? '#ffcf87' : '#8a6d1a' }}>予定から変わった理由 <span style={{ color: '#dc3545' }}>*必須</span></span>
           <textarea value={changeReason} onChange={e => setChangeReason(e.target.value)} rows={2}
@@ -2789,7 +2924,7 @@ const OvertimeForm: React.FC<{
       {!clockOnlyMode && (
       <div style={{ marginBottom: 16 }}>
         <span style={labelStyle}>申請先{isReportPhase ? '' : req}</span>
-        {isReportPhase && !fullDay ? (
+        {(isReportPhase && !fullDay) || furikaeReportMode ? (
           <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {isSelfReview ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
           </div>
@@ -2839,7 +2974,7 @@ const OvertimeForm: React.FC<{
       {!showConfirm ? (
         <button ref={submitBtnRef} onClick={handleSubmit} disabled={saving}
           style={{ ...primaryBtn({ disabled: saving }), width: '100%', ...(submitFlash ? { boxShadow: '0 0 0 4px rgba(13,110,253,0.35)' } : {}), transition: 'box-shadow 0.4s' }}>
-          {clockOnlyMode ? 'この内容で記録する（確定）' : isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
+          {clockOnlyMode ? 'この内容で記録する（確定）' : (isReportPhase || furikaeReportMode) ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
         </button>
       ) : (
         <div ref={confirmBoxRef} style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
@@ -2849,6 +2984,12 @@ const OvertimeForm: React.FC<{
           {endWarn && (
             <div style={{ background: '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 10px', margin: '0 0 8px' }}>
               <p style={{ margin: 0, fontSize: 12.5, color: '#92400e', lineHeight: 1.6 }}>⏰ {endWarn}</p>
+            </div>
+          )}
+          {/* 振替元の予定の終わりより前に報告しようとしたとき（止めない・2026-10-26） */}
+          {furikaeReportMode && furikaeGate === 'differ_only' && furikaePlannedEndMin != null && (
+            <div style={{ background: '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 10px', margin: '0 0 8px' }}>
+              <p style={{ margin: 0, fontSize: 12.5, color: '#92400e', lineHeight: 1.6 }}>⏰ まだ予定の終わり（{minToTime(furikaePlannedEndMin % 1440)}）前です。退勤の時刻が決まってから報告してください</p>
             </div>
           )}
           {clockOnlyMode ? (
@@ -2867,7 +3008,15 @@ const OvertimeForm: React.FC<{
               {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を合計時間数から差し引きます<br /></>}
               {fullDayType === 'furikae_off' && <>振替元の労働 {formatMin(furikaeOriginLabor)} − 休む日の労働 {formatMin(normalShift.labor_minutes)} ＝ 合計時間数 {formatSignedMin(fdDiffMin)}<br /></>}
               {fullDayType === 'absence' && <>欠勤1日として記録します<br /></>}
-              {isSelfReview ? '自己受理のため、送信と同時に確定します' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん（受理で確定します）`}
+              {furikaeReportMode
+                ? (isSelfReview ? '自己受理のため、送信と同時に確定します'
+                  : hasChanges ? `申請先：${editTarget?.reviewer?.name ?? reviewers.find(r => r.id === reviewerId)?.name ?? ''}さんの確認で確定します`
+                  : '予定どおりの報告です。受理を待たずに確定します')
+                : furikaePending && furikaeOriginDate
+                ? (isSelfReview
+                  ? `自己受理のため、送信と同時に受理されます。振替元 ${furikaeOriginDate.slice(5).replace('-', '/')}（${dowLabel(furikaeOriginDate)}）の勤務のあとに、実際の時間を報告してください`
+                  : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん（受理のあと、振替元 ${furikaeOriginDate.slice(5).replace('-', '/')}（${dowLabel(furikaeOriginDate)}）の勤務のあとに実績を報告します）`)
+                : isSelfReview ? '自己受理のため、送信と同時に確定します' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん（受理で確定します）`}
             </p>
           ) : (
           <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
@@ -2878,7 +3027,7 @@ const OvertimeForm: React.FC<{
           </p>
           )}
           {/* 自分で受理する終日の休み：シフト調整が要るか（2026-10-14・受理の画面の代わり。初めは「必要」） */}
-          {fullDayMode && isSelfReview && canChooseShiftAdjust && (
+          {fullDayMode && isSelfReview && canChooseShiftAdjust && !furikaeReportMode && (
             <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} />
           )}
           {/* 自分で受理する遅出・早退・勤務地変更の事前申請：いつもの校の代わりが要るか（2026-10-20・初めは調整不要・ユーザー確定 案A） */}
@@ -3328,7 +3477,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   //      同じ翌日基準の写しが App.tsx（ホーム件数・ナビ）と
   //      Edge Function remind-overtime-unreported（毎朝のリマインド）にもある。
   const unreportedRequests = useMemo(() =>
-    reports.filter(r => ['requested', 'request_confirmed'].includes(r.status) && r.work_date < todayJstStr() && !isFullDayReport(r.application_types)),
+    // 振替元の日がまだ来ていなかった振替休日は、振替元の日で数える（2026-10-26・lib/furikaeReport・催促と同じ）
+    reports.filter(r => isFurikaeReportRow(r) ? isFurikaeUnreported(r, todayJstStr())
+      : (['requested', 'request_confirmed'].includes(r.status) && r.work_date < todayJstStr() && !isFullDayReport(r.application_types))),
   [reports]);
 
   // ---- 受理・差し戻し・取消（Edge Function overtime-approve に集約） ----
@@ -3436,6 +3587,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       // 🚨 どの申請を直したものかを持たせる。持たせないと受理者からは「ただの新しい申請」に見え、
       //    何が変わったのか分からないまま受理することになる（2026-09-09）
       modifiedFromId: r.id,
+      // 🚨 終日（調整休・振替休日・欠勤）も写す（2026-10-26）。写さないと、振替休日を直すと時間の申請として開いていた
+      ...(isFullDayReport(r.application_types) ? {
+        fullDay: true,
+        fullDayType: (r.application_types ?? []).find(t => ['chosei_off', 'furikae_off', 'absence'].includes(t)),
+        ...(r.furikae_origin_date ? {
+          furikaeOriginDate: r.furikae_origin_date,
+          furikaeOriginLocation: r.furikae_origin_location ?? '',
+          furikaeOriginStart: r.furikae_origin_start ? r.furikae_origin_start.slice(0, 5) : '',
+          furikaeOriginEnd: r.furikae_origin_end ? r.furikae_origin_end.slice(0, 5) : '',
+        } : {}),
+      } : {}),
     };
     saveDraft(DRAFT_KEYS.overtime, draftCopy);
     setCancelTargetId(null);
@@ -4037,11 +4199,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       {r.furikae_origin_date && (
                         // 🚨 時間帯と労働時間まで出す。日付と勤務校だけでは
                         //    「何時間ぶんの振替なのか」が分からず、受理してよいか判断できない
-                        <><span style={{ color: subText }}>振替元　　：</span>{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}{r.furikae_origin_start ? `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}<br /></>
+                        <><span style={{ color: subText }}>振替元　　：</span>{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}{r.furikae_origin_start
+                          // 振替元の実績の確認（2026-10-26）：予定と実績を並べる（予定は DB のトリガーが写した控え）
+                          ? (r.status === 'reported' && r.furikae_planned?.start
+                            ? `・予定 ${r.furikae_planned.start.slice(0, 5)}〜${(r.furikae_planned.end ?? '').slice(0, 5)} → 実績 ${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）`
+                            : `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）`)
+                          : ''}<br /></>
                       )}
                       <span style={{ color: subText }}>
                         {fdType === 'chosei_off' && <>合計時間数 <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>（受理で確定します）</>}
-                        {fdType === 'furikae_off' && '休日出勤の振替として記録（受理で確定します）'}
+                        {/* 振替元の日がまだ来ていなかった振替休日は「受理で確定」ではない（2026-10-26 ユーザー確定 案A：説明は足さない） */}
+                        {fdType === 'furikae_off' && (isFurikaeReportRow(r) ? '休日出勤の振替として記録' : '休日出勤の振替として記録（受理で確定します）')}
                         {fdType === 'absence' && '欠勤1日として記録（受理で確定します）'}
                       </span>
                     </>
@@ -4145,7 +4313,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   </div>
                 ) : (
                   <>
-                  {isFullDayReport(r.application_types) && canChooseShiftAdjust && (
+                  {/* 🚨 終日の実績の確定（振替休日の振替元の報告）では出さない＝事前受理のときに決めた値を変えない */}
+                  {isFullDayReport(r.application_types) && canChooseShiftAdjust && isAdvance && (
                     <div style={{ margin: '0 0 10px' }}>
                       <div style={{ fontSize: 12.5, color: subText, marginBottom: 6 }}>シフト調整</div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -4563,7 +4732,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
                       <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffffff' : '#856404' }}>
                         {/* 日付は3件までに省略。件数が増えると折り返して読みにくくなるため */}
-                        🔔 実績が未報告の事前申請が{unreportedRequests.length}件あります（{unreportedRequests.slice(0, 3).map(r => r.work_date.slice(5).replace('-', '/')).join('・')}{unreportedRequests.length > 3 ? ` 他${unreportedRequests.length - 3}件` : ''}）
+                        🔔 実績が未報告の事前申請が{unreportedRequests.length}件あります（{unreportedRequests.slice(0, 3).map(r => isFurikaeReportRow(r) && r.furikae_origin_date ? `振替元 ${r.furikae_origin_date.slice(5).replace('-', '/')}` : r.work_date.slice(5).replace('-', '/')).join('・')}{unreportedRequests.length > 3 ? ` 他${unreportedRequests.length - 3}件` : ''}）
                       </p>
                     </div>
                   )}
@@ -4584,7 +4753,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     // 🚨 requested（上長がまだ受理していない分）も含める（2026-08-25）。
                     //    以前は受理済みだけが対象で、上長が受理を忘れると本人は何もできず、
                     //    ⚠️要報告バッジもリマインドも出ないまま放置されていた。
-                    const isReportable = ['requested', 'request_confirmed'].includes(r.status) && !isFullDay;
+                    // 振替元の日がまだ来ていなかった振替休日（2026-10-26）は振替休日でも報告がある（lib/furikaeReport）
+                    const isFurikaeRep = isFurikaeReportRow(r);
+                    const isReportable = isFurikaeRep ? ['requested', 'request_confirmed'].includes(r.status)
+                      : (['requested', 'request_confirmed'].includes(r.status) && !isFullDay);
                     // 判定は canReportOt に集約（当日は「勤務が終わるころ」から出す。催促側とは基準が違う）
                     const canReport = canReportOt(r);
                     // 🚨 「まだ報告できない」は canReport と必ず排他にすること。別々の条件にすると
@@ -4596,7 +4768,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const isReportableUnapproved = canReport && r.status === 'requested';
                     // 案内文に実時刻を出すためのゲート（深夜勤務で翌日にずれ込む分＝1440以上は出さない）
                     const gateRaw = isNotYet
-                      ? reportGateMin(r.normal_shift, (r.segments ?? []).filter(s => s.phase === 'planned'))
+                      ? (isFurikaeRep ? (furikaeOriginWindow(r)?.startMin ?? null)
+                        : reportGateMin(r.normal_shift, (r.segments ?? []).filter(s => s.phase === 'planned')))
                       : null;
                     const gateMin = gateRaw != null && gateRaw < 1440 ? gateRaw : null;
                     const canResubmit = r.status === 'returned';
@@ -4606,7 +4779,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const isReportedLock = !isAdmin && r.status === 'reported' && !isAuto;
                     const selfCancelStatus = ['requested', 'request_confirmed', 'returned'].includes(r.status) && !isAuto;
                     const adminCancelStatus = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
-                    const canCancel = isAdmin ? adminCancelStatus : (selfCancelStatus && !cancelLockedByPeriod);
+                    // 振替休日：休む日・振替元の日のどちらかが来たら本人は取り消せない（2026-10-26・Edge Function と同じ判定）
+                    const furikaeCancelLocked = !isAdmin && isFurikaeRep && selfCancelStatus && furikaeSelfCancelLocked(r, otTodayStr);
+                    const canCancel = isAdmin ? adminCancelStatus : (selfCancelStatus && !cancelLockedByPeriod && !furikaeCancelLocked);
                     // 内容を直す＝取消して同じ内容で作り直す（2026-09-09 ユーザー確定）。
                     // 🚨 実績報告が出ているとき（勤務日のあと）は出さない。過ぎた日の予定を作り直す意味が無く、
                     //    「実績を報告する」と並ぶと迷うため。差し戻しは「修正して再提出」が別にあるので除く。
@@ -4647,7 +4822,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             )}
                             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
                               {isFullDay && '終日　'}
-                              {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}${r.furikae_origin_start ? `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}　`}
+                              {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}${r.furikae_origin_start ? `・${isFurikaeRep && ['requested', 'request_confirmed'].includes(r.status) ? '予定 ' : ''}${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}　`}
                               {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
                               {r.reviewer?.name && `申請先：${r.reviewer.name}`}
                             </p>
@@ -4720,7 +4895,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             {/* 🚨 いつ出るかを必ず実時刻で伝える。ゲートは「通常シフトの終了」と「予定の終了」の
                                 早いほうなので、予定より早く切り上げた日は終わってもしばらく出ない。
                                 時刻が無いと「終わったのに出ない」という問い合わせになる（2026-08-26） */}
-                            {gateMin != null
+                            {isFurikaeRep && r.furikae_origin_date
+                              ? (r.status === 'requested' && r.furikae_origin_date <= otTodayStr
+                                // 振替休日は受理されてからでないと報告できない（2026-10-26・ユーザー確定の文）
+                                ? `⏳ ${r.reviewer?.name ? `${r.reviewer.name}さん` : '申請先'}の受理がまだのため、まだ報告できません。受理されると報告できます`
+                                : `📅 振替元 ${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${gateMin != null ? minToTime(gateMin) + ' ' : ''}以降に報告できます`)
+                              : gateMin != null
                               ? `📅 ${minToTime(gateMin)} 以降に報告できます`
                               : '📅 勤務が終わるころに報告できます'}
                           </p>
@@ -4736,6 +4916,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           //    以前は「申請先の担当者に」と書いており、履歴タブの注意事項（管理者に依頼）と食い違っていた
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>上長の確認待ちのため、自分では変更・取消できません。変更は下の「📩 修正を依頼」から管理者へ依頼してください</p>
                         )}
+                        {furikaeCancelLocked && !cancelLockedByPeriod && r.furikae_origin_date && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>
+                            🔒 {r.work_date < r.furikae_origin_date ? `休む日（${r.work_date.slice(5).replace('-', '/')}）` : `振替元の日（${r.furikae_origin_date.slice(5).replace('-', '/')}）`}が来たため、ご自分では取り消せません。取り消すときは管理者に依頼してください
+                          </p>
+                        )}
                         {selfCancelStatus && cancelLockedByPeriod && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月17日以降）、取消は管理者に依頼してください</p>
                         )}
@@ -4746,7 +4931,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               <>
                                 <button data-net="write" onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
                                   style={{ ...primaryBtn(), width: '100%' }}>
-                                  実績を報告する
+                                  {isFurikaeRep && r.furikae_origin_date ? `実績を報告する（振替元 ${r.furikae_origin_date.slice(5).replace('-', '/')}）` : '実績を報告する'}
                                 </button>
                                 <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
                                   {isReportableUnapproved && '受理を待たずに報告して大丈夫です。'}
@@ -4841,7 +5026,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                依頼を出したあとに上長が差し戻した瞬間にバッジごと消え、本人は取り下げも
                                出し直しもできなくなる（依頼はDBに残ったまま・二重openで再依頼も弾かれる）。
                             （取得側 reloadCorrections は status で絞らず全件取っている） */}
-                        {!isAuto && (['confirmed', 'reported'].includes(r.status) || corrections.get(r.id)?.status === 'open') && (
+                        {/* 振替休日で本人が取り消せなくなった分も、管理者への取消の依頼を出せるようにする（2026-10-26） */}
+                        {!isAuto && (['confirmed', 'reported'].includes(r.status) || furikaeCancelLocked || corrections.get(r.id)?.status === 'open') && (
                           <CorrectionBadgeAndButton
                             targetType="overtime"
                             targetId={r.id}

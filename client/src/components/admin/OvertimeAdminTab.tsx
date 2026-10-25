@@ -513,7 +513,8 @@ const OvertimeAdminTab: React.FC = () => {
   const doOtProxyApprove = async () => {
     const r = otProxyTarget;
     if (!r) return;
-    const fullDay = isFullDayReport(r.application_types);
+    // 🚨 シフト調整を選ぶのは終日の事前の受理だけ（振替休日の振替元の実績の確定では選ばない・2026-10-26）
+    const fullDay = isFullDayReport(r.application_types) && otStatusMap[r.id] === 'requested';
     if (fullDay && !otProxyShift) { setOtProxyErr('シフト調整が必要かどうかを選んでください'); return; }
     setOtActing(true); setOtProxyErr('');
     const partialCase = otStatusMap[r.id] === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr();
@@ -1627,7 +1628,7 @@ const OvertimeAdminTab: React.FC = () => {
                   <div style={{ fontSize: 12.5, color: subText, marginBottom: 12, lineHeight: 1.7 }}>
                     受理すると、{r.applicantName}さんには「受理されました」{someoneElse ? <>、{rv!.name}さんには「経理が代わりに受理しました」</> : ''}とベルでお知らせします。
                   </div>
-                  {fullDay && (
+                  {fullDay && st === 'requested' && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ fontSize: 12.5, color: text, marginBottom: 6 }}>シフト調整</div>
                       <div style={{ display: 'flex', gap: 6 }}>{toggle('needed', '必要')}{toggle('not_needed', '調整不要')}</div>
