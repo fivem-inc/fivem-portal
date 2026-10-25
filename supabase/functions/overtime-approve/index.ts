@@ -64,9 +64,11 @@ serve(async (req) => {
     //   受理は今までどおり。足すのは ①履歴に「経理が代わりに受理」 ②元の申請先へベル（スマホなし・読めば済む）
     // shift_needed：遅出・早退・勤務地変更を事前申請の受理で「シフト調整：必要」にする（2026-10-20・docs/計画-遅出早退勤務地変更のシフト調整.md）。
     //   🚨 送られてこない（undefined）なら何もしない＝古い画面でも壊れない。true で条件に合わないときは黙って捨てずにエラーにする
-    const { report_id, action, comment, shift_not_needed, on_behalf, shift_needed } = await req.json()
+    // change_location：振替休日の休む日を出勤に変えるとき、いつもと違う場所（在宅など）。空ならいつもどおり（2026-10-26 段6）
+    const { report_id, action, comment, shift_not_needed, on_behalf, shift_needed, change_location } = await req.json()
     // not_worked：振替休日の振替元の日に勤務しなかった（本人が［この日は勤務しませんでした］・2026-10-26 段5）
-    if (!report_id || !['approve', 'return', 'cancel', 'not_worked'].includes(action)) {
+    // furikae_change：振替休日の休む日を出勤に変える依頼（振替元の休日出勤は残す・2026-10-26 段6）
+    if (!report_id || !['approve', 'return', 'cancel', 'not_worked', 'furikae_change'].includes(action)) {
       return json({ success: false, error: '不正なリクエストです' }, 400)
     }
     if (action === 'return' && !String(comment ?? '').trim()) {
@@ -76,7 +78,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey)
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at, furikae_change_requested_at, furikae_change_reason, furikae_change_location')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -112,7 +114,118 @@ serve(async (req) => {
       return ol === true
     }
 
-    if (action === 'approve') {
+    // 振替休日が取り消されたことを、受理のお知らせ（leave:approved_fyi）の相手へベルで知らせる（スマホなし）。失敗しても処理は成功のまま
+    const notifyFurikaeCancelledFyi = async (): Promise<void> => {
+      try {
+        const { data: st } = await db.from('notification_settings').select('enabled, recipient')
+          .eq('event_key', 'leave:approved_fyi').eq('channel', 'site').maybeSingle()
+        if ((st as { enabled?: boolean } | null)?.enabled !== true) return
+        let rcp: unknown = {}
+        try { rcp = JSON.parse(String((st as { recipient?: string }).recipient || '{}')) } catch { rcp = {} }
+        const { data: ids, error: rErr } = await db.rpc('resolve_role_recipients', { p_applicant: r.applicant_id, p_recipient: rcp })
+        if (rErr) throw rErr
+        const [, fm, fd] = String(r.work_date).split('-').map(Number)
+        const rows = ((ids ?? []) as (string | { resolve_role_recipients: string })[])
+          .map(x => typeof x === 'string' ? x : x.resolve_role_recipients)
+          .filter(uid => uid && uid !== r.applicant_id)
+          .map(uid => ({
+            user_id: uid,
+            message: `🕐 振替休日が取り消されました「${applicantName}（${fm}/${fd}（${dowLabel(r.work_date)}））」`,
+            sub_message: null,
+            source_type: 'overtime:fullday_fyi',
+            event_key: null,
+            reference_id: String(r.work_date),
+          }))
+        if (rows.length) {
+          const { error: fErr } = await db.from('notifications').insert(rows)
+          if (fErr) throw fErr
+        }
+      } catch (e) {
+        console.error('[overtime-approve] 振替休日の取消のお知らせに失敗:', e instanceof Error ? e.message : String(e))
+      }
+    }
+    // あとで Google カレンダーに同期し直す申請（変更で新しくできた休日出勤・勤務地変更）
+    const extraSyncIds: string[] = []
+    // 振替休日の変更を当てる（DB の furikae_change_apply が 取消→休日出勤→勤務地変更 を1回で行う）
+    const applyFurikaeChange = async (): Promise<string | null> => {
+      const { data: res, error: aErr } = await db.rpc('furikae_change_apply', { p_id: r.id, p_actor: caller.id })
+      if (aErr) {
+        const m = String(aErr.message ?? '')
+        return m.includes('FURIKAE_CHANGE|') ? m.slice(m.indexOf('FURIKAE_CHANGE|') + 'FURIKAE_CHANGE|'.length) : '変更できませんでした: ' + m
+      }
+      const out = (res ?? {}) as { holiday_id?: string | null; location_id?: string | null }
+      if (out.holiday_id) extraSyncIds.push(out.holiday_id)
+      if (out.location_id) extraSyncIds.push(out.location_id)
+      await notifyFurikaeCancelledFyi()
+      return null
+    }
+    const md = (d: string) => `${String(d).slice(5).replace('-', '/')}（${dowLabel(String(d))}）`
+
+    if (action === 'furikae_change') {
+      // 🚨 本人だけ。振替休日（取消・却下・差し戻しでない）・勤務しなかった連絡や別の変更の依頼が無いこと・理由が要る
+      if (caller.id !== r.applicant_id) return json({ success: false, error: '権限がありません' }, 403)
+      if (!types.includes('furikae_off') || !originDate) return json({ success: false, error: '振替休日の申請ではありません' }, 409)
+      if (!['requested', 'request_confirmed', 'reported', 'confirmed'].includes(r.status)) return json({ success: false, error: 'この状態では変えられません' }, 409)
+      if (r.furikae_not_worked_at) return json({ success: false, error: '振替元の日に勤務しなかった連絡がある申請です' }, 409)
+      if (r.furikae_change_requested_at) return json({ success: false, error: 'すでに変更を依頼しています' }, 409)
+      const why = String(comment ?? '').trim()
+      if (!why) return json({ success: false, error: '理由を入力してください' }, 400)
+      if (why.length > 200) return json({ success: false, error: '理由は200字までにしてください' }, 400)
+      const loc = String(change_location ?? '').trim().slice(0, 100)
+      // 給与の締め（17日）を過ぎたら本人からは変えられない（取消と同じ）
+      if (!isAdmin) {
+        const [ppy, ppm] = String(r.pay_period_start ?? '').split('-').map(Number)
+        if (ppy && ppm) {
+          const payY = ppm === 12 ? ppy + 1 : ppy, payM = ppm === 12 ? 1 : ppm + 1
+          const cutoff17 = `${payY}-${String(payM).padStart(2, '0')}-17`
+          const jstToday = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
+          if (jstToday > cutoff17) return json({ success: false, error: '給与計算が始まっているため（毎月17日以降）変えられません。管理者に依頼してください' }, 403)
+        }
+      }
+      const { data: marked, error: mErr } = await db.from('overtime_reports')
+        .update({ furikae_change_requested_at: new Date().toISOString(), furikae_change_requested_by: caller.id,
+          furikae_change_reason: why, furikae_change_location: loc || null })
+        .eq('id', r.id).eq('status', r.status).is('furikae_change_requested_at', null).select('id')
+      if (mErr) return json({ success: false, error: '更新に失敗しました: ' + mErr.message }, 500)
+      if (!marked || marked.length === 0) return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
+      const selfReview = !r.reviewer_id || r.reviewer_id === r.applicant_id
+      if (selfReview) {
+        // 自己受理の方は押した時点で変える
+        const err = await applyFurikaeChange()
+        if (err) {
+          await db.from('overtime_reports').update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null }).eq('id', r.id)
+          return json({ success: false, error: err }, 409)
+        }
+        slackEventKey = 'overtime:cancelled'
+      } else {
+        // 申請先へ（🚨 新しい通知の種類は作らない＝実績報告が届いたときと同じ種類）
+        notification = {
+          user_id: r.reviewer_id,
+          message: `🕐 ${applicantName}さんから振替休日の変更（休む日 ${md(r.work_date)} を出勤に）が届きました`,
+          sub_message: `振替元 ${md(originDate)} は休日出勤のまま${loc ? `・休む日の勤務地：${loc}` : ''}`,
+          source_type: 'overtime_request:pending_approval',
+          reference_id: r.id,
+          event_key: 'overtime:new_request',
+          read: false,
+        }
+      }
+    } else if (action === 'approve' && r.furikae_change_requested_at) {
+      // 振替休日の変更の受理（2026-10-26 段6）
+      if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
+      if (await onLeaveBlocked()) return json({ success: false, error: '現在、受理はできません。' }, 403)
+      const err = await applyFurikaeChange()
+      if (err) return json({ success: false, error: err }, 409)
+      notification = {
+        user_id: r.applicant_id,
+        message: '🕐 振替休日の変更が受理されました',
+        sub_message: `休む日 ${md(r.work_date)} は出勤・振替元 ${md(originDate)} は休日出勤になりました`,
+        source_type: 'overtime_request',
+        reference_id: r.id,
+        event_key: 'overtime:confirmed',
+        read: false,
+      }
+      slackEventKey = 'overtime:cancelled'
+    } else if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、受理はできません。' }, 403)
       if (on_behalf === true && !isAdmin) return json({ success: false, error: '代わりに受理できるのは経理（管理者）だけです' }, 403)
@@ -272,6 +385,24 @@ serve(async (req) => {
           read: false,
         }
       }
+    } else if (action === 'return' && r.furikae_change_requested_at) {
+      // 振替休日の変更の依頼を差し戻す（振替休日はそのまま・2026-10-26 段6）
+      if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
+      if (await onLeaveBlocked()) return json({ success: false, error: '現在、差し戻しはできません。' }, 403)
+      const { data: back, error: bErr } = await db.from('overtime_reports')
+        .update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null })
+        .eq('id', r.id).not('furikae_change_requested_at', 'is', null).select('id')
+      if (bErr) return json({ success: false, error: '更新に失敗しました: ' + bErr.message }, 500)
+      if (!back || back.length === 0) return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
+      notification = {
+        user_id: r.applicant_id,
+        message: '🕐 振替休日の変更が差し戻されました',
+        sub_message: `休む日 ${md(r.work_date)}　理由：${String(comment).trim()}`,
+        source_type: 'overtime_request',
+        reference_id: r.id,
+        event_key: 'overtime:returned',
+        read: false,
+      }
     } else if (action === 'return') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、差し戻しはできません。' }, 403)
@@ -313,6 +444,7 @@ serve(async (req) => {
       }
     } else {
       // cancel（本人取消）。🚨 振替元の日に勤務しなかった連絡がある振替休日は、申請先（上長・自己受理なら本人）も取り消せる（2026-10-26 段5）
+      if (r.furikae_change_requested_at && !isAdmin) return json({ success: false, error: '振替休日の変更を依頼中です。変更をやめるときは申請先の方に差し戻してもらってください' }, 409)
       const notWorkedCancel = !!r.furikae_not_worked_at && r.status === 'reported' && caller.id === r.reviewer_id
       if (caller.id !== r.applicant_id && !isAdmin && !notWorkedCancel) return json({ success: false, error: '権限がありません' }, 403)
       if (!['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status)) {
@@ -364,34 +496,7 @@ serve(async (req) => {
       // 事前受理で「振替休日が受理されました」を受け取った人（休暇の受理のお知らせと同じ相手）にも取消を知らせる（2026-10-26 ユーザー確定）。
       // 🚨 スマホには出さない（event_key なし）。失敗しても取消は成功のまま
       if (isFurikaeReport && (r.status === 'request_confirmed' || notWorkedCancel)) {
-        try {
-          const { data: st } = await db.from('notification_settings').select('enabled, recipient')
-            .eq('event_key', 'leave:approved_fyi').eq('channel', 'site').maybeSingle()
-          if ((st as { enabled?: boolean } | null)?.enabled === true) {
-            let rcp: unknown = {}
-            try { rcp = JSON.parse(String((st as { recipient?: string }).recipient || '{}')) } catch { rcp = {} }
-            const { data: ids, error: rErr } = await db.rpc('resolve_role_recipients', { p_applicant: r.applicant_id, p_recipient: rcp })
-            if (rErr) throw rErr
-            const [, fm, fd] = String(r.work_date).split('-').map(Number)
-            const rows = ((ids ?? []) as (string | { resolve_role_recipients: string })[])
-              .map(x => typeof x === 'string' ? x : x.resolve_role_recipients)
-              .filter(uid => uid && uid !== r.applicant_id)
-              .map(uid => ({
-                user_id: uid,
-                message: `🕐 振替休日が取り消されました「${applicantName}（${fm}/${fd}（${dowLabel(r.work_date)}））」`,
-                sub_message: null,
-                source_type: 'overtime:fullday_fyi',
-                event_key: null,
-                reference_id: String(r.work_date),
-              }))
-            if (rows.length) {
-              const { error: fErr } = await db.from('notifications').insert(rows)
-              if (fErr) throw fErr
-            }
-          }
-        } catch (e) {
-          console.error('[overtime-approve] 振替休日の取消のお知らせに失敗:', e instanceof Error ? e.message : String(e))
-        }
+        await notifyFurikaeCancelledFyi()
       }
       // 勤務しなかった連絡を受けて申請先が取り消したときは、本人へ知らせる
       if (notWorkedCancel && caller.id !== r.applicant_id) {
@@ -530,6 +635,20 @@ serve(async (req) => {
       gcalError = e instanceof Error ? e.message : String(e)
     }
     if (!gcalOk) console.error('[overtime-approve] GCal同期失敗:', gcalError)
+    for (const sid of extraSyncIds) {
+      try {
+        const res2 = await fetch(`${supabaseUrl}/functions/v1/gcal-sync`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'sync', source_type: 'overtime', source_id: sid }),
+        })
+        const d2 = await res2.json()
+        if (!res2.ok || d2?.success === false) { gcalOk = false; gcalError = d2?.error ?? `status=${res2.status}` }
+      } catch (e) {
+        gcalOk = false
+        gcalError = e instanceof Error ? e.message : String(e)
+      }
+    }
 
     return json({ success: true, gcal_ok: gcalOk, gcal_error: gcalOk ? undefined : gcalError })
   } catch (e) {

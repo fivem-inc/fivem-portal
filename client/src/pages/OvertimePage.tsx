@@ -158,6 +158,10 @@ interface OvertimeReport {
   /** 振替元の日に勤務しなかった（本人が［この日は勤務しませんでした］・2026-10-26 段5。書けるのは Edge Function だけ） */
   furikae_not_worked_at?: string | null;
   furikae_not_worked_reason?: string | null;
+  /** 振替休日の休む日を出勤に変える依頼（振替元の休日出勤は残す・2026-10-26 段6。書けるのは Edge Function だけ） */
+  furikae_change_requested_at?: string | null;
+  furikae_change_reason?: string | null;
+  furikae_change_location?: string | null;
   furikae_planned?: { date?: string | null; location?: string | null; start?: string | null; end?: string | null; break_minutes?: number | null; labor_minutes?: number | null; diff_minutes?: number | null } | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
@@ -3340,7 +3344,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), segments:overtime_report_segments(*), modified_from:modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('reviewer_id', user.id)
       .eq('entry_type', 'manual')
-      .in('status', ['requested', 'reported'])
+      // 振替休日の変更の依頼（2026-10-26 段6）は、振替休日が受理済み・確認済みのままでも並べる
+      .or('status.in.(requested,reported),and(furikae_change_requested_at.not.is.null,status.neq.cancelled)')
       .order('work_date', { ascending: true });
     if (error) { setLoadError(isNetworkFailure(error) ? '確認待ちを読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。' : '確認待ちの読み込みに失敗しました：' + error.message); return; }
     setPendingForMe((data as OvertimeReport[] | null) ?? []);
@@ -3692,6 +3697,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   // 振替元の日に勤務しなかった振替休日を、申請先（または自己受理の本人）が取り消す（2026-10-26 段5）。
   // switchTo＝「有休・時間外調整休・欠勤にする」を選んだとき＝取り消したあと、申請の依頼の入口を出す
+  // 振替休日の休む日を出勤に変える（2026-10-26 段6）。窓を開いている申請・休む日の勤務地・理由
+  const [fcOpen, setFcOpen] = useState<string | null>(null);
+  const [fcPlace, setFcPlace] = useState<'usual' | 'other'>('usual');
+  const [fcLoc, setFcLoc] = useState('');
+  const [fcLocCustom, setFcLocCustom] = useState('');
+  const [fcReason, setFcReason] = useState('');
+  const [fcSending, setFcSending] = useState(false);
+  const [fcError, setFcError] = useState('');
+  const [fcDone, setFcDone] = useState('');
   const [notWorkedDone, setNotWorkedDone] = useState<{ applicantId: string; applicantName: string; workDate: string; switchTo: boolean } | null>(null);
   const [notWorkedAsk, setNotWorkedAsk] = useState<{ id: string; switchTo: boolean } | null>(null);
   const [appReqSheet, setAppReqSheet] = useState<{ kind: 'leave' | 'overtime'; recipientId: string; date: string } | null>(null);
@@ -4436,7 +4450,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 ) : (
                   <>
                   {/* 🚨 終日の実績の確定（振替休日の振替元の報告）では出さない＝事前受理のときに決めた値を変えない */}
-                  {isFullDayReport(r.application_types) && canChooseShiftAdjust && isAdvance && (
+                  {isFullDayReport(r.application_types) && canChooseShiftAdjust && isAdvance && !r.furikae_change_requested_at && (
                     <div style={{ margin: '0 0 10px' }}>
                       <div style={{ fontSize: 12.5, color: subText, marginBottom: 6 }}>シフト調整</div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -4461,6 +4475,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   ) : (
                     <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>シフト調整は、マネージャーが受理後に判断します</p>
                   ))}
+                  {r.furikae_change_requested_at && r.furikae_origin_date && (
+                    <div style={{ margin: '0 0 10px', padding: '10px 12px', borderRadius: 8, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}` }}>
+                      <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#fff' : '#0d47a1', lineHeight: 1.7 }}>
+                        <b>振替休日の変更</b>（{r.applicant?.name ?? ''}さんから）<br />
+                        休む日 {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）→ 出勤{r.furikae_change_location ? `（勤務地：${r.furikae_change_location}）` : '（いつもどおり）'}<br />
+                        振替元 {r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）→ 休日出勤{r.furikae_origin_start ? `（${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}・労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}<br />
+                        合計時間数 {formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin(r.furikae_origin_labor_minutes ?? 0)}<br />
+                        理由：{r.furikae_change_reason ?? ''}
+                      </p>
+                    </div>
+                  )}
                   {r.furikae_not_worked_at ? (
                     <div style={{ margin: '0 0 10px', padding: '10px 12px', borderRadius: 8, background: '#fff8e1', border: '1px solid #ffe0a3' }}>
                       <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
@@ -4495,7 +4520,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     {!r.furikae_not_worked_at && (
                     <button onClick={() => doApprove(r)} disabled={actingId === r.id}
                       style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 1 }}>
-                      {isAdvance ? '事前申請を受理' : '受理'}
+                      {r.furikae_change_requested_at ? '変更を受理' : isAdvance ? '事前申請を受理' : '受理'}
                     </button>
                     )}
                     <button onClick={() => { setReturnTargetId(r.id); setReturnComment(''); }}
@@ -4935,7 +4960,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const adminCancelStatus = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
                     // 振替休日：休む日・振替元の日のどちらかが来たら本人は取り消せない（2026-10-26・Edge Function と同じ判定）
                     const furikaeCancelLocked = !isAdmin && isFurikaeRep && selfCancelStatus && furikaeSelfCancelLocked(r, otTodayStr);
-                    const canCancel = isAdmin ? adminCancelStatus : (selfCancelStatus && !cancelLockedByPeriod && !furikaeCancelLocked);
+                    // 振替休日の変更を依頼している間は、本人は取り消さない（やめるときは申請先が差し戻す・Edge Function も断る）
+                    const canCancel = isAdmin ? adminCancelStatus : (selfCancelStatus && !cancelLockedByPeriod && !furikaeCancelLocked && !r.furikae_change_requested_at);
                     // 内容を直す＝取消して同じ内容で作り直す（2026-09-09 ユーザー確定）。
                     // 🚨 実績報告が出ているとき（勤務日のあと）は出さない。過ぎた日の予定を作り直す意味が無く、
                     //    「実績を報告する」と並ぶと迷うため。差し戻しは「修正して再提出」が別にあるので除く。
@@ -5074,6 +5100,89 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>
                             🔒 {r.work_date < r.furikae_origin_date ? `休む日（${r.work_date.slice(5).replace('-', '/')}）` : `振替元の日（${r.furikae_origin_date.slice(5).replace('-', '/')}）`}が来たため、ご自分では取り消せません。{r.furikae_origin_date <= otTodayStr ? '振替元の日に勤務しなかった場合は［実績を報告する］から［この日は勤務しませんでした］を押してください。それ以外は管理者に依頼してください' : '取り消すときは管理者に依頼してください'}
                           </p>
+                        )}
+                        {/* 振替休日の休む日を出勤に変える（振替元の休日出勤は残す・2026-10-26 段6 ユーザー確定） */}
+                        {(r.application_types ?? []).includes('furikae_off') && r.furikae_origin_date && !isAuto
+                          && ['requested', 'request_confirmed', 'reported', 'confirmed'].includes(r.status) && !r.furikae_not_worked_at && (() => {
+                          const om = `${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）`;
+                          const wm = `${r.work_date.slice(5).replace('-', '/')}（${dowLabel(r.work_date)}）`;
+                          const self = r.reviewer_id === user.id;
+                          const who = r.reviewer?.name ?? '申請先の方';
+                          if (r.furikae_change_requested_at) {
+                            return (
+                              <p style={{ margin: '8px 0 0', fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', lineHeight: 1.6 }}>
+                                振替休日の変更（休む日 {wm} を出勤に）を{who}さんに依頼しています。受理を待っています
+                              </p>
+                            );
+                          }
+                          if (cancelLockedByPeriod) return null;
+                          const originReported = !isFurikaeReportRow(r) || r.status === 'confirmed';
+                          const effLoc = fcPlace === 'other' ? (fcLoc === 'その他' ? fcLocCustom.trim() : fcLoc) : '';
+                          const send = async () => {
+                            if (fcPlace === 'other' && !effLoc) { setFcError('休む日の勤務地を選んでください'); return; }
+                            if (!fcReason.trim()) { setFcError('理由を入力してください'); return; }
+                            setFcSending(true); setFcError('');
+                            const { data, error } = await supabase.functions.invoke('overtime-approve', {
+                              body: { report_id: r.id, action: 'furikae_change', comment: fcReason.trim(), change_location: effLoc || undefined },
+                            });
+                            const res = data as { success?: boolean; error?: string } | null;
+                            setFcSending(false);
+                            if (error || !res?.success) { setFcError('送れませんでした：' + (res?.error ?? error?.message ?? '通信を確認してください')); return; }
+                            setFcOpen(null); setFcReason(''); setFcPlace('usual'); setFcLoc(''); setFcLocCustom('');
+                            setFcDone(self
+                              ? `振替休日を変えました。休む日 ${wm} は出勤、振替元 ${om} は休日出勤になりました`
+                              : `${who}さんに振替休日の変更を依頼しました。受理されると、休む日 ${wm} は出勤、振替元 ${om} は休日出勤になります`);
+                            fetchOwn(); fetchOwnCard();
+                          };
+                          return fcOpen !== r.id ? (
+                            <button type="button" onClick={() => { setFcOpen(r.id); setFcError(''); setFcDone(''); }}
+                              style={{ ...tintBtn(false), marginTop: 8, padding: '6px 14px', fontSize: 12.5 }}>
+                              休む日を出勤に変える（休日出勤は残す）
+                            </button>
+                          ) : (
+                            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, border: `1px solid ${borderColor}` }}>
+                              <p style={{ margin: '0 0 6px', fontSize: 12.5, color: text, lineHeight: 1.7 }}>
+                                休む日 {wm} は出勤にします。<br />
+                                振替元 {om} の勤務{r.furikae_origin_start ? `（${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}）` : ''}は「休日出勤」になります{originReported ? '' : '（実際の時間は、振替元の日のあとに報告します）'}。<br />
+                                合計時間数：{formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin(r.furikae_origin_labor_minutes ?? 0)}
+                              </p>
+                              <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>休む日の勤務</span>
+                              <div style={{ display: 'flex', gap: 6, margin: '4px 0 6px', flexWrap: 'wrap' }}>
+                                {([['usual', 'いつもどおり'], ['other', 'いつもと違う場所（在宅など）']] as const).map(([v, l]) => (
+                                  <button key={v} type="button" onClick={() => { setFcPlace(v); setFcError(''); }}
+                                    style={{ padding: '6px 12px', borderRadius: 16, fontSize: 12.5, fontWeight: 'bold', border: 'none', cursor: 'pointer',
+                                      background: fcPlace === v ? TOGGLE_BLUE : '#e3f2fd', color: fcPlace === v ? '#fff' : '#1565c0' }}>{l}</button>
+                                ))}
+                              </div>
+                              {fcPlace === 'other' && (
+                                <>
+                                  <select value={fcLoc} onChange={e => setFcLoc(e.target.value)}
+                                    style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, marginBottom: 6 }}>
+                                    <option value="">選択してください</option>
+                                    {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                                    <option value="その他">その他（在宅など・自由入力）</option>
+                                  </select>
+                                  {fcLoc === 'その他' && (
+                                    <input type="text" value={fcLocCustom} onChange={e => setFcLocCustom(e.target.value)} maxLength={100} placeholder="例：在宅"
+                                      style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, marginBottom: 6, boxSizing: 'border-box' }} />
+                                  )}
+                                  <p style={{ margin: '0 0 6px', fontSize: 11.5, color: subText }}>休む日に、いつものシフトの時間で「勤務地変更」もできます</p>
+                                </>
+                              )}
+                              <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>理由 <span style={{ color: '#dc3545' }}>*</span></span>
+                              <textarea value={fcReason} onChange={e => setFcReason(e.target.value)} rows={2} maxLength={200} placeholder="例：休む日に業務が入ったため"
+                                style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }} />
+                              {fcError && <p style={{ margin: '4px 0 0', fontSize: 12.5, color: '#dc3545' }}>{fcError}</p>}
+                              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                <button type="button" onClick={() => { setFcOpen(null); setFcError(''); }} style={{ ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 13 }}>戻る</button>
+                                <button type="button" data-net="write" onClick={send} disabled={fcSending}
+                                  style={{ ...primaryBtn({ disabled: fcSending }), flex: 2, padding: '8px 0', fontSize: 13 }}>{fcSending ? '送信中...' : self ? '変更する' : 'この内容で送る'}</button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        {fcDone && fcOpen === null && (r.application_types ?? []).includes('furikae_off') && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: '#155724', background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 8, padding: '6px 10px' }}>{fcDone}</p>
                         )}
                         {/* 振替元の日に勤務しなかったと伝えたあと（2026-10-26 段5）。自己受理の方は自分で出勤に戻せる */}
                         {r.furikae_not_worked_at && r.status === 'reported' && r.furikae_origin_date && (() => {
@@ -5226,7 +5335,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             onSubmitted={reloadCorrections}
                             // 振替休日の休む日に出勤（在宅など）することになったとき（2026-10-26 ユーザー確定）
                             note={(r.application_types ?? []).includes('furikae_off')
-                              ? '振替休日を出勤に変えたいときは、取り消したあと休日出勤と勤務地変更で出し直します' : undefined}
+                              ? '振替休日の休む日を出勤に変えたいときは、この画面ではなく、履歴のカードの［休む日を出勤に変える（休日出勤は残す）］を使ってください' : undefined}
                           />
                         )}
                       </div>
