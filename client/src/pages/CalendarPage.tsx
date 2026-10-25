@@ -576,7 +576,7 @@ const AbsenceInputSheet: React.FC<{
   // 出張先などが読めなかったときも、校だけは選べるようにする
   const placeGroups: PlaceGroup[] = placeGroupsProp.length > 0 ? placeGroupsProp : [{ label: '校', items: workplaces }];
   // 🚨 開いたときに対象者の一覧が空なら、その場で読み直す（2026-09-29：Android の一部の機種で、ページを開いた瞬間の
-  //    読み込みがログインの確認より先に走って空になり、そのまま対象者を選べなかった＝濱口さん）
+  //    読み込みがログインの確認より先に走って空になり、そのまま対象者を選べなかった＝ある方の実機）
   useEffect(() => {
     if (profiles.length === 0) onReloadProfiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1002,7 +1002,7 @@ const AbsenceInputSheet: React.FC<{
         }
       }
       // 欠勤を登録する日に、すでに休暇（申請中・受理済み）が入っていないか（2026-10-05 ユーザー指示）。
-      // 🚨 10/7 清水さんで、調整休の休暇と同じ日に「欠勤」も登録され、カレンダーに2つ並んだ（欠勤としても数えられてしまう）。
+      // 🚨 10/7 ある方の申請で、調整休の休暇と同じ日に「欠勤」も登録され、カレンダーに2つ並んだ（欠勤としても数えられてしまう）。
       //    入っていれば、すでに登録がある分と同じく、その日を外して登録する（黙って二重にしない）
       if (isAbsent) {
         const { data: leaves, error: leaveErr } = await supabase

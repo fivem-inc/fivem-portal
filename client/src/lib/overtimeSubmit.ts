@@ -523,7 +523,7 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     // 🚨 振替元の日がまだ来ていない振替休日の自己受理は「確定」ではなく事前受理（下の request_confirmed_at）
     ...((isSelfReview || isPureZero) && !(fullDayMode && v.furikaePending) ? { confirmed_by: v.userId, confirmed_at: v.nowIso } : {}),
     ...((fullDayMode && v.furikaePending && isSelfReview) ? { request_confirmed_at: v.nowIso, confirmed_by: null, confirmed_at: null } : {}),
-    // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・長岡さんの指摘）。
+    // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・マネージャーの指摘）。
     //    上長が受理する経路（Edge Function overtime-approve）はこの日時を入れるのに、
     //    自己受理はそこを通らないので**空のまま**だった。空だと、あとで実績を報告したときに
     //    確認の画面が「⚠️ 事前申請の受理をしていません」と出す（状態は受理済みなのに嘘になる）。

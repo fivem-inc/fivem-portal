@@ -2244,7 +2244,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   <div style={{ background: bg }}>
                     {histGrouped[period].map(r => {
                       // 遅刻の時間＝実際の始まり − 予定の始まり（入力の画面と同じ計算）。
-                      // 🚨 2026-10-08 まで「実労働 − 予定の長さ」で出していて、予定の長さは休憩を引く前なので、休憩の30〜60分がそのまま遅刻に見えていた（唐橋さん 10/8 の「遅刻 0:30」）
+                      // 🚨 2026-10-08 まで「実労働 − 予定の長さ」で出していて、予定の長さは休憩を引く前なので、休憩の30〜60分がそのまま遅刻に見えていた（ある方の 10/8 の「遅刻 0:30」）
                       const actFirst = segFirstStart(parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)) || r.actual_start?.slice(0, 5) || '';
                       const origFirst = segFirstStart(parseSegments(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end)) || r.original_start?.slice(0, 5) || '';
                       const lateMin = actFirst && origFirst ? Math.max(0, toMin(actFirst) - toMin(origFirst)) : null;

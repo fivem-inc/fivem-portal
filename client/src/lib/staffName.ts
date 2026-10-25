@@ -18,7 +18,7 @@ export function familyName(name: string): string {
   return parts.length > 1 ? parts[0] : name.trim();
 }
 
-/** "太田（全角空白）恭子" → "太田 恭子"（空白を1つにそろえる） */
+/** "見本（全角空白）花子" → "見本 花子"（空白を1つにそろえる） */
 export function fullName(name: string): string {
   return name.trim().split(SPACE).join(' ');
 }
@@ -27,7 +27,7 @@ export function fullName(name: string): string {
  * user_id → 表に書く短い名前（④ 2026-09-15 から呼び名つき）
  * ・呼び名（staff_display_names）があればそれ
  * ・無ければ名字。🚨 ほかの在籍者の「表に出る名前」（呼び名・名字）とかぶるときだけフルネーム
- *   （森本 千佳子さんが呼び名「尾上」なら、森本 純矢さんは「森本」のまま）
+ *   （見本 花子さんが呼び名「旧姓」なら、見本 一郎さんは「見本」のまま）
  * ・呼び名どうしがかぶったとき（DB が止めるが、退職から戻った人など）は両方フルネーム
  * @param labels user_id → 呼び名
  */

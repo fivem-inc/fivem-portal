@@ -547,7 +547,7 @@ const SlotDetail: React.FC<{
 
   // ── Google カレンダー（2026-10-02 ユーザー確定・ボタンを常に出す案）──
   // 🚨 それまでは決定で勤怠に休日出勤を登録しても、Google カレンダーには何も書いていなかった
-  //    （計画書に「決定のあとに画面から呼ぶ」とあったが作られていなかった。10/10 の古家さんで発覚）。
+  //    （計画書に「決定のあとに画面から呼ぶ」とあったが作られていなかった。10/10 にある方の相談で発覚）。
   // 🚨 書き方は勤怠カレンダーから手で登録したとき（CalendarPage の保存）と同じ形にそろえる。
   //    gcal-sync は同じ記録の予定を作り直すので、何度呼んでも二重にはならない。
   // 🚨 invoke は 4xx/5xx でも throw しないので、error と success を必ず見る
@@ -883,7 +883,7 @@ const SlotDetail: React.FC<{
   const confirmReplaceRef = useScrollIntoViewWhen<HTMLDivElement>(confirmReplace);
   const confirmNoChangeRef = useScrollIntoViewWhen<HTMLDivElement>(confirmNoChange !== null);
 
-  /** 相談の欄に残す文（例：森本さん 9:30〜17:30 四条本校） */
+  /** 相談の欄に残す文（例：見本さん 9:30〜17:30 四条本校） */
   const summaryOf = (rows: Draft[]): string => {
     const hhmm = (v: string) => (toDbTime(v) || v || '').slice(0, 5);
     return rows.map(d => {
@@ -1078,7 +1078,7 @@ const SlotDetail: React.FC<{
     // 🚨 ベルだけ（event_key を付けない＝スマホは鳴らさない）
     // 🚨 誰の代わりかは書かない（計画書の決まり）
     // 🚨 2026-10-02 ユーザー確定（案A′）：メッセージも届ける。それまでは「（届きます）」と書いてあるのに
-    //    パートには届かず、勤怠の備考にだけ入っていた（10/10 の古家さんで発覚）。
+    //    パートには届かず、勤怠の備考にだけ入っていた（10/10 にある方の相談で発覚）。
     //    パートのベルには送った人の名前が無いので「〇〇さんからのメッセージ」と名前を添える
     const fromMe = nameOf(userId) || '担当者';
     for (const d of notifyStaff ? drafts.filter(x => kindOf(x.userId) === 'attendance') : []) {
@@ -1271,7 +1271,7 @@ const SlotDetail: React.FC<{
     busy[uid] ?? (weekPatterns.some(x => x.user_id === uid) ? 'この曜日は勤務なし' : '週のシフト未登録');
   /** 週の基本シフトを「曜日と校」で（例「火・金 西陣校／木 四条本校」）。基本シフトが1日も無ければ ''。
    *  🚨 2026-10-02 ユーザー確定（案A）：それまでは「いちばん多い校」だけを先頭に出しており、
-   *     何の校か分からず、曜日で校が違う人（奥村さん＝火・金 西陣校／木 四条本校）は事実の一部しか伝わらなかった。
+   *     何の校か分からず、曜日で校が違う人（例：火・金 西陣校／木 四条本校の人）は事実の一部しか伝わらなかった。
    *     同じ校の曜日をまとめ、月→日の順に並べる。校は略さない */
   const weeklyShiftText = (uid: string): string => {
     const order: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];

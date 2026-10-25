@@ -61,7 +61,7 @@ export function parseSchoolCell(raw: unknown): string {
 }
 
 export interface ParsedPerson {
-  rawName: string;        // Excelの表記そのまま（「東　日菜  1/17～」等）
+  rawName: string;        // Excelの表記そのまま（「見本　花子  1/17～」等）
   name: string;           // 注記を除いた名前
   normalizedName: string; // 照合用（空白除去）
   anchor: string;         // 見つかったセル位置（重複時の説明用）

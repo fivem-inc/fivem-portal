@@ -107,7 +107,7 @@ serve(async (req) => {
     const first = sortedDates[0]
     const dateLabel = `${first.slice(5, 7)}月${parseInt(first.slice(8, 10))}日`
       + (sortedDates.length > 1 ? ` 他${sortedDates.length - 1}日` : '')
-    // 複数人のときは「大岡 佳奈恵さん 他2名」。1人のときは今までどおり名前だけ
+    // 複数人のときは「見本 花子さん 他2名」。1人のときは今までどおり名前だけ
     const nameLabel = isMulti
       ? `${staffList[0].name}さん 他${staffList.length - 1}名`
       : (staffList[0].name ?? '')

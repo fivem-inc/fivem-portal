@@ -5,7 +5,7 @@ import { backBtn, primaryBtn } from '../lib/buttonStyles';
 import { DELETE_REASON_MAX, DELETE_REASON_PRESETS } from '../lib/deleteApplication';
 
 interface Props {
-  /** 何を消すか（例：「清水 治彦さん　振替休日　10/7（火）」）。複数行可 */
+  /** 何を消すか（例：「見本 花子さん　振替休日　10/7（火）」）。複数行可 */
   detail: React.ReactNode;
   busy?: boolean;
   error?: string | null;

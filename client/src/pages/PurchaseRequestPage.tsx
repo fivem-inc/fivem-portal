@@ -599,7 +599,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
             const p = boardProgress[r.id];
             const remaining = Math.max(p.required - p.answered, 0);
             const canSeeNames = p.answers.length > 0 || p.pendingIds.length > 0;
-            // 回答した人は日時も添える（2026-10-16 ユーザー確定・例「濱口 美由紀（10/14 9:12）」）。日時は DB の answered_at（直したら直した日時）
+            // 回答した人は日時も添える（2026-10-16 ユーザー確定・例「見本 花子（10/14 9:12）」）。日時は DB の answered_at（直したら直した日時）
             const answeredAt = (id: string) => {
               const t = p.answers.find(x => x.manager_id === id)?.answered_at;
               return t ? new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';

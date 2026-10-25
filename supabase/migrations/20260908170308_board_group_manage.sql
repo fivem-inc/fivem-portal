@@ -66,18 +66,18 @@ create policy board_members_delete on public.board_channel_members
 
 -- ─────────────────────────────────────────────────────────────
 -- 名簿の修正（2026-09-08 ユーザー確定・案③）
--- 山本 香澄さん（リーダー）が「マネージャー・リーダー」の名簿（profiles.group_names）にも
+-- 職員04さん（リーダー）が「マネージャー・リーダー」の名簿（profiles.group_names）にも
 -- 会話のチャンネル（board_channel_members）にも入っていなかった。
 -- 6/13 の一括作成のあとに誰も足していなかったため。両方に足す。
 -- ─────────────────────────────────────────────────────────────
 update public.profiles
    set group_names = array_append(coalesce(group_names, '{}'), 'マネージャー・リーダー')
- where id = '1573ca5d-76a3-48df-9731-ac2e7b35c392'   -- 山本 香澄
+ where id = '1573ca5d-76a3-48df-9731-ac2e7b35c392'   -- 職員04
    and not (coalesce(group_names, '{}') @> array['マネージャー・リーダー']);
 
 insert into public.board_channel_members (channel_id, user_id)
 select '1d41cee1-cf79-4c4b-8409-8929b1128eaa',        -- グループ「マネージャー・リーダー」
-       '1573ca5d-76a3-48df-9731-ac2e7b35c392'         -- 山本 香澄
+       '1573ca5d-76a3-48df-9731-ac2e7b35c392'         -- 職員04
  where not exists (
    select 1 from public.board_channel_members
     where channel_id = '1d41cee1-cf79-4c4b-8409-8929b1128eaa'

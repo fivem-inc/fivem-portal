@@ -75,7 +75,7 @@ function chip(areas: WorkArea[], areaId: string | null | undefined, text: string
 /**
  * 紙に刷る校・部門の区切り。🚨 同じ校・同じ部門が時間をあけて続くとき（例：テレワーク 6:30～7:15 と 9:30～17:30 がどちらも四条本校）は
  * 1つにまとめる。まとめないと「四条本校 6:30～7:15 → 四条本校 9:30～17:30」の札が2つ並んで折り返し、
- * その人のブロックだけ縦に伸びていた（2026-10-05 太田 恭子さん）。短いほうの時間帯は出勤・退勤の下に小さく添える
+ * その人のブロックだけ縦に伸びていた（2026-10-05 ある方の勤務表）。短いほうの時間帯は出勤・退勤の下に小さく添える
  */
 function printSteps(day: RosterDay, areas: WorkArea[], mainAreaId: string | null) {
   const out: ReturnType<typeof placeSteps> = [];

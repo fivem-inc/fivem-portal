@@ -152,7 +152,7 @@ serve(async (req) => {
   const settingOf = (eventKey: string, channel: string) =>
     ((settings ?? []) as Setting[]).find((s) => s.event_key === eventKey && s.channel === channel);
 
-  // 「8/18 林 晃平・8/19 森本 千佳子」。多いときは先頭3件＋残り件数
+  // 「8/18 見本 一郎・8/19 見本 さくら」。多いときは先頭3件＋残り件数
   const buildSub = (list: Row[]) => {
     const sorted = [...list].sort((a, b) => a.work_date.localeCompare(b.work_date));
     const parts = sorted.slice(0, 3)

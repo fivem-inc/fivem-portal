@@ -497,7 +497,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   }, [leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId]);
 
   // 確認画面を開いたら、選んだ日に「欠勤」がすでに登録されていないかを見る（2026-10-05 ユーザー指示・カレンダーの欠勤の登録と両方で確かめる）。
-  // 🚨 10/7 清水さんで、調整休の休暇と同じ日に欠勤も登録され、カレンダーに2つ並んだ。休暇は受理の流れがあるので止めずに知らせるだけ
+  // 🚨 10/7 ある方の申請で、調整休の休暇と同じ日に欠勤も登録され、カレンダーに2つ並んだ。休暇は受理の流れがあるので止めずに知らせるだけ
   const [absentOnDates, setAbsentOnDates] = useState<string[]>([]);
   useEffect(() => {
     if (!showConfirm || selectedDates.length === 0) { setAbsentOnDates([]); return; }
@@ -570,7 +570,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const { highlightId, focusRef } = useFocusHighlight(history);
 
   // ── 自分あての「休暇の申請依頼」（2026-09-26）。それまで依頼のカードは残業ページにしか無く、
-  //    休暇の依頼でも残業ページに探しに行く作りだった（馬場さんはベルを読んだあと、カードを通らずここから申請した）。
+  //    休暇の依頼でも残業ページに探しに行く作りだった（ある方はベルを読んだあと、カードを通らずここから申請した）。
   //    カードは components/AppRequestCard（残業ページと共用）。申請との結び付けは DB のトリガーが同じ日で行う。
   const [receivedReqs, setReceivedReqs] = useState<ReceivedAppRequest[]>([]);
   const [receivedReqErr, setReceivedReqErr] = useState('');
