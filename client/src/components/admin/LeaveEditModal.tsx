@@ -2,12 +2,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { AdminLeaveRequest } from '../../types';
 import { logFail } from '../../lib/logFail';
+import { LEAVE_TYPE_CHOICES, leaveTypeFields, currentLeaveTypeLabel } from '../../lib/leaveTypeChoice';
 
 // 管理者が休暇申請の内容を直接修正するモーダル。
 // 理由必須 → 確認ステップ（本人へ通知が届く旨を提示）→ 原子的RPC(admin_edit_leave_request) → 本人へ通知。
 // alert/confirm は使わずインラインUIで完結する。
 
-const LEAVE_TYPES = ['有給休暇', 'バースデー休暇（有給）', '慶弔休暇', '調整休', 'その他'];
+// 種類の選択肢は lib/leaveTypeChoice（受理の画面・休暇のタブと同じ・2026-10-26 不具合6）。
+// 時間外調整休・振替休日を選ぶと印（chosei_sub_type）も一緒に入る。印の無い古い「調整休」は、その申請のときだけ選択肢に残す
+const LEGACY_ADJUST = '調整休';
 
 interface Props {
   record: AdminLeaveRequest;
@@ -20,7 +23,7 @@ const parseDates = (s?: string): string[] => { try { return s ? JSON.parse(s) : 
 const parseLocs = (s?: string | null): Record<string, string> => { try { return s ? JSON.parse(s) : {}; } catch { return {}; } };
 
 const LeaveEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved }) => {
-  const [leaveType, setLeaveType] = useState(record.leave_type);
+  const [leaveType, setLeaveType] = useState<string>(currentLeaveTypeLabel(record));
   const [leaveTypeOther, setLeaveTypeOther] = useState(record.leave_type_other ?? '');
   const [dates, setDates] = useState<string[]>(parseDates(record.leave_dates));
   const [locs, setLocs] = useState<Record<string, string>>(parseLocs(record.leave_locations));
@@ -46,13 +49,18 @@ const LeaveEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 4, display: 'block' };
 
   const typeLabel = (t: string, other: string) => (t === 'その他' ? (other.trim() || 'その他') : t);
+  // 今の種類が一覧に無いとき（古い「調整休」・旧い綴り）は、その申請のときだけ選択肢に残す（選ばれていない表示にならないように）
+  const curLabel = currentLeaveTypeLabel(record);
+  const typeOptions: string[] = (LEAVE_TYPE_CHOICES as readonly string[]).includes(curLabel) ? [...LEAVE_TYPE_CHOICES] : [...LEAVE_TYPE_CHOICES, curLabel];
+  // 書き込む種類と印（古い「調整休」のままなら今の印のまま＝'__keep__'）
+  const typeFields = leaveType === LEGACY_ADJUST ? { leave_type: '調整休', chosei_sub_type: '__keep__' } : leaveTypeFields(leaveType);
   const locLine = (ds: string[], m: Record<string, string>) => ds.map(d => `${d.slice(5)}:${m[d] || '未設定'}`).join('、');
 
   // 変更差分（表示・保存用）
   const changes = useMemo(() => {
     const c: Record<string, { old: unknown; new: unknown }> = {};
-    if (typeLabel(record.leave_type, record.leave_type_other ?? '') !== typeLabel(leaveType, leaveTypeOther))
-      c.leave_type = { old: typeLabel(record.leave_type, record.leave_type_other ?? ''), new: typeLabel(leaveType, leaveTypeOther) };
+    if (typeLabel(currentLeaveTypeLabel(record), record.leave_type_other ?? '') !== typeLabel(leaveType, leaveTypeOther))
+      c.leave_type = { old: typeLabel(currentLeaveTypeLabel(record), record.leave_type_other ?? ''), new: typeLabel(leaveType, leaveTypeOther) };
     const oldDates = parseDates(record.leave_dates);
     if (JSON.stringify(oldDates) !== JSON.stringify(dates)) c.leave_dates = { old: oldDates, new: dates };
     const oldLocLine = locLine(oldDates, parseLocs(record.leave_locations));
@@ -88,7 +96,7 @@ const LeaveEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
     dates.forEach(d => { if (locs[d]) cleanLocs[d] = locs[d]; });
     const { error: rpcErr } = await supabase.rpc('admin_edit_leave_request', {
       p_id: record.id,
-      p_leave_type: leaveType,
+      p_leave_type: typeFields.leave_type,
       p_leave_type_other: leaveType === 'その他' ? (leaveTypeOther.trim() || null) : null,
       p_leave_dates: JSON.stringify(dates),
       p_leave_locations: Object.keys(cleanLocs).length ? JSON.stringify(cleanLocs) : null,
@@ -99,14 +107,22 @@ const LeaveEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
       p_changes: changes,
       p_change_summary: summary,
       p_change_reason: changeReason.trim(),
+      p_chosei_sub_type: typeFields.chosei_sub_type,
     });
-    if (rpcErr) { setSaving(false); setError('保存に失敗しました: ' + rpcErr.message); return; }
+    if (rpcErr) {
+      setSaving(false);
+      // 区切りの日以降の調整休は DB（enforce_leave_adjust_moved）が止める
+      setError(rpcErr.message.includes('LEAVE_ADJUST_MOVED')
+        ? rpcErr.message.replace(/^.*LEAVE_ADJUST_MOVED:\s*/, '') + '（この休暇申請の種類は、時間外調整休・振替休日にできません）'
+        : '保存に失敗しました: ' + rpcErr.message);
+      return;
+    }
 
     // Googleカレンダー再同期（受理済みのみ反映される想定。失敗しても保存は成立）
     if (record.status === 'approved' || record.status === 'manager_approved') {
       try {
         await supabase.functions.invoke('gcal-sync', {
-          body: { action: 'upsert', source_type: 'leave', source_id: record.id, dates, name: record.profile?.name ?? '', leave_type: leaveType, locations: locs },
+          body: { action: 'upsert', source_type: 'leave', source_id: record.id, dates, name: record.profile?.name ?? '', leave_type: typeFields.leave_type, locations: locs },
         });
       } catch (e) { console.error('[gcal-sync] 休暇修正の再同期失敗:', e); }
     }
@@ -139,7 +155,7 @@ const LeaveEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
             <div>
               <label style={labelStyle}>種別</label>
               <select style={inputStyle} value={leaveType} onChange={e => setLeaveType(e.target.value)}>
-                {LEAVE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {typeOptions.map(t => <option key={t} value={t}>{t === LEGACY_ADJUST ? '調整休（種類なし）' : t}</option>)}
               </select>
               {leaveType === 'その他' && (
                 <input style={{ ...inputStyle, marginTop: 8 }} value={leaveTypeOther} onChange={e => setLeaveTypeOther(e.target.value)} placeholder="種別の内容" />

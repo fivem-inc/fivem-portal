@@ -4,6 +4,7 @@ import PartLeaveFormBox from '../PartLeaveFormBox';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification, formatLeaveDateSummary, notifyLeaveFinalApprovers } from '../../lib/notifications';
+import { LEAVE_TYPE_CHOICES, leaveTypeFields, currentLeaveTypeLabel } from '../../lib/leaveTypeChoice';
 import { shortLeaveDate } from '../../lib/leaveDates';
 import { todayJstStr } from '../../lib/breakCalc';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../../lib/notificationDispatch';
@@ -128,7 +129,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
   const shiftNotNeededRef = useRef(false);
   const chooseShiftNotNeeded = (v: boolean) => { shiftNotNeededRef.current = v; setShiftNotNeeded(v); };
-  const LEAVE_TYPES = ['有給休暇', 'BD休暇', '慶弔休', '調整休', 'その他', '病欠'];
+  // 種類の選択肢は lib/leaveTypeChoice（受理の画面の差し戻しと同じ・2026-10-26 不具合5・6）
   const [filterFY, setFilterFY] = useState<string>('__current__'); // 'all' | '__current__' | '2026' ...
   const [filterPerson, setFilterPerson] = useState<string>('all');
   const [absFilterFY, setAbsFilterFY] = useState<string>('__current__');
@@ -1907,7 +1908,7 @@ const LeaveRequestsTab: React.FC = () => {
                       <select value={rejectNewType} onChange={e => setRejectNewType(e.target.value)}
                         style={{ width: '100%', padding: '8px', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, fontSize: 14, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333' }}>
                         <option value="">変更しない</option>
-                        {LEAVE_TYPES.filter(t => t !== rejectModal.leave_type).map(t => <option key={t} value={t}>{t}</option>)}
+                        {LEAVE_TYPE_CHOICES.filter(t => t !== currentLeaveTypeLabel(rejectModal)).map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                       {rejectNewType && <div style={{ fontSize: 12, color: '#e65100', marginTop: 4 }}>「{rejectModal.leave_type}」→「{rejectNewType}」に変更して差し戻します</div>}
                     </div>
@@ -1935,7 +1936,7 @@ const LeaveRequestsTab: React.FC = () => {
                             // 🚨 検査せずに進むと、受理できていなくても本人へ通知が飛び、
                             //    さらに下でGoogleカレンダーに新しい予定が作られる
                             const typeChangeRes = await supabase.from('leave_requests')
-                              .update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() })
+                              .update({ ...leaveTypeFields(rejectNewType), status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() })
                               .eq('id', rejectModal.id).select('id');
                             const typeChangeFail = describeUpdate(typeChangeRes, '受理', 'missing');
                             if (typeChangeFail) { setModalError(typeChangeFail); return; }
@@ -1948,7 +1949,7 @@ const LeaveRequestsTab: React.FC = () => {
                               const dates: string[] = rejectModal.leave_dates ? JSON.parse(rejectModal.leave_dates) : [];
                               if (dates.length > 0) {
                                 await supabase.functions.invoke('gcal-sync', {
-                                  body: { action: 'upsert', source_type: 'leave', source_id: rejectModal.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType, locations: parseLeaveLocations(rejectModal.leave_locations) },
+                                  body: { action: 'upsert', source_type: 'leave', source_id: rejectModal.id, dates, name: rejectModal.profile?.name ?? '', leave_type: leaveTypeFields(rejectNewType).leave_type, locations: parseLeaveLocations(rejectModal.leave_locations) },
                                 });
                               }
                             } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }
@@ -1964,7 +1965,7 @@ const LeaveRequestsTab: React.FC = () => {
                             ? `種別を「${rejectNewType}」に変更しました。${rejectReason ? `　理由：${rejectReason}` : ''}`
                             : (rejectReason || null);
                           const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
-                          if (rejectNewType) update.leave_type = rejectNewType;
+                          if (rejectNewType) Object.assign(update, leaveTypeFields(rejectNewType));
                           setModalError('');
                           // 🚨 ここを検査せずに進むと、差し戻せていなくても
                           //    このあとGoogleカレンダーの予定が実際に消え、申請者へ通知も飛ぶ。
@@ -1980,7 +1981,7 @@ const LeaveRequestsTab: React.FC = () => {
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（元の申請から自動作成）`;
                             const { data: newReq } = await supabase.from('leave_requests').insert({
                               user_id: rejectModal.user_id,
-                              leave_type: rejectNewType,
+                              ...leaveTypeFields(rejectNewType),
                               leave_dates: rejectModal.leave_dates,
                               leave_locations: rejectModal.leave_locations, // 校の引き継ぎ
                               start_date: rejectModal.start_date,
@@ -1996,7 +1997,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 const dates: string[] = rejectModal.leave_dates ? JSON.parse(rejectModal.leave_dates) : [];
                                 if (dates.length > 0) {
                                   await supabase.functions.invoke('gcal-sync', {
-                                    body: { action: 'upsert', source_type: 'leave', source_id: newReq.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType, locations: parseLeaveLocations(rejectModal.leave_locations) },
+                                    body: { action: 'upsert', source_type: 'leave', source_id: newReq.id, dates, name: rejectModal.profile?.name ?? '', leave_type: leaveTypeFields(rejectNewType).leave_type, locations: parseLeaveLocations(rejectModal.leave_locations) },
                                   });
                                 }
                               } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }

@@ -1125,6 +1125,8 @@ const OvertimeForm: React.FC<{
 
   // 打刻ズレは「事後報告の新規」でだけ使う（実績報告・再提出・事前申請では出さない）
   const clockOnlyMode = clockOnly && mode === 'posthoc' && !editTarget;
+  // 送る前の確認の送るボタン（2026-10-26 言葉をそろえる・案A）：申請＝この内容で申請する／実績の報告＝この内容で報告する／打刻ズレ＝この内容で記録する
+  const confirmSendLabel = clockOnlyMode ? 'この内容で記録する' : (isReportPhase || furikaeReportMode) ? 'この内容で報告する' : 'この内容で申請する';
   // 🚨 実効値は lib/overtimeFormParts の effectiveClockReasonOf（表入力と共用・2026-09-29）
   const effectiveClockReason = effectiveClockReasonOf(clockReason, clockReasonOther);
 
@@ -1421,7 +1423,9 @@ const OvertimeForm: React.FC<{
   const furikaeAsPlannedTooEarly = (): string => (furikaeReportMode && furikaeBase && !furikaeChanged
     && editTarget && furikaeReportGate(editTarget, todayJstStr(), nowMinLive()) !== 'both')
     ? `🕐 ${furikaeBase.end} 以降に報告できます。早く終わった場合は［勤務時間が申請と異なりました］から報告してください` : '';
-  const validate = (): string => furikaeAsPlannedTooEarly() || validateOvertime({
+  // 🐛 依頼から開いたとき、依頼した人が申請先の候補に居ないと「申請先：さん」のまま送れていた（2026-10-26 不具合2）。選び直してもらう
+  const reviewerUnknown = (): string => (!editTarget && reviewerId && reviewerId !== user.id && !reviewers.some(r => r.id === reviewerId)) ? '申請先を選択してください' : '';
+  const validate = (): string => furikaeAsPlannedTooEarly() || reviewerUnknown() || validateOvertime({
     date, mode, hasEditTarget: !!editTarget, today, advanceMaxDate, closeLocked, clockOnlyMode, normalShift,
     clockReason, clockReasonOther, fullDay, fullDayType, fdLocation,
     furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd, furikaeHasTime,
@@ -1499,7 +1503,7 @@ const OvertimeForm: React.FC<{
       setSendWarn(''); setSendSlow(false);
       const saved = await saveOvertimeReport({
         userId: user.id, record, phase,
-        onSlow: () => setSendSlow(true), buttonLabel: '送信する',
+        onSlow: () => setSendSlow(true), buttonLabel: confirmSendLabel,
         // 終日（調整休・欠勤）は時間帯を持たない
         segments: fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments),
         edit: editTarget ? {
@@ -1763,6 +1767,14 @@ const OvertimeForm: React.FC<{
       {/* 差し戻し理由。🚨 直す画面に出す（2026-09-25）。以前は履歴タブにしか出ておらず、
           「修正して再提出」を押すと理由が画面から消えて、何を直すのか思い出しながら操作していた。
           枠はこの画面のエラー表示と同じ固定色（🎨🔒・新しい色は足さない） */}
+      {/* ［内容を変更する］（取り消して作り直す）で来たとき（2026-10-26 言葉をそろえる）。🚨 元の申請はもう取り消してあるので、送らずにやめると申請が無いままになる */}
+      {!editTarget && draft?.modifiedFromId && (
+        <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+          <p style={{ margin: 0, fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>
+            元の申請は取り消しました。直したあと［この内容で申請する］まで進めてください（送らずにやめると、この日の申請は無いままになります）。
+          </p>
+        </div>
+      )}
       {isResubmit && editTarget?.return_comment && (
         <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
           <p style={{ margin: 0, fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>
@@ -2100,7 +2112,7 @@ const OvertimeForm: React.FC<{
                     <button type="button" onClick={() => setFormFor(date)} style={{ ...primaryBtn(), flex: 2 }}>残業があったので申請する</button>
                   </>
                 ) : !selMark.furikaeOrigin && selMark.kind === 'returned' && selMark.reportId ? (
-                  <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>直して出し直す</button>
+                  <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>内容を変更する</button>
                 ) : selMark.kind === 'unreported' && selMark.reportId ? (
                   <button type="button" onClick={() => onOpenExisting(selMark.reportId!)} style={{ ...primaryBtn(), width: '100%' }}>実績を報告する</button>
                 ) : !(markReport && onShowInHistory) ? (
@@ -3145,7 +3157,7 @@ const OvertimeForm: React.FC<{
             </button>
             <button onClick={doSubmit} disabled={saving}
               style={{ ...primaryBtn({ disabled: saving }), flex: 2 }}>
-              {saving ? '送信中…' : '送信する'}
+              {saving ? '送信中…' : confirmSendLabel}
             </button>
           </div>
           {saving && sendSlow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
@@ -4792,8 +4804,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 </ol>
                 <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ 変更・取消のルール</p>
                 <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
-                  <li><b>申請中／事前申請 受理済み／差し戻し</b>は、自分で変更・取消できます。時間や内容を直すときは「<b>内容を修正する（取り消して再申請）</b>」を押してください（受理はやり直しになります）。勤務日のあとは「<b>実績を報告する</b>」から変更してください（残業が無かった日もこちらです）。</li>
-                  <li><b>実績報告済み・確認済み</b>は自分では変更・取消できません。「<b>📩 管理者に修正を依頼</b>」または「<b>取消を依頼</b>」から依頼してください（依頼はあとから取り下げられます）。</li>
+                  <li><b>申請中／事前申請 受理済み／差し戻し</b>は、自分で変更・取消できます。時間や内容を直すときは「<b>内容を変更する</b>」を押してください（申請を取り消して作り直すので、受理はやり直しになります）。勤務日のあとは「<b>実績を報告する</b>」から変更してください（残業が無かった日もこちらです）。</li>
+                  <li><b>実績報告済み・確認済み</b>は自分では変更・取消できません。灰色の枠の「<b>📩 修正を依頼</b>」または「<b>取消を依頼</b>」から管理者に依頼してください（依頼はあとから取り下げられます）。</li>
                   <li>自分で取消できるのは<b>支給月の17日まで</b>です。それ以降は管理者へご依頼ください。</li>
                   <li>調整休の受理により自動で計上された記録は、変更・取消の対象外です（もとの休暇申請を取り消してください）。</li>
                   <li>振替休日は「休日出勤した日の実際の勤務時間」と「休みを取る日の通常の勤務時間」の差分が合計時間数に反映されます。休日出勤した日を別途「休日出勤」として申請すると二重計上になるため、申請しないでください。</li>
@@ -4976,7 +4988,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     // 取消ルール：reported(実績報告済＝実態あり)は本人不可（上長が差し戻す/管理者）。
                     // 本人可は事前段階(requested/request_confirmed)＋差し戻し(returned)のみ。期間は支給月17日まで、以降は管理者のみ。確定は不可（既存）。
                     const cancelLockedByPeriod = !isAdmin && otTodayStr > payPeriodCloseCutoff(r.pay_period_start);
-                    const isReportedLock = !isAdmin && r.status === 'reported' && !isAuto;
                     const selfCancelStatus = ['requested', 'request_confirmed', 'returned'].includes(r.status) && !isAuto;
                     const adminCancelStatus = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
                     // 振替休日：休む日・振替元の日のどちらかが来たら本人は取り消せない（2026-10-26・Edge Function と同じ判定）
@@ -5112,11 +5123,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             ⏳ {r.reviewer?.name ? `${r.reviewer.name}さん` : '申請先'}の受理がまだですが、先に実績を報告できます（受理と確認はまとめて行われます）
                           </p>
                         )}
-                        {isReportedLock && (
-                          // 🚨 依頼先は「管理者」に統一（下の📩ボタン＝ submit_correction_request は管理者宛）。
-                          //    以前は「申請先の担当者に」と書いており、履歴タブの注意事項（管理者に依頼）と食い違っていた
-                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>上長の確認待ちのため、自分では変更・取消できません。変更は下の「📩 修正を依頼」から管理者へ依頼してください</p>
-                        )}
+                        {/* 実績報告済み・受理済みの説明の文は出さない（下の灰色の枠「…（管理者に依頼）」で伝える・2026-10-26 ユーザー確定 案2） */}
                         {furikaeCancelLocked && !cancelLockedByPeriod && r.furikae_origin_date && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>
                             🔒 {r.work_date < r.furikae_origin_date ? `休む日（${r.work_date.slice(5).replace('-', '/')}）` : `振替元の日（${r.furikae_origin_date.slice(5).replace('-', '/')}）`}が来たため、ご自分では取り消せません。{r.furikae_origin_date <= otTodayStr ? '振替元の日に勤務しなかった場合は［実績を報告する］から［この日は勤務しませんでした］を押してください。それ以外は管理者に依頼してください' : '取り消すときは管理者に依頼してください'}
@@ -5270,7 +5277,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                     <div style={{ display: 'flex', gap: 6 }}>
                                       <button data-net="write" onClick={() => { setModifyTargetId(null); cancelAndCopy(r); }} disabled={actingId === r.id}
                                         style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
-                                        修正をはじめる
+                                        変更をはじめる
                                       </button>
                                       <button onClick={() => setModifyTargetId(null)}
                                         style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>
@@ -5281,7 +5288,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 ) : (
                                 <button data-net="write" onClick={() => { setModifyTargetId(r.id); setCancelTargetId(null); }} disabled={actingId === r.id}
                                   style={{ width: '100%', marginTop: canReport ? 8 : 0, padding: '11px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
-                                  内容を修正する（取り消して再申請）
+                                  内容を変更する
                                 </button>
                                 )}
                                 {!r.is_post_hoc && (
@@ -5294,7 +5301,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             {canResubmit && (
                               <button data-net="write" onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
                                 style={{ width: '100%', padding: '11px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
-                                修正して再提出
+                                内容を変更する
                               </button>
                             )}
                             {canCancel && (
@@ -5302,17 +5309,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 <div style={{ marginTop: 10 }}>
                                   <p style={{ margin: '0 0 8px', fontSize: 11.5, color: subText, background: innerBg, borderRadius: 8, padding: '8px 10px', lineHeight: 1.7 }}>
                                     {/* 🚨 文面は「いま出ているボタン」に合わせて切り替える。出ていないボタンを案内すると探させることになる */}
-                                    この申請を取り消します。<br />
                                     {canReport
                                       ? <>残業が無かった場合や内容の変更は「<b style={{ color: text }}>実績を報告する</b>」から行ってください。</>
                                       : canModify
-                                        ? <>内容の変更は「<b style={{ color: text }}>内容を修正する（取り消して再申請）</b>」から行ってください。</>
+                                        ? <>内容の変更は「<b style={{ color: text }}>内容を変更する</b>」から行ってください。取り消すと元に戻せません。</>
                                         : <>取り消すと元に戻せません。</>}
                                   </p>
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <button data-net="write" onClick={() => doCancel(r)} disabled={actingId === r.id}
                                       style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>
-                                      取消を確定
+                                      取り消す
                                     </button>
                                     <button onClick={() => setCancelTargetId(null)}
                                       style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>
@@ -5325,7 +5331,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 <div style={{ textAlign: 'center', marginTop: 10 }}>
                                   <button data-net="write" onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
                                     style={{ ...backBtn(isDark), padding: '6px 16px', fontSize: 12 }}>
-                                    この申請を取消する
+                                    この申請を取り消す
                                   </button>
                                 </div>
                               )

@@ -30,7 +30,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
-import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import type { TodoItem } from '../lib/shiftReportTodo';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
@@ -344,7 +344,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
             </>
           )}
           <Sep isDark={isDark} />
-          <CRow label="確認依頼先" value={data.reviewerName} textColor={text} />
+          <CRow label="申請先" value={data.reviewerName} textColor={text} />
           {data.isSelfReview && (
             <div style={{ background: isDark ? '#1e3d2f' : '#d1fae5', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 報告と同時に受理されます</span>
@@ -355,7 +355,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           )}
           <button onClick={onSubmit} disabled={saving}
             style={{ ...primaryBtn({ disabled: saving }), width: '100%', marginTop: 20 }}>
-            {saving ? '送信中...' : '✓ この内容で報告する'}
+            {saving ? '送信中...' : 'この内容で報告する'}
           </button>
           {saving && slow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
         </div>
@@ -680,7 +680,7 @@ const ShiftReportForm: React.FC<{
     if (!hasAbsence && actSegs.some(s => s.start === s.end)) return { msg: '開始時間と終了時間が同じです。正しい時間を入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '勤務の時間が重なっています。順番に入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => !(s.location ?? '').trim())) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
-    if (!reviewerId)    return { msg: '確認依頼先を選択してください', field: 'reviewer' };
+    if (!reviewerId)    return { msg: '申請先を選択してください', field: 'reviewer' };
     if (editTarget && !changeSummary.trim()) return { msg: '修正内容を入力してください', field: 'changeSummary' };
     return { msg: '' };
   };
@@ -1205,15 +1205,15 @@ const ShiftReportForm: React.FC<{
                 「自分が確認者である報告」しか更新を許さないため、変えると保存自体が失敗する）。
                 本人が自分の未承認の報告を直すときと、管理者は変更できる。 */}
             <div style={{ marginBottom: 14 }}>
-              <label style={L}>確認依頼先 {!lockReviewer && Req}</label>
+              <label style={L}>申請先 {!lockReviewer && Req}</label>
               {lockReviewer ? (
                 <>
                   <div style={{ ...f, background: isDark ? '#2c3136' : '#f1f3f5', color: isDark ? '#adb5bd' : '#555', display: 'flex', alignItems: 'center' }}>
                     {reviewers.find(r => r.id === reviewerId)?.name ?? '—'}
                   </div>
                   <div style={{ marginTop: 6, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, borderRadius: 8, padding: '9px 11px', fontSize: 12, lineHeight: 1.7, color: isDark ? '#d0dde8' : '#2c5f6e' }}>
-                    確認依頼先は、この画面では変更できません。<br />
-                    他の方に確認を依頼する場合は、この画面を閉じ、確認ページの「差戻」から本人に差し戻してください。差し戻された報告は、本人が確認依頼先を選び直して再提出できます。
+                    申請先は、この画面では変更できません。<br />
+                    他の方に確認を依頼する場合は、この画面を閉じ、確認ページの「差戻」から本人に差し戻してください。差し戻された報告は、本人が申請先を選び直して再提出できます。
                   </div>
                 </>
               ) : (
@@ -1241,7 +1241,7 @@ const ShiftReportForm: React.FC<{
               )}
               {reviewerAway && !reviewerId && (
                 <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 6 }}>
-                  <p style={{ margin: 0, fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>前回の確認依頼先は、現在選べません。別の方を選んでください。</p>
+                  <p style={{ margin: 0, fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>前回の申請先は、現在選べません。別の方を選んでください。</p>
                 </div>
               )}
             </div>
@@ -1676,8 +1676,19 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     if (!cancelTarget) return;
     const r = cancelTarget;
     const summary = cancelReason.trim() ? `報告を取り消しました\n取り消し理由：${cancelReason.trim()}` : '報告を取り消しました';
-    const { error } = await supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', r.id);
-    if (error) { console.error('[cancelReport]', error); setCancelTarget(null); setCancelReason(''); return; }
+    // 🐛 前は件数・状態を見ず、0件でも「取り消しました」と出していた。本人は受理済みも上書きできた（2026-10-26 不具合3）
+    let q = supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', r.id);
+    if (r.applicant_id === user.id) q = q.in('status', ['pending', 'resubmitted', 'returned']);
+    const { data: cancelled, error } = await q.select('id');
+    if (error || !cancelled || cancelled.length === 0) {
+      console.error('[cancelReport]', error);
+      setCancelTarget(null); setCancelReason('');
+      setActionError(error
+        ? (sendFailureText(error) ?? `取り消せませんでした：${error.message}`)
+        : 'この申請は取り消せませんでした（すでに受理された・取り消された可能性があります）。画面を読み直して確かめてください。');
+      fetchMyReports();
+      return;
+    }
     await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user.id, change_summary: summary, snapshot: r }).then(...logFail('勤務変更の記録'));
     // レビュアーが取り消した場合は申請者に通知
     if (r.applicant_id !== user.id) {
@@ -1792,7 +1803,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
             <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>
-              報告を取り消す
+              この申請を取り消す
             </div>
             <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
               {(cancelTarget.application_types?.length ? cancelTarget.application_types : [cancelTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{cancelTarget.work_date.slice(5).replace('-', '/')}
@@ -1800,6 +1811,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>
               取り消し理由（任意）
             </label>
+            <div style={{ fontSize: 12.5, color: '#842029', marginBottom: 8 }}>取り消すと元に戻せません</div>
             <textarea
               value={cancelReason}
               onChange={e => setCancelReason(e.target.value)}
@@ -1810,7 +1822,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <button type="button" onClick={() => { setCancelTarget(null); setCancelReason(''); }}
                 style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>
-                閉じる
+                やめる
               </button>
               <button data-net="write" type="button" onClick={executeCancelReport}
                 style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
@@ -2286,7 +2298,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </div>
                             )}
                             <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888', marginTop: 2 }}>{r.reason}</div>
-                            {r.applicant_id === user.id && r.status === 'confirmed' && (
+                            {/* 🐛 依頼中は状態が変わっても（差し戻しなど）バッジと［依頼を取り下げる］を出す（2026-10-26 不具合4・残業と同じ） */}
+                            {r.applicant_id === user.id && (r.status === 'confirmed' || corrections.get(r.id)?.status === 'open') && (
                               <CorrectionBadgeAndButton
                                 targetType="shift"
                                 targetId={r.id}
@@ -2299,7 +2312,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                                 requesterName={profileName || user.email || 'スタッフ'}
                                 isDark={isDark}
                                 latest={corrections.get(r.id) ?? null}
-                                canRequest
+                                canRequest={r.status === 'confirmed'}
                                 onSubmitted={reloadCorrections}
                               />
                             )}
@@ -2310,14 +2323,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                             </span>
                             {canSelfEdit && (
                               <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }}
-                                style={{ fontSize: 11, color: isDark ? '#90caf9' : BTN_BLUE, background: 'none', border: `1px solid ${isDark ? '#90caf9' : BTN_BLUE}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
-                                修正
+                                style={{ fontSize: 11, color: isDark ? '#90caf9' : '#1565c0', background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                内容を変更する
                               </button>
                             )}
                             {canSelfEdit && (
                               <button data-net="write" onClick={() => { setCancelTarget(r); setCancelReason(''); }}
-                                style={{ fontSize: 11, color: '#dc3545', background: 'none', border: '1px solid #dc3545', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
-                                取消
+                                style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#495057', background: 'none', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                この申請を取り消す
                               </button>
                             )}
                             {isAdmin && (

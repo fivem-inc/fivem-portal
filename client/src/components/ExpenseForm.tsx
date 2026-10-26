@@ -1158,14 +1158,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 onClick={() => setShowConfirm(false)}
                 style={{ ...backBtn(false), flex: 1 }}
               >
-                修正する
+                戻る
               </button>
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}
                 style={{ ...primaryBtn({ disabled: isSubmitting }), flex: 2 }}
               >
-                {isSubmitting ? '送信中...' : '✅ この内容で申請する'}
+                {isSubmitting ? '送信中...' : 'この内容で申請する'}
               </button>
             </div>
           </div>

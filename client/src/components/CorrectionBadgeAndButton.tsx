@@ -17,12 +17,12 @@ interface Props {
   canRequest: boolean;                    // 依頼ボタンを出す条件（承認後など）
   onSubmitted: () => void;                // 送信・取り下げ後に親が再取得する
   note?: string;                          // 依頼の画面に出す案内の1行（任意）
+  /** 灰色の枠の見出し（休暇は「日付などの誤りを…」・既定は「日付・時間などの誤りを…」） */
+  frameTitle?: string;
 }
 
-const PURPLE = '#534AB7';
-
 const CorrectionBadgeAndButton: React.FC<Props> = ({
-  targetType, targetId, targetLabel, fields, requesterName, isDark, latest, canRequest, onSubmitted, note,
+  targetType, targetId, targetLabel, fields, requesterName, isDark, latest, canRequest, onSubmitted, note, frameTitle,
 }) => {
   const [modalKind, setModalKind] = useState<CorrectionRequestKind | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -65,18 +65,22 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
         </button>
       )}
 
-      {/* 未依頼 or 対応済み/不可/取下げ後：修正を依頼（主）＋取消を依頼（サブ） */}
+      {/* 未依頼 or 対応済み/不可/取下げ後：灰色の枠の中に［📩 修正を依頼］［取消を依頼］（2026-10-26 ユーザー確定 案2・言葉をそろえる）。
+          枠の見出しで「管理者に依頼する」ことを伝えるので、ボタンには「管理者に」を書かない。説明の文は出さない */}
       {canReRequest && (
-        <>
-          <button data-net="write" type="button" onClick={() => setModalKind('edit')}
-            style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, border: `2px solid ${PURPLE}`, background: '#ede9fe', color: PURPLE, fontWeight: 'bold', cursor: 'pointer' }}>
-            📩 {latest ? 'もう一度 修正を依頼' : '管理者に修正を依頼'}
-          </button>
-          <button data-net="write" type="button" onClick={() => setModalKind('cancel')}
-            style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d', cursor: 'pointer' }}>
-            取消を依頼
-          </button>
-        </>
+        <div style={{ width: '100%', border: `1px solid ${isDark ? '#495057' : '#dee2e6'}`, background: isDark ? '#2b3035' : '#f8f9fa', borderRadius: 8, padding: '8px 10px', textAlign: 'left' }}>
+          <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 6 }}>{frameTitle ?? '日付・時間などの誤りを直す・取り消す（管理者に依頼）'}</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button data-net="write" type="button" onClick={() => setModalKind('edit')}
+              style={{ fontSize: 12.5, padding: '6px 14px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: isDark ? '#343a40' : '#fff', color: isDark ? '#f8f9fa' : '#212529', cursor: 'pointer' }}>
+              📩 {latest ? 'もう一度 修正を依頼' : '修正を依頼'}
+            </button>
+            <button data-net="write" type="button" onClick={() => setModalKind('cancel')}
+              style={{ fontSize: 12.5, padding: '6px 14px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: isDark ? '#343a40' : '#fff', color: isDark ? '#f8f9fa' : '#212529', cursor: 'pointer' }}>
+              取消を依頼
+            </button>
+          </div>
+        </div>
       )}
 
       {modalKind && (

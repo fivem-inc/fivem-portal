@@ -222,6 +222,7 @@ export interface AdminLeaveRequest {
   user_id: string;
   leave_type: string;
   leave_type_other?: string;
+  chosei_sub_type?: string | null; // 調整休の種類（zangyou＝時間外調整休・furikae＝振替休日）
   leave_dates?: string;
   leave_locations?: string | null; // 日付→校のJSON（旧申請はnull）
   purpose?: string;

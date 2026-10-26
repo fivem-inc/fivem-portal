@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchUnavailableIds, withoutUnavailable } from '../lib/staffLeave';
+import { LEAVE_TYPE_CHOICES, leaveTypeFields, currentLeaveTypeLabel } from '../lib/leaveTypeChoice';
 import { supabase } from '../lib/supabaseClient';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
@@ -96,7 +97,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const [rejectReason, setRejectReason] = useState('');
   const [rejectNewType, setRejectNewType] = useState('');
 
-  const LEAVE_TYPES = ['有給休暇', 'BD休暇', '慶弔休', '調整休', 'その他', '病欠'];
+  // 種類の選択肢は lib/leaveTypeChoice（管理画面の休暇のタブと同じ・2026-10-26 不具合5・6）
 
   // 一人目受理 → マネージャー選択モーダル
   const [selectingManagerFor, setSelectingManagerFor] = useState<LeaveReq | null>(null);
@@ -446,7 +447,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       ? `種別を「${rejectNewType}」に変更しました。${rejectReason ? `　理由：${rejectReason}` : ''}`
       : (rejectReason || null);
     const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
-    if (rejectNewType) update.leave_type = rejectNewType;
+    if (rejectNewType) Object.assign(update, leaveTypeFields(rejectNewType));
     // 🚨 update は失敗しても 0件でもエラーにならない。error と件数の両方を見る。
     //    見ないと、差し戻せていないのに申請者へ「差し戻されました」と通知が飛ぶ。
     const { data: rejected, error: rejectErr } = await supabase.from('leave_requests')
@@ -869,7 +870,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
               <select value={rejectNewType} onChange={e => setRejectNewType(e.target.value)}
                 style={{ width: '100%', padding: '8px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}>
                 <option value="">変更しない</option>
-                {LEAVE_TYPES.filter(t => t !== (rejectingReq.leave_type === 'その他' ? rejectingReq.leave_type_other : rejectingReq.leave_type)).map(t => (
+                {LEAVE_TYPE_CHOICES.filter(t => t !== (rejectingReq.leave_type === 'その他' ? rejectingReq.leave_type_other : currentLeaveTypeLabel(rejectingReq))).map(t => (
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
