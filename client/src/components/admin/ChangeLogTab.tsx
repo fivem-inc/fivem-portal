@@ -1,28 +1,36 @@
-// 管理画面「📋 受理済みの変更」（2026-10-26 ユーザー確定・文言はすべて案B・計画 docs/計画-経理向け変わった申請の一覧.md）。
+// 管理画面「📋 受理済みの変更」（2026-10-26 ユーザー確定・計画 docs/計画-経理向け変わった申請の一覧.md）。
 // 経理が給与期間のデータを取ったあとに、受理済みの申請が変わったかを見る。記録は DB の application_change_log（トリガーが書く）。
-// ・最初は「今の給与期間」「人ごと」「給与の数字にかかわるもの」（受理済みの前か後か・勤怠カレンダー）。受理の前の動きは下にたたむ
-// ・「ここまで確認した」の印＝Excel・CSV を出したとき（自動）／［確認済みにする］。印の時刻より後の変更に「未確認」
-//   🚨 印の時刻は押した時刻ではなく「画面に出ていた、いちばん新しい行の時刻」（押す直前に入った変更を見落とさないため）
-// ・締めた期（支給月の17日を過ぎた期）への変更は上の赤い枠に別に出す
+// ・最初は「今の給与期間」「人ごと」「給与の数字にかかわるもの」「未確認だけ」。受理の前の動きは下にたたむ
+// ・確認は1行ずつ（2026-10-26 作り直し・UI/UX の専門家のレビュー）：行のチェック → 青い［選んだ◯件を確認済みにする］。
+//   「表示中の未確認をすべて選ぶ」「この人の◯件を選ぶ」でまとめて選べる。印は DB の change_log_checks（記録の行ごと・一度に付けた分は同じ batch）
+//   🚨 前は時刻1つの印で「その時刻までは全部」だったため、絞り込みで押すと見えていない種類まで確認済みになっていた
+// ・Excel・CSV を出した時刻（payroll_check_marks）は「データを出した時刻」としてだけ使う（確認済みにはしない）。それより後の変更に「データを出したあと」
+// ・締めた期（支給月の17日を過ぎた期）への変更は赤い1行（上の絞り込みに合わせる）
+// ・文字の段：主（日付・給与への響き 15px 太字）／従（中身 13px）／注記（した人・日時など 12px 灰色）
 // ・いちばん下に「削除の記録」（修正依頼のタブから移した）
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import DeletionLogSection from './DeletionLogSection';
 import LoadFailedNotice from '../LoadFailedNotice';
 import { NOTICE_LOAD_FAILED_TEXT } from '../../lib/netFailure';
-import { primaryBtn, tintBtn, TOGGLE_BLUE } from '../../lib/buttonStyles';
+import { backBtn, primaryBtn, tintBtn, TOGGLE_BLUE } from '../../lib/buttonStyles';
 import { calcPayPeriodStartJst, payMonthPeriodLabel, payPeriodEnd, payPeriodLabel, todayJstStr } from '../../lib/breakCalc';
 import { payrollPeriodOptions } from '../../lib/payrollSheet';
-import { recordPayrollCheck, PAYROLL_CHECK_KIND_LABEL } from '../../lib/payrollCheckMark';
+import { PAYROLL_CHECK_KIND_LABEL } from '../../lib/payrollCheckMark';
 import { APPLICATION_KIND_LABEL, type ApplicationKind } from '../../lib/applicationStatus';
 import {
-  changeLines, datesText, eventText, isAfterClose, isPayrollRelevant, itemHeadText, itemTypeText, jstAt, mergeRows, overtimeMinutesDelta,
+  changeLines, changeParts, datesText, eventText, isAfterClose, isPayrollRelevant, itemHeadText, itemTypeText, jstAt, mergeRows, overtimeMinutesDelta,
   type ChangeItem, type ChangeLogData,
 } from '../../lib/changeLog';
 import { formatMin } from '../../lib/breakCalc';
 
-const KINDS: ApplicationKind[] = ['overtime', 'leave', 'shift', 'expense', 'attendance'];
-const signed = (min: number) => `${min < 0 ? '−' : '+'}${formatMin(min)}`;
+// 🚨 交通費は出さない（2026-10-26 ユーザー指示「交通費は不要」）。記録（DB）は今までどおり残っている
+const KINDS: ApplicationKind[] = ['overtime', 'leave', 'shift', 'attendance'];
+const shownKind = (it: ChangeItem) => it.kind !== 'expense';
+const signed = (min: number) => (min === 0 ? '±0:00' : `${min < 0 ? '−' : '+'}${formatMin(min)}`);
+const WARN_LINE = '#ffc107';
+
+type CheckInfo = { at: string; by: string | null; batch: string };
 
 const ChangeLogTab: React.FC = () => {
   const { supabase, isDarkMode } = useAdminPanel() as { supabase: typeof import('../../lib/supabaseClient').supabase; isDarkMode: boolean };
@@ -36,37 +44,67 @@ const ChangeLogTab: React.FC = () => {
   const [period, setPeriod] = useState(current);
   const [view, setView] = useState<'person' | 'time'>('person');
   const [kind, setKind] = useState<ApplicationKind | 'all'>('all');
+  const [onlyUnchecked, setOnlyUnchecked] = useState(true);
   const [data, setData] = useState<ChangeLogData | null>(null);
+  const [checks, setChecks] = useState<Map<string, CheckInfo>>(new Map());
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [done, setDone] = useState<{ batch: string; count: number } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showFolded, setShowFolded] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+
+  const loadChecks = useCallback(async (d: ChangeLogData) => {
+    const ids = [...(d.rows ?? []), ...(d.closed ?? [])].map(r => r.id);
+    if (ids.length === 0) { setChecks(new Map()); return true; }
+    const { data: rows, error } = await supabase.rpc('admin_change_log_checks', { p_ids: ids });
+    if (error) { console.error('[受理済みの変更] 確認の印を読めませんでした:', error.message); return false; }
+    const m = new Map<string, CheckInfo>();
+    for (const r of (rows ?? []) as { log_id: string; checked_at: string; checked_by_name: string | null; batch_id: string }[]) {
+      m.set(r.log_id, { at: r.checked_at, by: r.checked_by_name, batch: r.batch_id });
+    }
+    setChecks(m);
+    return true;
+  }, [supabase]);
 
   const load = useCallback(async () => {
     const { data: d, error } = await supabase.rpc('admin_change_log', { p_period: period });
     if (error) { console.error('[受理済みの変更] 読み込みに失敗:', error.message); setFailed(true); return; }
+    // 🚨 確認の印が読めないときは一覧を出さない（全部が未確認に見えて、確認済みのものをもう一度確かめることになるため）
+    if (!(await loadChecks(d as ChangeLogData))) { setFailed(true); return; }
     setData(d as ChangeLogData); setFailed(false);
-  }, [supabase, period]);
-  useEffect(() => { setData(null); void load(); }, [load]);
+  }, [supabase, period, loadChecks]);
+  useEffect(() => { setData(null); setSelected(new Set()); setDone(null); void load(); }, [load]);
 
-  const items = useMemo(() => mergeRows(data?.rows ?? []), [data]);
-  const closedItems = useMemo(() => mergeRows(data?.closed ?? []).filter(it => isPayrollRelevant(it) && isAfterClose(it)), [data]);
-  const mark = data?.marks?.[0] ?? null;
-  const upto = mark ? new Date(mark.upto).getTime() : null;
-  const isNew = (it: ChangeItem) => upto === null || new Date(it.at).getTime() > upto;
+  const items = useMemo(() => mergeRows(data?.rows ?? []).filter(shownKind), [data]);
+  const closedAll = useMemo(() => mergeRows(data?.closed ?? []).filter(it => shownKind(it) && isPayrollRelevant(it) && isAfterClose(it)), [data]);
+  const isChecked = useCallback((it: ChangeItem) => it.rows.every(r => checks.has(r.id)), [checks]);
+  const checkOf = (it: ChangeItem): CheckInfo | null => {
+    let best: CheckInfo | null = null;
+    for (const r of it.rows) { const c = checks.get(r.id); if (c && (!best || c.at > best.at)) best = c; }
+    return best;
+  };
+  // データを出した時刻（いちばん新しいもの）。それより後の変更に「データを出したあと」
+  const exportMark = (data?.marks ?? []).find(m => m.kind !== 'manual') ?? null;
+  const exportAt = exportMark ? new Date(exportMark.upto).getTime() : null;
+  const afterExport = (it: ChangeItem) => exportAt !== null && new Date(it.at).getTime() > exportAt;
 
   const relevant = items.filter(isPayrollRelevant);
   const folded = items.filter(it => !isPayrollRelevant(it));
   const byKind = (it: ChangeItem) => kind === 'all' || it.kind === kind;
-  const shown = relevant.filter(byKind);
-  const newCount = relevant.filter(isNew).length;
-  const hiddenNew = relevant.filter(it => isNew(it) && !byKind(it)).length;
-  const maxShownAt = shown.reduce<string | null>((m, it) => (!m || it.at > m ? it.at : m), null);
+  const inKind = relevant.filter(byKind);
+  const shown = onlyUnchecked ? inKind.filter(it => !isChecked(it)) : inKind;
+  const uncheckedInKind = inKind.filter(it => !isChecked(it)).length;
+  const uncheckedOther = relevant.filter(it => !byKind(it) && !isChecked(it)).length;
+  // 締めたあとの期への変更も、上の絞り込み（残業・休暇など）に合わせる（2026-10-26 ユーザー指摘）
+  const closedItems = closedAll.filter(byKind);
+  const closedUnchecked = closedItems.filter(it => !isChecked(it)).length;
 
   // 人ごと（従業員番号の順 → 名前）／時系列（新しい順）
   const groups = useMemo(() => {
-    if (view === 'time') return [{ key: 'all', title: '', items: [...shown].sort((a, b) => (a.at < b.at ? 1 : -1)) }];
+    if (view === 'time') return [{ key: 'all', title: '', no: '', items: [...shown].sort((a, b) => (a.at < b.at ? 1 : -1)) }];
     const m = new Map<string, { key: string; title: string; no: string; items: ChangeItem[] }>();
     for (const it of shown) {
       const k = it.applicant_id ?? 'unknown';
@@ -76,43 +114,65 @@ const ChangeLogTab: React.FC = () => {
     const arr = [...m.values()];
     arr.forEach(g => g.items.sort((a, b) => (a.target_dates[0] ?? '').localeCompare(b.target_dates[0] ?? '') || a.at.localeCompare(b.at)));
     arr.sort((a, b) => (a.no && b.no ? Number(a.no) - Number(b.no) : a.no ? -1 : b.no ? 1 : a.title.localeCompare(b.title, 'ja')));
-    return arr.map(g => ({ key: g.key, title: `${g.title}${g.no ? `（${g.no}）` : ''}`, items: g.items }));
+    return arr;
   }, [shown, view]);
 
-  const markLine = (() => {
-    if (!mark) return `この給与期間は、まだ確認済みにしていません（変更 ${relevant.length}件）`;
-    const when = jstAt(mark.upto);
-    const how = mark.kind === 'manual' ? '確認済みにした' : 'データを出した';
-    return newCount > 0 ? `${when} に${how}あと、${newCount}件 変わりました` : `${when} に${how}あとの変更はありません`;
-  })();
+  // 選べるのは未確認の行だけ（画面に出ているもの）
+  const selectable = [...shown, ...(showClosed ? closedItems : [])].filter(it => !isChecked(it));
+  const selectedItems = selectable.filter(it => selected.has(it.key));
+  const toggle = (keys: string[], on: boolean) => setSelected(prev => {
+    const n = new Set(prev); keys.forEach(k => (on ? n.add(k) : n.delete(k))); return n;
+  });
+  const allShownKeys = shown.filter(it => !isChecked(it)).map(it => it.key);
+  const allShownOn = allShownKeys.length > 0 && allShownKeys.every(k => selected.has(k));
 
-  const doMark = async () => {
-    setBusy(true); setMsg(null);
-    const r = await recordPayrollCheck(period, 'manual', { upto: maxShownAt ?? new Date().toISOString(), count: shown.length });
+  const doCheck = async () => {
+    if (selectedItems.length === 0) return;
+    setBusy(true); setMsg(null); setDone(null);
+    const ids = selectedItems.flatMap(it => it.rows.map(r => r.id));
+    const { data: r, error } = await supabase.rpc('admin_change_log_check', { p_ids: ids });
+    if (error || !r) {
+      console.error('[受理済みの変更] 確認済みにできませんでした:', error?.message);
+      setBusy(false); setMsg('確認済みにできませんでした。もう一度押してください。'); return;
+    }
+    const res = r as { batch: string; count: number };
+    const n = selectedItems.length;
+    setSelected(new Set());
+    if (data) await loadChecks(data);
     setBusy(false);
-    if (!r) { setMsg('確認済みにできませんでした。もう一度押してください。'); return; }
-    await load();
+    setDone({ batch: res.batch, count: n });
   };
-  const undoMark = async () => {
-    if (!mark) return;
+  const undoBatch = async () => {
+    if (!done) return;
     setBusy(true); setMsg(null);
-    const { data: ok, error } = await supabase.rpc('payroll_check_mark_undo', { p_id: mark.id });
+    const { error } = await supabase.rpc('admin_change_log_uncheck', { p_ids: null, p_batch: done.batch });
+    if (error) { console.error('[受理済みの変更] 元に戻せませんでした:', error.message); setBusy(false); setMsg('元に戻せませんでした。もう一度押してください。'); return; }
+    if (data) await loadChecks(data);
+    setBusy(false); setDone(null);
+  };
+  const uncheckOne = async (it: ChangeItem) => {
+    setBusy(true); setMsg(null);
+    const { error } = await supabase.rpc('admin_change_log_uncheck', { p_ids: it.rows.map(r => r.id), p_batch: null });
+    if (error) { console.error('[受理済みの変更] 未確認に戻せませんでした:', error.message); setMsg('未確認に戻せませんでした。もう一度押してください。'); }
+    if (data) await loadChecks(data);
     setBusy(false);
-    if (error || !ok) { console.error('[受理済みの変更] 印を戻せませんでした:', error?.message); setMsg('1つ前に戻せませんでした。'); return; }
-    await load();
   };
 
   const exportXlsx = async () => {
     setBusy(true); setMsg(null);
     try {
       const XLSX = await import('xlsx');
-      const head = ['日時', '名前', '従業員番号', '申請', '種類', '対象日', '何が起きたか', '変わった中身', '残業の時間数の差（分）', '給与にかかわる', '締め後', 'した人', '備考'];
+      const head = ['日時', '名前', '従業員番号', '申請', '種類', '対象日', '何が起きたか', '変わった中身', '残業の時間数の差（分）', '給与にかかわる', '締め後', 'した人', '確認', '備考'];
       const all = [...items].sort((a, b) => a.at.localeCompare(b.at));
-      const rows = all.map(it => [
-        jstAt(it.at), it.applicant_name, it.employee_no ?? '', APPLICATION_KIND_LABEL[it.kind], itemTypeText(it), it.target_dates.join(' '),
-        eventText(it), changeLines(it).join(' ／ '), overtimeMinutesDelta(it) ?? '', isPayrollRelevant(it) ? 'はい' : '', isAfterClose(it) ? '締め後' : '',
-        it.actor, [it.rebuilt ? 'バックアップから作り直し' : '', it.approxWindow ? `時刻は ${it.approxWindow} のどこか` : '', it.reason ?? ''].filter(Boolean).join('・'),
-      ]);
+      const rows = all.map(it => {
+        const c = isChecked(it) ? checkOf(it) : null;
+        return [
+          jstAt(it.at), it.applicant_name, it.employee_no ?? '', APPLICATION_KIND_LABEL[it.kind], itemTypeText(it), it.target_dates.join(' '),
+          eventText(it), changeLines(it).join(' ／ '), overtimeMinutesDelta(it) ?? '', isPayrollRelevant(it) ? 'はい' : '', isAfterClose(it) ? '締め後' : '',
+          it.actor, c ? `確認済み ${jstAt(c.at)}${c.by ? ` ${c.by}` : ''}` : '未確認',
+          [it.rebuilt ? '復元した記録' : '', it.approxWindow ? `時刻は ${it.approxWindow} のどこか` : '', it.reason ?? ''].filter(Boolean).join('・'),
+        ];
+      });
       const per = new Map<string, { name: string; no: string; n: number; min: number }>();
       for (const it of all.filter(isPayrollRelevant)) {
         const k = it.applicant_id ?? 'unknown';
@@ -124,9 +184,6 @@ const ChangeLogTab: React.FC = () => {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['名前', '従業員番号', '給与にかかわる変更（件）', '残業の時間数の差の合計（分）'],
         ...[...per.values()].sort((a, b) => Number(a.no || 9999) - Number(b.no || 9999)).map(p => [p.name, p.no, p.n, p.min])]), '人ごとの差');
       XLSX.writeFile(wb, `受理済みの変更_${payPeriodLabel(period).replace(/\//g, '-')}.xlsx`);
-      const newest = all.reduce<string | null>((m, it) => (!m || it.at > m ? it.at : m), null);
-      await recordPayrollCheck(period, 'change_log_excel', { upto: newest ?? new Date().toISOString(), count: all.length });
-      await load();
     } catch (e) {
       setMsg('Excel を作れませんでした：' + (e instanceof Error ? e.message : String(e)));
     }
@@ -141,27 +198,55 @@ const ChangeLogTab: React.FC = () => {
     fontSize: 13, padding: '4px 12px', cursor: 'pointer', border: 'none',
     background: on ? TOGGLE_BLUE : 'transparent', color: on ? '#fff' : TOGGLE_BLUE,
   });
-  const badge = (bg: string, fg: string): React.CSSProperties => ({ display: 'inline-block', fontSize: 11, borderRadius: 4, padding: '0 6px', background: bg, color: fg, whiteSpace: 'nowrap' });
+  const badge = (bg: string, fg: string): React.CSSProperties => ({ display: 'inline-block', fontSize: 11, fontWeight: 600, borderRadius: 4, padding: '0 6px', background: bg, color: fg, whiteSpace: 'nowrap', marginLeft: 6 });
+  const box: React.CSSProperties = { width: 16, height: 16, cursor: 'pointer', accentColor: TOGGLE_BLUE, margin: 0 };
+  const link: React.CSSProperties = { background: 'none', border: 'none', padding: 0, color: TOGGLE_BLUE, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' };
 
   const row = (it: ChangeItem, showName: boolean) => {
-    const fresh = isNew(it);
+    const checked = isChecked(it);
+    const c = checked ? checkOf(it) : null;
     const delta = overtimeMinutesDelta(it);
-    const lines = changeLines(it);
+    const main = checked ? sub : text;
+    const notes = [it.actor, jstAt(it.at), it.rebuilt ? '復元した記録' : '', it.approxWindow ? `時刻は ${it.approxWindow} のどこか` : '', it.reason ? `理由：${it.reason}` : ''].filter(Boolean).join('・');
     return (
-      <div key={it.key} style={{ display: 'grid', gridTemplateColumns: '58px 140px minmax(0,1fr) 120px', gap: 8, padding: '7px 0', borderBottom: `1px solid ${border}`, alignItems: 'start', color: fresh ? text : sub, fontSize: 13, lineHeight: 1.6 }}>
-        <span style={{ textAlign: 'center' }}>{fresh ? <span style={badge('#fff3cd', '#856404')}>未確認</span> : '済'}</span>
-        <span>{datesText(it.target_dates)}<br /><span style={{ color: sub, fontSize: 12 }}>{itemHeadText(it)}</span></span>
-        <span>
-          {showName && <b style={{ fontWeight: 600 }}>{it.applicant_name}　</b>}
-          {eventText(it)}
-          {delta !== null && delta !== 0 && <b style={{ fontWeight: 600 }}>（残業 {signed(delta)}）</b>}
-          {isAfterClose(it) && <> <span style={badge('#ffe5d0', '#984c0c')}>締め後</span></>}
-          {it.rebuilt && <> <span style={badge(isDark ? '#495057' : '#e9ecef', isDark ? '#f8f9fa' : '#495057')}>バックアップから</span></>}
-          {lines.map((l, i) => <div key={i} style={{ fontSize: 12.5, color: fresh ? text : sub }}>{l}</div>)}
-          {it.reason && <div style={{ fontSize: 12, color: sub }}>理由：{it.reason}</div>}
-          {it.approxWindow && <div style={{ fontSize: 12, color: sub }}>時刻は {it.approxWindow} のどこか</div>}
+      <div key={it.key} style={{
+        display: 'grid', gridTemplateColumns: '28px 150px minmax(0,1fr) 90px', gap: 8, padding: '10px 0 10px 6px', alignItems: 'start',
+        borderBottom: `1px solid ${border}`, borderLeft: `3px solid ${checked ? 'transparent' : WARN_LINE}`, borderRadius: 0, lineHeight: 1.5,
+      }}>
+        <span style={{ paddingTop: 3 }}>
+          {checked
+            ? <span style={{ fontSize: 12, color: sub }}>✓</span>
+            : <input type="checkbox" aria-label="この行を選ぶ" style={box} checked={selected.has(it.key)} onChange={e => toggle([it.key], e.target.checked)} />}
         </span>
-        <span style={{ color: sub, fontSize: 12 }}>{it.actor}<br />{jstAt(it.at)}</span>
+        <span>
+          <div style={{ fontSize: 15, fontWeight: checked ? 400 : 700, color: main }}>{datesText(it.target_dates)}</div>
+          <div style={{ fontSize: 13, color: main }}>{itemHeadText(it)}</div>
+        </span>
+        <span style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, color: main }}>
+            {showName && <span style={{ fontWeight: 700 }}>{it.applicant_name}　</span>}
+            {eventText(it)}
+            {isAfterClose(it) && <span style={badge('#ffe5d0', '#984c0c')}>締め後</span>}
+            {!checked && afterExport(it) && <span style={badge('#fff3cd', '#856404')}>データを出したあと</span>}
+          </div>
+          {changeParts(it).map((p, i) => (
+            <div key={i} style={{ fontSize: 13, color: main }}>
+              {p.label && <span style={{ fontSize: 12, color: sub, marginRight: 8 }}>{p.label}</span>}{p.value}
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: sub }}>{notes}</div>
+          {checked && c && (
+            <div style={{ fontSize: 12, color: sub }}>
+              確認済み（{jstAt(c.at)}{c.by ? `・${c.by}` : ''}）
+              <button type="button" disabled={busy} onClick={() => void uncheckOne(it)} style={{ ...link, marginLeft: 8 }}>未確認に戻す</button>
+            </div>
+          )}
+        </span>
+        <span style={{ textAlign: 'right', paddingRight: 4 }}>
+          {delta !== null && (delta === 0
+            ? <span style={{ fontSize: 12, color: sub }}>±0:00</span>
+            : <span style={{ fontSize: 15, fontWeight: checked ? 400 : 700, color: main }}>{signed(delta)}</span>)}
+        </span>
       </div>
     );
   };
@@ -189,36 +274,77 @@ const ChangeLogTab: React.FC = () => {
 
       {data && (
         <>
-          <div style={{ background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13.5, lineHeight: 1.6 }}>
-            {markLine}
-            {mark && (
-              <div style={{ fontSize: 12 }}>
-                （{PAYROLL_CHECK_KIND_LABEL[mark.kind] ?? mark.kind}{mark.marked_by_name ? `・${mark.marked_by_name}` : ''}）
-                <button type="button" disabled={busy} onClick={() => void undoMark()}
-                  style={{ background: 'none', border: 'none', padding: '0 0 0 6px', color: '#856404', textDecoration: 'underline', fontSize: 12, cursor: 'pointer' }}>1つ前に戻す</button>
-              </div>
-            )}
-            {hiddenNew > 0 && <div style={{ fontSize: 12 }}>絞り込みで隠れている未確認の変更が {hiddenNew}件 あります</div>}
+          {/* 状況の1行（色は付けない・赤は締め後だけに取っておく） */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 13, color: sub }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: uncheckedInKind > 0 ? text : sub }}>未確認 {uncheckedInKind}件</span>
+              ／全{inKind.length}件
+              {uncheckedOther > 0 && <>（ほかの種類に未確認 {uncheckedOther}件）</>}
+            </span>
+            <label style={{ fontSize: 13, color: text, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" style={box} checked={onlyUnchecked} onChange={e => { setOnlyUnchecked(e.target.checked); setSelected(new Set()); }} />
+              未確認だけ表示
+            </label>
           </div>
+          {exportMark && (
+            <div style={{ fontSize: 12, color: sub, marginBottom: 8 }}>
+              最後にデータを出した：{jstAt(exportMark.upto)}（{PAYROLL_CHECK_KIND_LABEL[exportMark.kind] ?? exportMark.kind}{exportMark.marked_by_name ? `・${exportMark.marked_by_name}` : ''}）
+            </div>
+          )}
 
           {closedItems.length > 0 && (
-            <div style={{ background: '#f8d7da', border: '1px solid #dc3545', color: '#842029', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13.5 }}>
-              ⚠️ 締めたあとの期への変更が {closedItems.length}件 あります
+            <div style={{ background: '#f8d7da', border: '1px solid #dc3545', color: '#842029', borderRadius: 8, padding: '6px 12px', marginBottom: 10, fontSize: 13.5 }}>
+              ⚠️ 締めたあとの期の変更 {closedItems.length}件{closedUnchecked < closedItems.length ? `（未確認 ${closedUnchecked}件）` : ''}
               <button type="button" onClick={() => setShowClosed(v => !v)}
                 style={{ background: 'none', border: 'none', color: '#842029', textDecoration: 'underline', fontSize: 13, cursor: 'pointer', marginLeft: 6 }}>{showClosed ? '閉じる ▲' : '見る ▼'}</button>
-              {showClosed && <div style={{ background: cardBg, borderRadius: 6, padding: '0 8px', marginTop: 6 }}>{closedItems.map(it => row(it, true))}</div>}
+              {showClosed && <div style={{ background: cardBg, color: text, borderRadius: 6, padding: '0 8px', marginTop: 6 }}>{closedItems.map(it => row(it, true))}</div>}
             </div>
           )}
 
-          {shown.length === 0 && (
-            <div style={{ padding: 16, textAlign: 'center', color: sub, fontSize: 13 }}>この給与期間に、受理済みの申請の変更はありません。</div>
-          )}
-          {groups.map(g => (
-            <div key={g.key} style={{ marginBottom: 6 }}>
-              {g.title && <div style={{ fontWeight: 600, padding: '6px 0', borderBottom: `1px solid ${border}` }}>{g.title}<span style={{ color: sub, fontWeight: 400 }}>　{g.items.length}件</span></div>}
-              {g.items.map(it => row(it, view === 'time'))}
+          {/* 選んで確認済みにする（押すボタンは1つ） */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: `1px solid ${border}`, borderBottom: `1px solid ${border}`, padding: '8px 0', marginBottom: 4 }}>
+            <label style={{ fontSize: 13, color: allShownKeys.length ? text : sub, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: allShownKeys.length ? 'pointer' : 'default' }}>
+              <input type="checkbox" style={box} disabled={allShownKeys.length === 0} checked={allShownOn} onChange={e => toggle(allShownKeys, e.target.checked)} />
+              表示中の未確認をすべて選ぶ
+            </label>
+            <button type="button" disabled={busy || selectedItems.length === 0} onClick={() => void doCheck()}
+              style={{ ...primaryBtn({ disabled: busy || selectedItems.length === 0 }), padding: '8px 18px' }}>
+              選んだ{selectedItems.length}件を確認済みにする
+            </button>
+          </div>
+          {done && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', borderRadius: 8, padding: '9px 12px', margin: '6px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontWeight: 600 }}>✓ {done.count}件を確認済みにしました</span>
+              <button type="button" disabled={busy} onClick={() => void undoBatch()} style={{ ...backBtn(false), background: '#fff', padding: '4px 14px', fontSize: 13 }}>元に戻す</button>
             </div>
-          ))}
+          )}
+          {msg && <div style={{ color: '#842029', fontSize: 13, margin: '6px 0' }}>{msg}</div>}
+
+          {shown.length === 0 && (
+            <div style={{ padding: 16, textAlign: 'center', color: sub, fontSize: 13 }}>
+              {onlyUnchecked && inKind.length > 0 ? '未確認の変更はありません。' : 'この給与期間に、受理済みの申請の変更はありません。'}
+            </div>
+          )}
+          {groups.map(g => {
+            const keys = g.items.filter(it => !isChecked(it)).map(it => it.key);
+            const allOn = keys.length > 0 && keys.every(k => selected.has(k));
+            return (
+              <div key={g.key} style={{ marginBottom: 6 }}>
+                {g.title && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '10px 0 6px', borderBottom: `1px solid ${border}` }}>
+                    <span style={{ fontSize: 16, fontWeight: 700 }}>
+                      {g.title}{g.no ? `（${g.no}）` : ''}
+                      <span style={{ fontSize: 13, color: sub, fontWeight: 400 }}>　未確認 {keys.length}件／{g.items.length}件</span>
+                    </span>
+                    {keys.length > 0 && (
+                      <button type="button" style={link} onClick={() => toggle(keys, !allOn)}>{allOn ? 'この人の選択を外す' : `この人の${keys.length}件を選ぶ`}</button>
+                    )}
+                  </div>
+                )}
+                {g.items.map(it => row(it, view === 'time'))}
+              </div>
+            );
+          })}
 
           {folded.length > 0 && (
             <div style={{ marginTop: 8 }}>
@@ -230,17 +356,21 @@ const ChangeLogTab: React.FC = () => {
             </div>
           )}
 
-          {msg && <div style={{ color: '#842029', fontSize: 13, marginTop: 8 }}>{msg}</div>}
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
             <button type="button" disabled={busy} onClick={() => void exportXlsx()} style={{ ...tintBtn(isDark), flex: 1 }}>📥 この一覧を Excel で出す</button>
-            <button type="button" disabled={busy} onClick={() => void doMark()} style={{ ...primaryBtn({ disabled: busy }), flex: 2 }}>確認済みにする</button>
           </div>
-          <p style={{ fontSize: 12, color: sub, margin: '8px 0 0', lineHeight: 1.6 }}>
-            ※ 残業・休暇・勤務変更・交通費・勤怠カレンダーの予定が変わったときの記録です（管理者だけが見られます）。
-            {data.since && ` 記録は ${jstAt(data.since)} からです。`}
-            「バックアップから」の札の行は、毎日のバックアップを見比べて作り直したもので、1日の間の細かい動きと、した人が分からないことがあります。
-            {data.errors > 0 && ` 記録の失敗が ${data.errors}件 あります（この30日）。`}
-          </p>
+          <button type="button" onClick={() => setShowHelp(v => !v)} style={{ ...link, marginTop: 10, color: sub }}>このページの見方 {showHelp ? '▲' : '▼'}</button>
+          {showHelp && (
+            <p style={{ fontSize: 12, color: sub, margin: '6px 0 0', lineHeight: 1.7 }}>
+              残業・休暇・勤務変更・勤怠カレンダーの予定が、あとから変わったときの記録です（管理者だけが見られます）。
+              行の左のチェックで選び、［選んだ◯件を確認済みにする］を押すと、その行だけが確認済みになります。確認済みの行の［未確認に戻す］で1件ずつ戻せます。
+              左に黄色い線がある行が未確認です。右の数字は給与（残業の時間数）への響きです。
+              「データを出したあと」は、表で見るの Excel や一覧の Excel・CSV を最後に出した時刻より後の変更です。
+              「復元した記録」は、記録を始める前（10/16〜10/26）の分を毎日のバックアップを見比べて作り直したもので、1日の間の細かい動きと、した人が分からないことがあります。
+              {data.since && ` 記録は ${jstAt(data.since)} からです。`}
+              {data.errors > 0 && ` 記録の失敗が ${data.errors}件 あります（この30日）。`}
+            </p>
+          )}
         </>
       )}
 

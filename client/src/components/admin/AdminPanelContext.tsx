@@ -8,7 +8,6 @@ import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 import { isPrehire } from '../../lib/staffState';
-import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
 // 修正依頼から「どの申請へ飛んだか」を飛び先のタブへ伝えるための型
 export type AdminFocusTarget = { type: 'leave' | 'shift' | 'overtime'; id: string };
@@ -1189,7 +1188,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (!data || data.length === 0) { setSuccessMsg('承認済みの交通費がありません。'); return; }
     downloadCSV(generateCSVData(data));
     // 「受理済みの変更」の確認の印（給与期間の初日（16日）から出したときだけ・2026-10-26）
-    if (csvStartDate && csvStartDate.endsWith('-16')) await recordPayrollCheck(csvStartDate, 'expense', { count: data.length });
+    // 交通費の CSV では「確認した印」を付けない（2026-10-26・受理済みの変更から交通費を外したため。付けると残業・休暇の変更まで確認済みになる）
     setSuccessMsg('CSVを出力しました');
   }, [csvStartDate, csvEndDate, csvDateType]);
 

@@ -109,7 +109,7 @@ const EVENT_LABEL: Record<string, string> = {
 };
 export function eventText(it: ChangeItem): string {
   const evs = it.events.filter(e => !(e === 'time_changed' && it.events.length > 1));
-  return evs.map(e => (e === 'created' && it.accepted_after ? '受理済みで出した' : EVENT_LABEL[e] ?? e)).join('・');
+  return evs.map(e => (e === 'created' && it.accepted_after ? '受理済みとして登録' : EVENT_LABEL[e] ?? e)).join('・');
 }
 
 const ATT_TYPE: Record<string, string> = {
@@ -159,6 +159,11 @@ export function overtimeMinutesDelta(it: ChangeItem): number | null {
   const a = it.accepted_after && typeof it.after?.diff_minutes === 'number' ? (it.after.diff_minutes as number) : 0;
   if (!it.accepted_before && !it.accepted_after) return null;
   return a - b;
+}
+
+/** 画面用：changeLines を「項目名」と「中身」に分ける（項目名は小さな灰色・中身はふつうの濃さで出す・2026-10-26） */
+export function changeParts(it: ChangeItem): { label: string; value: string }[] {
+  return changeLines(it).map(l => { const i = l.indexOf('　'); return i < 0 ? { label: '', value: l } : { label: l.slice(0, i), value: l.slice(i + 1) }; });
 }
 
 /** 前 → 後 の中身（変わったところだけ） */
