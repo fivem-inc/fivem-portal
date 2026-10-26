@@ -1,24 +1,25 @@
 import ExpandableTextarea from '../components/ExpandableTextarea';
-import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useContext, useSyncExternalStore } from 'react';
 import LinkifiedText from '../components/LinkifiedText';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { rolesByRank, attrsFor } from '../lib/roleAttrs';
 import { getCachedRoles } from '../hooks/useRoles';
 import { insertNotification, markBellReadForMessages } from '../lib/notifications';
-import { dispatchBoardEmail } from '../lib/notificationDispatch';
+// 🚨 ベル・メールは画面で作らない（DB の board_deliver が届けるときに作る・2026-10-26 送信の取り消し）
+import { postBoard, newPostId, startUndo, undoWaiting, isUndoable, onBoardRestore, onBoardSent, takePendingRestore, subscribeBand, getBand, UNDO_TEXT } from '../lib/boardSendUndo';
+import type { BoardRestore } from '../lib/boardSendUndo';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, loadChatDraft, saveChatDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
 import { dateTimeProblem } from '../lib/dateTimeValue';
 import DateTimeInput from '../components/DateTimeInput';
-import { describeUpdate, describePartial } from '../lib/statusUpdate';
+import { describeUpdate } from '../lib/statusUpdate';
 import { filterTemplates, sortTemplates, categoryChips, categoryLabel, canEditTemplate, needsReplaceConfirm, validateTemplateInput } from '../lib/boardTemplates';
 import type { BoardTemplate, BoardTemplateCategory, BoardTemplateScope, CategoryFilter } from '../lib/boardTemplates';
 import { loadTemplates, insertTemplate, updateTemplate, deleteTemplate } from '../lib/boardTemplatesApi';
 import { replyState, replyStatusText } from '../lib/boardReply';
 import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
 
-const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCount';
@@ -28,7 +29,7 @@ import HelpLinkButton from '../components/HelpLinkButton';
 import { subscribe as subscribeRefresh } from '../lib/refreshBus';
 import { TOPICS_BOARD } from '../lib/badgeTopics';
 import LoadFailedNotice from '../components/LoadFailedNotice';
-import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure, timeoutSignal } from '../lib/netFailure';
+import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure, timeoutSignal, sendFailureText } from '../lib/netFailure';
 import { saveCopy, loadCopy } from '../lib/offlineCopy';
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
 const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
@@ -58,6 +59,22 @@ interface ChannelMember {
   profile: { name: string | null; role_title: string | null } | null;
 }
 
+/**
+ * グループ・DM の投稿を出すか（2026-10-26）。送信予約（status='scheduled'）は、送った本人の「取り消し待ち」だけ出す（吹き出しに「送信待ち」）。
+ * 🚨 古い画面が入れた予約（status='sent'・scheduled_at が先）は今までどおり時刻まで出さない
+ */
+/** 送信トレイのどのタブに出すか。取り消し待ち（［送信］のあと10秒）は「送信済み」に「送信待ち」の印で出す（自分で決めた送信予約だけが「予約済み」） */
+function outboxTabOf(m: { status?: string | null; send_hold?: boolean | null }): 'sent' | 'scheduled' | 'draft' {
+  if (m.status === 'draft') return 'draft';
+  if (m.status === 'scheduled' && !m.send_hold) return 'scheduled';
+  return 'sent';
+}
+
+function channelMsgVisible(m: { status?: string | null; send_hold?: boolean | null; user_id: string; scheduled_at: string | null }, me: string, nowIso: string): boolean {
+  if (m.status === 'scheduled') return !!m.send_hold && m.user_id === me;
+  return !m.scheduled_at || m.scheduled_at <= nowIso;
+}
+
 interface BoardMessage {
   id: string;
   channel_id: string | null;
@@ -74,6 +91,9 @@ interface BoardMessage {
   title: string | null;
   subject: string | null;
   status: string | null;
+  // 取り消し待ち（［送信］のあと10秒・2026-10-26）。status='scheduled' のまま。送った本人にだけ見える（DB の読む権限）
+  send_hold?: boolean | null;
+  send_batch?: string | null;
   answer_prompt: string | null;
   answer_location: string | null;
   answer_link: string | null;
@@ -857,7 +877,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes, excludeRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, status, send_hold, send_batch, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -886,7 +906,7 @@ const BoardPage: React.FC = () => {
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
     const now = new Date().toISOString();
-    setMessages((msgRes.data || []).filter((m: any) => !m.scheduled_at || m.scheduled_at <= now).map((m: any) => ({ ...m, profile: null })));
+    setMessages((msgRes.data || []).filter((m: any) => channelMsgVisible(m, user.id, now)).map((m: any) => ({ ...m, profile: null })));
 
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
     let copyConf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]> = {};
@@ -933,7 +953,7 @@ const BoardPage: React.FC = () => {
     {
       const chList = (chRes.data || []) as Channel[];
       const memList = (memRes.data || []).map((m: { channel_id: string; user_id: string }) => ({ channel_id: m.channel_id, user_id: m.user_id }));
-      const msgList = (msgRes.data || []).filter((m: any) => !m.scheduled_at || m.scheduled_at <= now)
+      const msgList = (msgRes.data || []).filter((m: any) => m.status !== 'scheduled' && (!m.scheduled_at || m.scheduled_at <= now))
         .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })) as BoardMessage[];
       const myConf: ChannelCopy['myConf'] = {};
       for (const [id, list] of Object.entries(copyConf)) { const mine = list.filter(c => c.user_id === user.id); if (mine.length) myConf[id] = mine; }
@@ -1376,7 +1396,7 @@ const BoardPage: React.FC = () => {
     // 🚨 outbox_hidden（DB の列）はもう読まない（2026-09-26）。アーカイブは board_outbox_hidden（お知らせ × 人）で、
     //    「自分が片付けたか」を自分の行の有無で決める。送った本人と写しで見る代表者は別々に片付けられる。
     //    以前は1件に1つの印だったので、管理者が写しのお知らせを片付けると送った本人の送信トレイからも消えていた
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids, recipient_presets, recipient_extra_ids';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids, recipient_presets, recipient_extra_ids, send_hold, send_batch';
     const [{ data, error: ownErr }, { data: ccData, error: ccErr }, { data: hiddenData, error: hiddenErr }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -1837,36 +1857,22 @@ const BoardPage: React.FC = () => {
     return seen;
   };
 
+  const replyPostIdRef = useRef<string | null>(null);
   const sendNoticeReply = async (notice: BoardMessage, partnerId: string, body: string) => {
     if (!user || !body.trim() || !partnerId) return;
     setReplySending(true); setReplyErr('');
-    const { data, error } = await supabase
-      .from('board_messages')
-      .insert({ user_id: user.id, parent_id: notice.id, body: body.trim() })
-      .select('id')
-      .single();
-    // 🚨 supabase は 4xx でも throw しない。error を見ないと「送れたように見えて消える」
-    if (error || !data) {
-      setReplyErr(`送れませんでした：${error?.message ?? '原因が分かりませんでした'}`);
+    // 🚨 本体と相手（宛先の行）は DB の board_post が1つの取引で作る（2026-10-26）。
+    //    ベル（board:dm_message:reply・押すと元のお知らせが開く）は10秒たって届けるときに DB が作る
+    const id = replyPostIdRef.current ?? newPostId();
+    replyPostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
+    const r = await postBoard({ id, msg: { parent_id: notice.id, body: body.trim() }, recipients: [partnerId], hold: true });
+    if (!r.ok) {
+      setReplyErr(sendFailureText(r.error) ?? `送れませんでした：${(r.error as { message?: string })?.message ?? '原因が分かりませんでした'}`);
       setReplySending(false);
       return;
     }
-    // 🚨 これが無いと相手の画面に出ない（読む権限がこの1行で決まる）
-    const { error: recErr } = await supabase
-      .from('board_message_recipients')
-      .insert({ message_id: data.id, user_id: partnerId });
-    if (recErr) setReplyErr(`送れましたが、相手に表示されないかもしれません：${recErr.message}`);
-    // 🚨 通知の種類は board:dm_message の下位キー（2026-09-24）。
-    //    設定（ON/OFF・メール）は先頭2つ＝board:dm_message をそのまま見るので、新しい設定の行は要らない
-    //    （新しい種類を作ると、設定の行が無い＝全員に飛ぶ作りのため）。
-    //    分けたのはプッシュの飛び先のため。push-dispatch で bell を付け、押すとベルが開いて
-    //    この通知が光る → 押すと元のお知らせが開く（DMの「連絡板に新しい投稿」とは別の1通になる）
-    await insertNotification(
-      partnerId,
-      `↩ ${profileName || '誰か'}から返信が届きました`,
-      body.trim().slice(0, 40),
-      undefined, notice.id, 'board:dm_message:reply',
-    );
+    replyPostIdRef.current = null;
+    if (r.state === 'held') startUndo({ id }, { kind: 'noticeReply', noticeId: notice.id, partnerId, body: body.trim() });
     setReplyDraft(null);
     await loadNoticeReplies(notice.id);
     setReplySending(false);
@@ -1972,6 +1978,7 @@ const BoardPage: React.FC = () => {
   const newScheduleProblem = dateTimeProblem(newScheduledAt, SCHEDULE_RULE);
   const composeScheduleProblem = dateTimeProblem(composeScheduledAt, SCHEDULE_RULE);
 
+  const channelPostIdRef = useRef<string | null>(null);
   const sendMessage = async (parentId?: string) => {
     if (!selectedChannelId || !user) return;
     const body = parentId ? replyBody : newBody;
@@ -1979,87 +1986,62 @@ const BoardPage: React.FC = () => {
     if (!parentId && newScheduleProblem) return;   // ボタンは押せなくしてある。念のため
     setSending(true);
 
-    const insertData: Record<string, unknown> = {
+    const msgData: Record<string, unknown> = {
       channel_id: selectedChannelId,
       parent_id: parentId || null,
-      user_id: user.id,
       body: body.trim(),
     };
-    if (!parentId && newDeadline) insertData.deadline = newDeadline;
+    if (!parentId && newDeadline) msgData.deadline = newDeadline;
     if (!parentId && newDeadlineType) {
-      insertData.deadline_type = newDeadlineType;
-      insertData.requires_confirmation = true;
+      msgData.deadline_type = newDeadlineType;
+      msgData.requires_confirmation = true;
     }
-    if (!parentId && newScheduledAt) insertData.scheduled_at = new Date(newScheduledAt).toISOString();
-    if (!parentId && newTitle.trim()) insertData.title = newTitle.trim();
+    if (!parentId && newScheduledAt) msgData.scheduled_at = new Date(newScheduledAt).toISOString();
+    if (!parentId && newTitle.trim()) msgData.title = newTitle.trim();
     if (!parentId && newDeadlineType) {
-      if (newAnswerPrompt.trim()) insertData.answer_prompt = newAnswerPrompt.trim();
-      if (newAnswerLocation.trim()) insertData.answer_location = newAnswerLocation.trim();
-      if (newAnswerLink.trim()) insertData.answer_link = newAnswerLink.trim();
+      if (newAnswerPrompt.trim()) msgData.answer_prompt = newAnswerPrompt.trim();
+      if (newAnswerLocation.trim()) msgData.answer_location = newAnswerLocation.trim();
+      if (newAnswerLink.trim()) msgData.answer_link = newAnswerLink.trim();
     }
+    // 「⚡当日の連絡・緊急」は取り消し待ちなしでその場で届ける（受信時間の設定を無視してすぐプッシュ）
+    const urgent = !parentId && newUrgent;
+    if (urgent) msgData.push_urgent = true;
 
-    const { data, error } = await supabase
-      .from('board_messages')
-      .insert(insertData)
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
-      .single();
+    // 🚨 ベル・スマホ・メールは画面で作らない（2026-10-26）。DB の board_post が行を作り、届けるとき（10秒後・予約の時刻）に
+    //    board_deliver がグループ・DM の人（スレッドの返信はスレッドに参加している人）へ作る。
+    //    前は送信予約でも送った瞬間にベル・メールが出ていた
+    const id = channelPostIdRef.current ?? newPostId();
+    channelPostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
+    const r = await postBoard({ id, msg: msgData, hold: !urgent });
+    if (!r.ok) {
+      setSending(false);
+      setSendError(sendFailureText(r.error) ?? `送信できませんでした：${(r.error as { message?: string })?.message ?? '原因が分かりませんでした'}`);
+      return;
+    }
+    channelPostIdRef.current = null;
 
-    if (!error && data) {
-      const msg: BoardMessage = { ...data, subject: null, status: 'sent', broadcast_recipients: null, profile: { name: profileName || null } };
-      setMessages(prev => [...prev, msg]);
-      await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
-      setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
-
-      // リプライ通知: スレッド参加者（親メッセージ投稿者 + 既存リプライ投稿者）に通知
-      if (parentId) {
-        const parentMsg = messages.find(m => m.id === parentId);
-        const threadParticipants = new Set<string>();
-        if (parentMsg) threadParticipants.add(parentMsg.user_id);
-        messages.filter(m => m.parent_id === parentId).forEach(m => threadParticipants.add(m.user_id));
-        threadParticipants.delete(user.id); // 自分には送らない
-        const senderName = profileName || '誰か';
-        const chName = selectedChannel ? (selectedChannel.name || 'チャンネル') : 'チャンネル';
-        // 🚨 以前は source_type='board' で入れていたが、ベルは source_type='board' を除外し、
-        //    ホームのバナー対象でもなく、event_key が無いのでプッシュも飛ばない＝
-        //    どこにも出ない死にデータになっていた（2026-08-18 修正）。
-        //    通常の投稿と同じく source_type は付けず、event_key と元メッセージIDを渡す
-        await Promise.all([...threadParticipants].map(uid =>
-          insertNotification(uid, `💬 ${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, undefined, parentId, 'board:group_message')
-        ));
-      }
-
-      // グループ・DMへの新規投稿（スレッド返信ではない）：ベル通知
-      if (!parentId && selectedChannel && (selectedChannel.type === 'group' || selectedChannel.type === 'dm')) {
-        const recipientIds = members
-          .filter(m => m.channel_id === selectedChannelId && m.user_id !== user.id)
-          .map(m => m.user_id);
-        if (recipientIds.length > 0) {
-          const senderName = profileName || '誰か';
-          const preview = body.trim().slice(0, 40);
-          const bellMessage = selectedChannel.type === 'group'
-            ? `💬 ${selectedChannel.name || 'グループ'}に${senderName}からメッセージが届きました`
-            : `💬 ${senderName}からメッセージが届きました`;
-          await Promise.all(recipientIds.map(uid =>
-            insertNotification(uid, bellMessage, preview, undefined, data.id,
-              selectedChannel.type === 'group' ? 'board:group_message' : 'board:dm_message',
-              newUrgent) // 「当日の連絡・緊急」なら受信時間の設定を無視してすぐプッシュ
-          ));
-        }
-      }
-
-      // メール通知（管理画面の通知設定でON時のみ送信、OFFなら何もしない）
-      if (selectedChannel && (selectedChannel.type === 'group' || selectedChannel.type === 'dm')) {
-        const recipientIds = members
-          .filter(m => m.channel_id === selectedChannelId && m.user_id !== user.id)
-          .map(m => m.user_id);
-        if (recipientIds.length > 0) {
-          const senderName = profileName || '誰か';
-          if (selectedChannel.type === 'group') {
-            dispatchBoardEmail('board:group_message', { '送信者名': senderName, 'グループ名': selectedChannel.name || 'グループ', 'リンク': BOARD_LINK }, recipientIds);
-          } else {
-            dispatchBoardEmail('board:dm_message', { '送信者名': senderName, 'リンク': BOARD_LINK }, recipientIds);
-          }
-        }
+    const nowIso = new Date().toISOString();
+    if (r.state !== 'scheduled') {
+      const held = r.state === 'held';
+      const msg: BoardMessage = {
+        id, channel_id: selectedChannelId, parent_id: parentId || null, user_id: user.id, body: body.trim(),
+        edited_at: null, created_at: nowIso,
+        deadline: (msgData.deadline as string) ?? null, deadline_type: (msgData.deadline_type as string) ?? null,
+        requires_confirmation: !!msgData.requires_confirmation, scheduled_at: held ? r.scheduledAt : null, sent_at: held ? null : nowIso,
+        title: (msgData.title as string) ?? null, subject: null, status: held ? 'scheduled' : 'sent', send_hold: held,
+        answer_prompt: (msgData.answer_prompt as string) ?? null, answer_location: (msgData.answer_location as string) ?? null,
+        answer_link: (msgData.answer_link as string) ?? null,
+        broadcast_recipients: null, profile: { name: profileName || null },
+      };
+      setMessages(prev => [...prev.filter(m => m.id !== id), msg]);
+      await supabase.from('board_reads').upsert({ message_id: id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+      setReadCounts(prev => ({ ...prev, [id]: 1 }));
+      if (held) {
+        startUndo({ id }, {
+          kind: 'channel', channelId: selectedChannelId, parentId: parentId || null, body: body.trim(),
+          title: parentId ? '' : newTitle, deadline: parentId ? '' : newDeadline, deadlineType: parentId ? '' : newDeadlineType,
+          answerPrompt: parentId ? '' : newAnswerPrompt, answerLocation: parentId ? '' : newAnswerLocation, answerLink: parentId ? '' : newAnswerLink,
+        });
       }
     }
     if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); setNewUrgent(false); setShowOptionsExpanded(false); }
@@ -2227,7 +2209,11 @@ const BoardPage: React.FC = () => {
       }
     }
 
-    // 各受信者に個別DMを送信
+    // 🚨 一斉の DM は1つの番号（send_batch）でまとめて取り消す・届ける（2026-10-26）。ベルは届けるときに DB が作る（メールは今までどおり送らない）
+    const batch = newPostId();
+    const urgent = broadcastUrgent;   // 「⚡当日の連絡・緊急」は取り消し待ちなしでその場で届ける
+    const body = broadcastMessage.trim();
+    const failed: string[] = [];
     for (const targetId of dmSelectedIds) {
       let dmCh = channels.find(c => {
         if (c.type !== 'dm') return false;
@@ -2244,25 +2230,20 @@ const BoardPage: React.FC = () => {
           dmCh = newDm as Channel;
         }
       }
-      if (dmCh) {
-        const { data: dmMsg } = await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() }).select('id').single();
-        await insertNotification(targetId, `💬 ${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), undefined, dmMsg?.id, 'board:dm_message', broadcastUrgent);
-      }
+      const r = dmCh ? await postBoard({ id: newPostId(), msg: { channel_id: dmCh.id, body, push_urgent: urgent }, hold: !urgent, batch }) : null;
+      if (!r || !r.ok) failed.push(allProfiles.find(ap => ap.id === targetId)?.name || '不明');
     }
 
-    // 送信メールチャンネルに記録
+    // 送信メールチャンネルに記録（同じ番号。取り消せばこの記録も消える）
     if (sentMailCh) {
       const recipients = dmSelectedIds.map(id => {
         const p = allProfiles.find(ap => ap.id === id);
         return { id, name: p?.name || '?' };
       });
-      await supabase.from('board_messages').insert({
-        channel_id: sentMailCh.id,
-        user_id: user.id,
-        body: broadcastMessage.trim(),
-        broadcast_recipients: recipients,
-      });
+      await postBoard({ id: newPostId(), msg: { channel_id: sentMailCh.id, body, broadcast_recipients: recipients }, hold: !urgent, batch });
     }
+    if (failed.length > 0) setSendError(`次の方には送れませんでした：${failed.join('、')}`);
+    if (!urgent && failed.length < dmSelectedIds.length) startUndo({ batch }, { kind: 'broadcast', targetIds: [...dmSelectedIds], body });
 
     await loadAll();
     setSending(false);
@@ -2439,92 +2420,61 @@ const BoardPage: React.FC = () => {
     if (hasDraft) setCopyConfirmMsg(msg); else copyToCompose(msg);
   };
 
+  const noticePostIdRef = useRef<string | null>(null);
   const sendNotice = async () => {
     if (!user || composeRecipientIds.length === 0 || !composeBody.trim() || !composeSubject.trim()) return;
     if (composeScheduleProblem) return;   // ボタンは押せなくしてある。念のため
     setSending(true);
     const isScheduled = !!composeScheduledAt;
-    const insertData: Record<string, unknown> = {
-      user_id: user.id,
-      body: composeBody.trim(),
-      status: isScheduled ? 'scheduled' : 'sent',
-    };
-    if (!isScheduled) insertData.sent_at = new Date().toISOString();
-    if (composeSubject.trim())         insertData.subject         = composeSubject.trim();
-    if (composeDeadlineType)           { insertData.deadline_type = composeDeadlineType; insertData.requires_confirmation = true; }
-    if (composeDeadline)               insertData.deadline        = composeDeadline;
-    if (composeScheduledAt)            insertData.scheduled_at    = new Date(composeScheduledAt).toISOString();
-    if (composeAnswerPrompt.trim())    insertData.answer_prompt   = composeAnswerPrompt.trim();
-    if (composeAnswerLocation.trim())  insertData.answer_location = composeAnswerLocation.trim();
-    if (composeAnswerLink.trim())      insertData.answer_link     = composeAnswerLink.trim();
+    // 「⚡当日の連絡・緊急」は取り消し待ちなしでその場で届ける（受信時間の設定を無視してすぐプッシュ）
+    const urgent = composeUrgent && !isScheduled;
+    const msgData: Record<string, unknown> = { body: composeBody.trim(), subject: composeSubject.trim() };
+    if (composeDeadlineType)           { msgData.deadline_type = composeDeadlineType; msgData.requires_confirmation = true; }
+    if (composeDeadline)               msgData.deadline        = composeDeadline;
+    if (composeScheduledAt)            msgData.scheduled_at    = new Date(composeScheduledAt).toISOString();
+    if (composeAnswerPrompt.trim())    msgData.answer_prompt   = composeAnswerPrompt.trim();
+    if (composeAnswerLocation.trim())  msgData.answer_location = composeAnswerLocation.trim();
+    if (composeAnswerLink.trim())      msgData.answer_link     = composeAnswerLink.trim();
     // 🚨 期限（reply_until）は渡さない。DB のトリガーが board_reply_days() 日後を入れる（30日を2か所に持たない）
-    if (composeAllowReply)             insertData.allow_reply     = true;
+    if (composeAllowReply)             msgData.allow_reply     = true;
+    if (composeUrgent)                 msgData.push_urgent     = true;
     // 宛先の選び方を残す（「コピーして作成」で、いまの該当者に当て直すため）
     {
       const { presets, extras } = splitRecipientsIntoPresets(composeRecipientIds, composePresetKeys, allProfiles);
-      insertData.recipient_presets   = presets;
-      insertData.recipient_extra_ids = extras;
+      msgData.recipient_presets   = presets;
+      msgData.recipient_extra_ids = extras;
     }
+    // CC: 代表者の送信トレイ（cc_user_ids）に写しを残す。自分（送信者）だけは除く。
+    // 🚨 2026-09-16 ユーザー確定：**宛先に入っている代表者も写しの対象にする**（全員あてで写しが0人になっていたため）
+    const ccIds = composeIncludeCC ? noticeCCUserIds.filter(uid => uid !== user.id) : [];
+    if (ccIds.length > 0) msgData.cc_user_ids = ccIds;
 
-    const { data, error } = await supabase.from('board_messages').insert(insertData).select('id').single();
-    if (!error && data) {
-      // CC: 代表者の送信トレイ（cc_user_ids）に写しを残す。自分（送信者）だけは除く。
-      // 🚨 2026-09-16 ユーザー確定：**宛先に入っている代表者も写しの対象にする**。
-      //    以前は宛先の人を除いていたため、全員あてのお知らせでは代表者が全員宛先に含まれ、
-      //    写しが0人になっていた（チェックを入れても誰の送信トレイにも出ない）。実測で確認済み。
-      //    宛先の人は受信トレイと送信トレイの両方に出るが、送信履歴を共有できることを優先する。
-      const ccIds = composeIncludeCC
-        ? noticeCCUserIds.filter(uid => uid !== user.id)
-        : [];
-      if (ccIds.length > 0) {
-        // 🚨 ここは赤にしない。お知らせ自体は送れているので、赤で出すと
-        //    「送れなかった」と読まれて二重送信につながる（黄色＝部分成功）。
-        const ccFail = describeUpdate(
-          await supabase.from('board_messages').update({ cc_user_ids: ccIds }).eq('id', data.id).select('id'),
-          'CCの記録', 'missing',
-        );
-        if (ccFail) setPartialMsg(describePartial('お知らせの送信', 'CC（写しを送る相手）を記録できませんでした'));
-      }
-      const recs = composeRecipientIds.map(uid => ({ message_id: data.id, user_id: uid }));
-      // 🚨 宛先の書き込みが失敗すると、送信トレイには残るのに**誰にも届かない**。
-      //    これまで結果を見ていなかったので、黙って「送れたこと」になっていた。
-      //    ここで止めて、通知・メールも送らない（届いていないのに知らせない）。
-      const { error: recErr } = await supabase.from('board_message_recipients').insert(recs);
-      if (recErr) {
-        // 🚨 宛先の無いお知らせが1件できている。送信トレイを読み直して、その場で消せるようにする
-        //    （読み直さないと画面に出ず、「消してください」と言われても消しようがない）。
-        await loadOutbox();
-        setSendError(`宛先を保存できなかったため、お知らせは誰にも届いていません：${recErr.message}（送信トレイに残っているものを削除してから、もう一度お送りください）`);
-        setSending(false);
-        return;
-      }
-
-      if (!isScheduled) {
-        const senderName = profileName || '誰か';
-        const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
-        const recipientIds = composeRecipientIds.filter(uid => uid !== user.id);
-        await Promise.all(recipientIds.map(uid =>
-          insertNotification(uid, `💬 ${senderName}からお知らせが届きました`, preview, undefined, data.id, 'board:notice',
-            composeUrgent) // 「当日の連絡・緊急」なら受信時間の設定を無視してすぐプッシュ
-        ));
-        dispatchBoardEmail('board:notice', {
-          '送信者名': senderName,
-          '件名': composeSubject.trim(),
-          'リンク': `${BOARD_LINK}?openInboxId=${data.id}`,
-        }, recipientIds);
-      }
-
-      resetCompose();
-      // 🚨 受信トレイも読み直す（2026-09-08 実機報告：自分を宛先に入れて送っても受信トレイに出ず、
-      //    未読にもならなかった）。送信トレイだけ読み直していたため、自分宛ての1件が画面に無かった。
-      //    ベル・プッシュは元から自分には送らない作り（recipientIds で自分を除いている）なので、そこは変えていない
-      await Promise.all([loadOutbox(), loadInbox()]);
-      setView('outbox');
-      setShowSidebar(false);
-    } else {
-      setSendError('送信に失敗しました。' + (error?.message || '不明なエラー'));
-      setTimeout(() => setSendError(null), 4000);
+    // 🚨 本体・宛先・写しは DB の board_post が1つの取引で作る（2026-10-26）。前は3回に分けて書いていて、
+    //    宛先だけ失敗すると「送信トレイには残るのに誰にも届かない」ことがあった。
+    //    ベル・スマホ・メールは届けるとき（10秒後・予約の時刻）に DB が作る。🚨 送った本人には送らない
+    const restore: BoardRestore = {
+      kind: 'notice', recipientIds: [...composeRecipientIds], presetKeys: [...composePresetKeys],
+      subject: composeSubject, body: composeBody, deadlineType: composeDeadlineType, deadline: composeDeadline,
+      answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
+      allowReply: composeAllowReply, includeCC: composeIncludeCC,
+    };
+    const id = noticePostIdRef.current ?? newPostId();
+    noticePostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
+    const r = await postBoard({ id, msg: msgData, recipients: composeRecipientIds, hold: !urgent });
+    if (!r.ok) {
+      setSendError(sendFailureText(r.error) ?? `送信に失敗しました。${(r.error as { message?: string })?.message || '不明なエラー'}`);
+      setSending(false);
+      return;
     }
+    noticePostIdRef.current = null;
+    if (r.state === 'held') startUndo({ id }, restore);
+
+    resetCompose();
+    // 🚨 受信トレイも読み直す（2026-09-08 実機報告：自分を宛先に入れて送っても受信トレイに出ず、
+    //    未読にもならなかった）。送信トレイだけ読み直していたため、自分宛ての1件が画面に無かった
+    await Promise.all([loadOutbox(), loadInbox()]);
+    setView('outbox');
+    setShowSidebar(false);
     setSending(false);
   };
 
@@ -2744,6 +2694,101 @@ const BoardPage: React.FC = () => {
     );
   };
 
+  // ── 送信の取り消し（2026-10-26・lib/boardSendUndo）────────────────────────
+  // 帯の出入りで「送信待ち」の［取り消す］を出し分けるため、帯の状態が変わったら描き直す
+  useSyncExternalStore(subscribeBand, getBand, getBand);
+  // 取り消したときに戻す内容。書きかけがあれば「置き換えますか」を挟む（黙って消さない）
+  const [restoreAsk, setRestoreAsk] = useState<BoardRestore | null>(null);
+  const applyRestore = (r: BoardRestore) => {
+    if (r.kind === 'notice') {
+      setComposeRecipientIds(r.recipientIds); setComposePresetKeys(r.presetKeys);
+      setComposeSubject(r.subject); setComposeBody(r.body);
+      setComposeDeadlineType(r.deadlineType); setComposeDeadline(r.deadline);
+      setComposeAnswerPrompt(r.answerPrompt); setComposeAnswerLocation(r.answerLocation); setComposeAnswerLink(r.answerLink);
+      setComposeAllowReply(r.allowReply); setComposeIncludeCC(r.includeCC);
+      setComposeScheduledAt(''); setComposeUrgent(false);
+      setComposeOptions(true); setComposeDraftId(null);
+      setView('compose'); setShowSidebar(false);
+    } else if (r.kind === 'channel') {
+      if (r.parentId) {
+        patchBoardParams({ bv: 'channel', bch: r.channelId, bth: r.parentId });
+        setReplyBody(r.body);
+      } else {
+        patchBoardParams({ bv: 'channel', bch: r.channelId, bth: null });
+        setNewBody(r.body); setNewTitle(r.title); setNewDeadline(r.deadline); setNewDeadlineType(r.deadlineType);
+        setNewAnswerPrompt(r.answerPrompt); setNewAnswerLocation(r.answerLocation); setNewAnswerLink(r.answerLink);
+        setNewScheduledAt(''); setNewUrgent(false);
+        if (r.title || r.deadline || r.deadlineType) setShowOptionsExpanded(true);
+      }
+      setShowSidebar(false);
+    } else if (r.kind === 'noticeReply') {
+      setReplyDraft({ msgId: r.noticeId, partnerId: r.partnerId, body: r.body });
+    } else {
+      setDmSelectedIds(r.targetIds); setBroadcastMessage(r.body); setShowDMSearch(true);
+    }
+  };
+  // 戻す先に書きかけがあるか（置き換える前に聞く）
+  const restoreConflicts = (r: BoardRestore): boolean => {
+    if (r.kind === 'notice') return !!(composeSubject.trim() || composeBody.trim());
+    if (r.kind === 'channel') return r.parentId ? (threadMsgId === r.parentId && !!replyBody.trim()) : (selectedChannelId === r.channelId && !!newBody.trim());
+    if (r.kind === 'noticeReply') return !!replyDraft?.body.trim();
+    return !!broadcastMessage.trim();
+  };
+  const receiveRestoreRef = useRef<(r: BoardRestore) => void>(() => {});
+  receiveRestoreRef.current = (r: BoardRestore) => { if (restoreConflicts(r)) setRestoreAsk(r); else applyRestore(r); };
+  useEffect(() => {
+    // 連絡板を開いていないときに取り消した分（帯が連絡板へ移してくる）
+    const pending = takePendingRestore();
+    if (pending) receiveRestoreRef.current(pending);
+    const offRestore = onBoardRestore(r => receiveRestoreRef.current(r));
+    // 届いたら一覧を読み直す（「送信待ち」の印を外す）
+    const offSent = onBoardSent(() => { void loadOutbox(); void loadAll(); });
+    return () => { offRestore(); offSent(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 帯を入力欄のすぐ上に出す（グループ・DM・スレッドの入力欄の高さを --board-undo-bottom に置く。帯は components/BoardUndoBand）
+  const composerRoRef = useRef<ResizeObserver | null>(null);
+  const composerBandRef = useCallback((el: HTMLDivElement | null) => {
+    composerRoRef.current?.disconnect(); composerRoRef.current = null;
+    const root = document.documentElement;
+    if (!el) { root.style.removeProperty('--board-undo-bottom'); return; }
+    const set = () => root.style.setProperty('--board-undo-bottom', el.offsetHeight + 12 + 'px');
+    set();
+    if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(set); ro.observe(el); composerRoRef.current = ro; }
+  }, []);
+  /** 送信待ちの行から取り消したときに戻す内容（送信トレイ・吹き出しから作る） */
+  const restoreOfMessage = (msg: BoardMessage): BoardRestore | null => {
+    if (msg.send_batch) return null;   // 一斉の DM は宛先がこの画面に無い（本文だけ戻しても宛先が分からない）
+    if (msg.channel_id) {
+      return { kind: 'channel', channelId: msg.channel_id, parentId: msg.parent_id, body: msg.body, title: msg.title ?? '',
+        deadline: msg.deadline ?? '', deadlineType: msg.deadline_type ?? '', answerPrompt: msg.answer_prompt ?? '',
+        answerLocation: msg.answer_location ?? '', answerLink: msg.answer_link ?? '' };
+    }
+    if (msg.parent_id) return null;
+    return { kind: 'notice', recipientIds: inboxRecipients[msg.id] || [], presetKeys: [], subject: msg.subject ?? '', body: msg.body,
+      deadlineType: msg.deadline_type ?? '', deadline: msg.deadline ?? '', answerPrompt: msg.answer_prompt ?? '',
+      answerLocation: msg.answer_location ?? '', answerLink: msg.answer_link ?? '', allowReply: !!msg.allow_reply,
+      includeCC: (msg.cc_user_ids?.length ?? 0) > 0 };
+  };
+
+  /** 送った本人の「送信待ち」の印（2026-10-26）。帯が出ている間は帯の［取り消す］だけ（ボタンを2つにしない） */
+  const waitingMark = (msg: BoardMessage) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 10, padding: '1px 4px 1px 8px' }}
+      onClick={e => e.stopPropagation()}>
+      {UNDO_TEXT.waiting}
+      {!isUndoable(msg.id) && (
+        <button type="button" data-net="write"
+          onClick={async () => {
+            const r = await undoWaiting(msg.send_batch ? { batch: msg.send_batch } : { id: msg.id }, restoreOfMessage(msg));
+            if (r === 'cancelled') { await Promise.all([loadOutbox(), loadAll()]); }
+          }}
+          style={{ ...backBtn(isDark), background: isDark ? '#1f2937' : '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8 }}>
+          取り消す
+        </button>
+      )}
+    </span>
+  );
+
   const renderMsg = (
     msg: BoardMessage, isReply = false, isOutboxView = false,
     archiveBtn: { archived: boolean; onToggle: () => void } | null = null,
@@ -2774,7 +2819,7 @@ const BoardPage: React.FC = () => {
                 {avatarLetter(senderName)}
               </div>
               <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
-              {isOutboxView && msg.scheduled_at ? (
+              {isOutboxView && msg.scheduled_at && !msg.send_hold ? (
                 <span style={{ fontSize: 11, color: subColor }}>
                   予約作成 {fmtFull(msg.created_at)}
                   {msg.sent_at
@@ -2785,6 +2830,7 @@ const BoardPage: React.FC = () => {
                 <span style={{ fontSize: 11, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
               )}
               {msg.edited_at && <span style={{ fontSize: 10, color: subColor }}>(編集済み)</span>}
+              {msg.status === 'scheduled' && msg.send_hold && isOwn && waitingMark(msg)}
             </div>
             <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
               <button data-net="write" type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
@@ -3136,7 +3182,7 @@ const BoardPage: React.FC = () => {
           <div ref={messagesEndRef} />
         </div>
         {/* Fixed input */}
-        <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
+        <div ref={composerBandRef} style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
           {!canSendInChannel(selectedChannelId!) ? (
             <div style={{ textAlign: 'center', color: subColor, fontSize: 13, padding: '8px 0' }}>
               このチャンネルへの送信権限がありません
@@ -4738,11 +4784,11 @@ const BoardPage: React.FC = () => {
               </>
             ) : (
               <>
-                {outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).length === 0 ? (
+                {outboxMessages.filter(m => outboxTabOf(m) === outboxTab).length === 0 ? (
                   outboxFailed ? null : <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
                     {outboxTab === 'sent' ? '送信済みのお知らせはありません' : outboxTab === 'scheduled' ? '予約済みのお知らせはありません' : '下書きはありません'}
                   </div>
-                ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
+                ) : outboxMessages.filter(m => outboxTabOf(m) === outboxTab).map(msg => {
                   const recipientIds = inboxRecipients[msg.id] || [];
                   const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
                   const today = todayJstStr();
@@ -4764,7 +4810,8 @@ const BoardPage: React.FC = () => {
                           <span style={{ fontSize: 10, fontWeight: 700, color: msg.user_id === user?.id ? subColor : (isDark ? '#93c5fd' : '#3b82f6') }}>
                             {msg.user_id === user?.id ? '自分' : (allProfiles.find(p => p.id === msg.user_id)?.name || '不明')}
                           </span>
-                          {outboxTab === 'sent' && msg.scheduled_at && (
+                          {msg.status === 'scheduled' && msg.send_hold && waitingMark(msg)}
+                          {outboxTab === 'sent' && msg.scheduled_at && !msg.send_hold && (
                             <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', background: isDark ? '#1e3a5f' : '#dbeafe', borderRadius: 10, padding: '1px 6px' }}>
                               📅予約送信済み
                             </span>
@@ -4863,7 +4910,7 @@ const BoardPage: React.FC = () => {
           送信した連絡の履歴です（返信不可）
         </div>
       ) : (
-      <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
+      <div ref={composerBandRef} style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
         {!canSendInChannel(selectedChannelId) && (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, padding: '8px 0' }}>
             このチャンネルへの送信権限がありません
@@ -5412,6 +5459,18 @@ const BoardPage: React.FC = () => {
           <button type="button" onClick={() => setSendError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
+      {/* 取り消した内容を戻す先に書きかけがあるとき（2026-10-26）。黙って置き換えない */}
+      {restoreAsk && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: isDark ? '#4d431b' : '#fff8e1', border: `1px solid ${isDark ? '#7a6a2d' : '#ffe08a'}`, borderRadius: 12, padding: '16px 18px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', width: 'min(340px, calc(100vw - 32px))', boxSizing: 'border-box', textAlign: 'left' }}>
+          <div style={{ fontSize: 13.5, color: isDark ? '#e6d27a' : '#7a5b00', lineHeight: 1.7, marginBottom: 12 }}>
+            書きかけの内容があります。取り消した内容に置き換えますか？
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="button" onClick={() => setRestoreAsk(null)} style={{ ...backBtn(isDark), flex: 1 }}>今のままにする</button>
+            <button type="button" onClick={() => { const r = restoreAsk; setRestoreAsk(null); applyRestore(r); }} style={{ ...primaryBtn(), flex: 1 }}>置き換える</button>
+          </div>
+        </div>
+      )}
       {/* 部分成功（本体は成立したが、付随する処理だけ失敗した）。🚨 赤にしないこと。
           色は OvertimeProposalResponse の部分成功と同じものを使う（新しい色を足さない） */}
       {partialMsg && (
@@ -5594,7 +5653,7 @@ const BoardPage: React.FC = () => {
               {/* 誤タップの最終防波堤：緊急として送ることを送信直前に明示する */}
               {newUrgent && (
                 <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid #d97706', background: isDark ? '#3a2e14' : '#fff8e1', color: isDark ? '#fbbf24' : '#b45309', fontSize: 12.5, fontWeight: 700 }}>
-                  ⚡ 当日の連絡・緊急として送信します（通知の受信時間を設定している人にも、すぐに届きます）
+                  ⚡ 当日の連絡・緊急として送信します（通知の受信時間を設定している人にも、すぐに届きます・取り消しはできません）
                 </div>
               )}
               {/* メッセージカードプレビュー */}
@@ -5940,7 +5999,7 @@ const BoardPage: React.FC = () => {
               {/* 誤タップの最終防波堤：緊急として送ることを送信直前に明示する */}
               {composeUrgent && (
                 <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid #d97706', background: isDark ? '#3a2e14' : '#fff8e1', color: isDark ? '#fbbf24' : '#b45309', fontSize: 12.5, fontWeight: 700 }}>
-                  ⚡ 当日の連絡・緊急として送信します（通知の受信時間を設定している人にも、すぐに届きます）
+                  ⚡ 当日の連絡・緊急として送信します（通知の受信時間を設定している人にも、すぐに届きます・取り消しはできません）
                 </div>
               )}
               {/* 宛先表示（10人以上は折りたたみ） */}

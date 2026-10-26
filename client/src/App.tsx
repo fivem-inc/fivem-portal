@@ -34,6 +34,7 @@ const BootTiming = React.lazy(() => import('./components/BootTiming'));
 // 共有パソコンの自動ログアウト（2026-09-14）。設定 ON のパソコンでしか何もしない（lib/idleLogout.ts）
 import IdleLogout from './components/IdleLogout';
 import OfflineBand from './components/OfflineBand';
+import BoardUndoBand from './components/BoardUndoBand';
 import LoadFailedNotice from './components/LoadFailedNotice';
 import PendingSubmitsCard from './components/PendingSubmitsCard';
 const FaqAdminPage = React.lazy(() => import('./pages/FaqAdminPage'));
@@ -534,7 +535,8 @@ const ProtectedLayout: React.FC = () => {
   // 🚨 IdleLogout はログイン済みの全ページの親であるここに1つだけ置く（ページごとに置かない）
   // 🚨 ページの部品が読めなかったとき（圏外など）は、ページの所だけで受け止める（アプリごと消さない・2026-10-20）。ページを移ったら元に戻す（key にすると、ふだんもページを移るたびに作り直しになるので resetKey）
   // 🚨 OfflineBand（通信がつながっていないときの黄色い帯・2026-10-21 電波 段4）もここに1つだけ
-  return <><IdleLogout /><OfflineBand /><AppErrorBoundary scope="route" resetKey={pathname}><Outlet /></AppErrorBoundary></>;
+  // 🚨 BoardUndoBand（連絡板の「送信しました［取り消す］」・2026-10-26）もここに1つだけ。ページを移っても10秒の時計と送信が続くように
+  return <><IdleLogout /><OfflineBand /><BoardUndoBand /><AppErrorBoundary scope="route" resetKey={pathname}><Outlet /></AppErrorBoundary></>;
 };
 
 // ナビゲーションバー
