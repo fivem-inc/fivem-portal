@@ -35,9 +35,13 @@ interface Props {
   fitRef?: React.RefObject<HTMLElement | null>;
   /** fitRef の高さに対する上限の割合（既定 0.45） */
   fitRatio?: number;
+  /**
+   * 渡すと［⤢］はこの全画面を開かず、呼ぶ側の大きな作成の画面を開く（グループ・DM・2026-10-26）。パソコンでも［⤢］を出す
+   */
+  onExpand?: () => void;
 }
 
-const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onKeyDown, isMobile, isDark, rows, maxHeight, title, style, wrapStyle, autoFocus, fitRef, fitRatio = 0.45 }) => {
+const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onKeyDown, isMobile, isDark, rows, maxHeight, title, style, wrapStyle, autoFocus, fitRef, fitRatio = 0.45, onExpand }) => {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const bigRef = useRef<HTMLTextAreaElement | null>(null);
   const [full, setFull] = useState(false);
@@ -95,8 +99,8 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
         <textarea ref={ref} value={value} rows={rows} placeholder={placeholder}
           onChange={e => onChange(e.target.value)} onKeyDown={onKeyDown}
           style={{ ...style, flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto', maxHeight: limit }} />
-        {isMobile && (
-          <button type="button" onClick={() => setFull(true)} aria-label="大きく書く" title="大きく書く"
+        {(isMobile || onExpand) && (
+          <button type="button" onClick={() => (onExpand ? onExpand() : setFull(true))} aria-label="大きく書く" title="大きく書く"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: isDark ? '#90caf9' : '#1976d2', fontSize: 16, lineHeight: 1, cursor: 'pointer', padding: 0 }}>⤢</button>
         )}
       </div>

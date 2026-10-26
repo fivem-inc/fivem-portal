@@ -1978,6 +1978,19 @@ const BoardPage: React.FC = () => {
   const newScheduleProblem = dateTimeProblem(newScheduledAt, SCHEDULE_RULE);
   const composeScheduleProblem = dateTimeProblem(composeScheduledAt, SCHEDULE_RULE);
 
+  /** 大きな作成の画面を閉じたとき、何が入っているかの小さな札（例：件名あり・期限 11/2・予約 11/1 9:00） */
+  const channelOptSummary = (() => {
+    const md = (d: string) => { const [, m, dd] = d.split('-'); return `${Number(m)}/${Number(dd)}`; };
+    const out: string[] = [];
+    if (newTitle.trim()) out.push('件名あり');
+    if (newDeadlineType) out.push(DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/^\S+\s/, '') ?? '種別あり');
+    if (newDeadline) out.push(`期限 ${md(newDeadline)}`);
+    if (newScheduledAt) {
+      const d = new Date(newScheduledAt);
+      out.push(isNaN(d.getTime()) ? '予約あり' : `予約 ${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`);
+    }
+    return out;
+  })();
   const channelPostIdRef = useRef<string | null>(null);
   const sendMessage = async (parentId?: string) => {
     if (!selectedChannelId || !user) return;
@@ -4922,101 +4935,22 @@ const BoardPage: React.FC = () => {
           <button type="button" onClick={() => setShowOptionsExpanded(e => !e)}
             style={{
               width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '6px 10px', borderRadius: showOptionsExpanded ? '8px 8px 0 0' : 8,
+              padding: '6px 10px', borderRadius: 8,
               border: `1px solid ${border}`, background: inputBg,
               cursor: 'pointer', color: textColor, fontSize: 12, fontWeight: 600,
             }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ fontSize: 13 }}>⚙️</span>
               件名・期限・種別・送信予約
-              {(newTitle || newDeadlineType || newDeadline || newScheduledAt || newUrgent) && (
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#007bff', display: 'inline-block' }} />
-              )}
             </span>
-            <span style={{ fontSize: 11, color: subColor }}>{showOptionsExpanded ? '▲ 閉じる' : '▼ 開く'}</span>
+            <span style={{ fontSize: 11, color: subColor }}>⤢ 大きく開く</span>
           </button>
-          {showOptionsExpanded && (
-            // 🚨 高さの上限と中のスクロール（2026-10-20）。上限が無いと、開いた中身が下の入力欄ごと画面の外へ押し出され、
-            //    期限日・送信予約・［送信］が見えなくなっていた（パソコンの低いウィンドウ・社長の実機）
-            <div style={{ padding: '10px 12px', background: inputBg, borderRadius: '0 0 8px 8px', border: `1px solid ${border}`, borderTop: 'none', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '40vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-              {/* 件名 */}
-              <div>
-                <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>件名（省略可）</div>
-                <input type="text" value={newTitle} onChange={e => setNewTitle(e.target.value)}
-                  placeholder="件名を入力..."
-                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
-              </div>
-              {/* 種別ボタングリッド */}
-              <div>
-                <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 6 }}>種別（選ぶと確認ボタンが付きます）</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  {DEADLINE_TYPES.map(dt => (
-                    <button key={dt.value} type="button"
-                      onClick={() => setNewDeadlineType(prev => prev === dt.value ? '' : dt.value)}
-                      style={{ padding: '8px 4px', borderRadius: 8, border: `2px solid ${newDeadlineType === dt.value ? '#007bff' : border}`, background: newDeadlineType === dt.value ? '#007bff' : 'transparent', color: newDeadlineType === dt.value ? '#fff' : textColor, cursor: 'pointer', fontSize: 13, fontWeight: newDeadlineType === dt.value ? 'bold' : 'normal' }}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* 内容・場所・URL */}
-              {newDeadlineType && (
-                <>
-                  <div>
-                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>内容（何を{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
-                    <input type="text" value={newAnswerPrompt} onChange={e => setNewAnswerPrompt(e.target.value)}
-                      placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.promptPlaceholder ?? ''}
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>保存先（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
-                    <input type="text" value={newAnswerLocation} onChange={e => setNewAnswerLocation(e.target.value)}
-                      placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.locationPlaceholder ?? ''}
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>リンク（URL）</div>
-                    <input type="url" value={newAnswerLink} onChange={e => setNewAnswerLink(e.target.value)}
-                      placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.linkPlaceholder ?? 'https://...'}
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
-                  </div>
-                </>
-              )}
-              {/* 期限日 */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>⏰ 期限日{newDeadlineType && <span style={{ color: '#dc3545' }}> *必須</span>}</span>
-                  <input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)}
-                    min={todayJstStr()}
-                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1.5px solid ${newDeadlineType && !newDeadline ? '#dc3545' : border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
-                  {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
-                </div>
-                {newDeadlineType && !newDeadline && (
-                  <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>種別を選んだ場合、期限日の入力が必要です</div>
-                )}
-              </div>
-              {/* 送信予約 */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
-                  {/* 予約送信は緊急チェックを運べないため、予約を入れたら緊急チェックを外してグレーアウトする */}
-                  <DateTimeInput value={newScheduledAt} onChange={v => { setNewScheduledAt(v); if (v) setNewUrgent(false); }}
-                    isDark={isDark} minDate={todayJstStr()} invalid={!!newScheduleProblem} ariaLabel="送信予約" style={{ flex: 1 }} />
-                  {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
-                </div>
-                {newScheduleProblem && <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>{newScheduleProblem}</div>}
-              </div>
-              {/* ⚡当日の連絡・緊急 */}
-              <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: newScheduledAt ? 'not-allowed' : 'pointer', fontSize: 12, color: textColor, opacity: newScheduledAt ? 0.5 : 1 }}>
-                  <input type="checkbox" checked={newUrgent} disabled={!!newScheduledAt}
-                    onChange={e => setNewUrgent(e.target.checked)} style={{ accentColor: '#d97706' }} />
-                  <span style={{ fontWeight: 600 }}>⚡ 当日の連絡・緊急</span>
-                </label>
-                <div style={{ fontSize: 11, color: subColor, margin: '2px 0 0 20px' }}>
-                  {newScheduledAt ? '予約送信では使えません' : '通知の受信時間を設定している人にも、すぐに届きます'}
-                </div>
-              </div>
+          {/* 閉じたあと、何が入っているかを小さな札で（2026-10-26・送る前に気づけるように） */}
+          {channelOptSummary.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+              {channelOptSummary.map(t => (
+                <span key={t} style={{ fontSize: 11, color: isDark ? '#93c5fd' : '#1d4ed8', background: isDark ? '#1e3a5f' : '#dbeafe', borderRadius: 10, padding: '1px 8px' }}>{t}</span>
+              ))}
             </div>
           )}
         </div>
@@ -5037,6 +4971,7 @@ const BoardPage: React.FC = () => {
             rows={2} isMobile={isMobile} isDark={isDark}
             maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.5)}
             fitRef={channelColRef}
+            onExpand={() => setShowOptionsExpanded(true)}
             title={selectedChannel ? channelDisplayName(selectedChannel) : 'メッセージ'}
             onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}}
             wrapStyle={{ flex: 1, minWidth: 0 }}
@@ -5053,6 +4988,122 @@ const BoardPage: React.FC = () => {
         </div>
         </>}
       </div>
+      )}
+      {/* 大きな作成の画面（2026-10-26 ユーザー確定）。「件名・期限・種別・送信予約」と本文の［⤢］で開く。
+          中のスクロールは1つ・［送信］はいつも下に見える・本文は書いた分だけ伸びる・［小さくする］で今の入力欄に戻る（書いた内容はそのまま）。
+          🚨 ナビ（と圏外の帯）の下から画面の下まで。送る前の確認の窓（zIndex 5000）と取り消しの帯（1200）より下に置く */}
+      {showOptionsExpanded && selectedChannel && selectedChannel.type !== 'sent_mail' && canSendInChannel(selectedChannelId) && (
+        <div role="dialog" aria-label="メッセージを作成"
+          onKeyDown={e => { if (e.key === 'Escape') setShowOptionsExpanded(false); }}
+          style={{ position: 'fixed', left: 0, right: 0, bottom: 0, top: 'calc(var(--topbar-height, 60px) + var(--offline-band-h, 0px))', zIndex: 1100, background: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.35)', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ width: '100%', maxWidth: 760, height: '100%', background: cardBg, display: 'flex', flexDirection: 'column', boxSizing: 'border-box', textAlign: 'left' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 'bold', color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                送信先：{channelDisplayName(selectedChannel)}
+              </span>
+              <button type="button" onClick={() => setShowOptionsExpanded(false)}
+                style={{ ...backBtn(isDark), flexShrink: 0, padding: '6px 14px', fontSize: 13 }}>小さくする</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {/* 件名 */}
+                  <div>
+                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>件名（省略可）</div>
+                    <input type="text" value={newTitle} onChange={e => setNewTitle(e.target.value)}
+                      placeholder="件名を入力..."
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+                  </div>
+                  {/* 種別ボタングリッド */}
+                  <div>
+                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 6 }}>種別（選ぶと確認ボタンが付きます）</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                      {DEADLINE_TYPES.map(dt => (
+                        <button key={dt.value} type="button"
+                          onClick={() => setNewDeadlineType(prev => prev === dt.value ? '' : dt.value)}
+                          style={{ padding: '8px 4px', borderRadius: 8, border: `2px solid ${newDeadlineType === dt.value ? '#007bff' : border}`, background: newDeadlineType === dt.value ? '#007bff' : 'transparent', color: newDeadlineType === dt.value ? '#fff' : textColor, cursor: 'pointer', fontSize: 13, fontWeight: newDeadlineType === dt.value ? 'bold' : 'normal' }}>
+                          {dt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* 内容・場所・URL */}
+                  {newDeadlineType && (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>内容（何を{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
+                        <input type="text" value={newAnswerPrompt} onChange={e => setNewAnswerPrompt(e.target.value)}
+                          placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.promptPlaceholder ?? ''}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>保存先（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
+                        <input type="text" value={newAnswerLocation} onChange={e => setNewAnswerLocation(e.target.value)}
+                          placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.locationPlaceholder ?? ''}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>リンク（URL）</div>
+                        <input type="url" value={newAnswerLink} onChange={e => setNewAnswerLink(e.target.value)}
+                          placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.linkPlaceholder ?? 'https://...'}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+                      </div>
+                    </>
+                  )}
+                  {/* 期限日 */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>⏰ 期限日{newDeadlineType && <span style={{ color: '#dc3545' }}> *必須</span>}</span>
+                      <input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)}
+                        min={todayJstStr()}
+                        style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1.5px solid ${newDeadlineType && !newDeadline ? '#dc3545' : border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
+                      {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+                    </div>
+                    {newDeadlineType && !newDeadline && (
+                      <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>種別を選んだ場合、期限日の入力が必要です</div>
+                    )}
+                  </div>
+                  {/* 送信予約 */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
+                      {/* 予約送信は緊急チェックを運べないため、予約を入れたら緊急チェックを外してグレーアウトする */}
+                      <DateTimeInput value={newScheduledAt} onChange={v => { setNewScheduledAt(v); if (v) setNewUrgent(false); }}
+                        isDark={isDark} minDate={todayJstStr()} invalid={!!newScheduleProblem} ariaLabel="送信予約" style={{ flex: 1 }} />
+                      {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+                    </div>
+                    {newScheduleProblem && <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>{newScheduleProblem}</div>}
+                  </div>
+                  {/* ⚡当日の連絡・緊急 */}
+                  <div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: newScheduledAt ? 'not-allowed' : 'pointer', fontSize: 12, color: textColor, opacity: newScheduledAt ? 0.5 : 1 }}>
+                      <input type="checkbox" checked={newUrgent} disabled={!!newScheduledAt}
+                        onChange={e => setNewUrgent(e.target.checked)} style={{ accentColor: '#d97706' }} />
+                      <span style={{ fontWeight: 600 }}>⚡ 当日の連絡・緊急</span>
+                    </label>
+                    <div style={{ fontSize: 11, color: subColor, margin: '2px 0 0 20px' }}>
+                      {newScheduledAt ? '予約送信では使えません' : '通知の受信時間を設定している人にも、すぐに届きます'}
+                    </div>
+                  </div>
+              {/* 本文：書いた分だけ伸びる（中のスクロールは画面の1つだけ）。🚨 文字は16px（スマホの画面が勝手に拡大されないように） */}
+              <div>
+                <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>本文</div>
+                <textarea value={newBody} onChange={e => setNewBody(e.target.value)}
+                  ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${Math.max(el.scrollHeight + 2, 160)}px`; } }}
+                  placeholder="メッセージを入力..."
+                  onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 16, lineHeight: 1.6, fontFamily: 'inherit', resize: 'none', overflow: 'hidden' }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, padding: '10px 14px calc(10px + env(safe-area-inset-bottom, 0px))', borderTop: `1px solid ${border}`, flexShrink: 0 }}>
+              <button type="button" onClick={() => setShowOptionsExpanded(false)} style={{ ...backBtn(isDark), flex: 1 }}>小さくする</button>
+              <button data-net="write" type="button"
+                onClick={() => { if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}
+                disabled={sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) || !!newScheduleProblem}
+                style={{ ...primaryBtn(), flex: 2, opacity: sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) || !!newScheduleProblem ? 0.5 : 1 }}>
+                {sending ? '送信中' : '送信'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   ) : (
