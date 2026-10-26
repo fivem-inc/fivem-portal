@@ -3,11 +3,12 @@
 // ・今ある一覧の Excel・CSV 出力はそのまま（混ざらないよう、こちらは［表で見る］の中のボタンだけ）
 // 🚨 時間は画面と同じ文字（「-1:30」「（2:00）」）を文字として入れ、計算用に「時間数（分）」の数字の列を別に付ける
 //    （文字の「-1:30」を数として入れると Excel が数式と取り違える＝OvertimeAdminTab の Excel の注意と同じ）
-import { SHEET_DOW, dowOf, sheetMd, sheetHm, daysWithEntries, type PersonSheet, type SheetPerson, type SheetDay } from './payrollSheet';
+import { SHEET_DOW, dowOf, sheetMd, sheetHm, daysWithEntries, COMPANY_LABEL, type PersonSheet, type SheetPerson, type SheetDay } from './payrollSheet';
 
 type Row = (string | number | null)[];
 
-const HEAD = ['日付', '曜日', '通常シフト時間', '労働時間(休憩)', '変更(実務)シフト時間', '時間数', '時間数（分）', '理由', '確認サイン'];
+// 会社＝会社カレンダー（会社休・休館・有休奨励日・2026-10-26）。休暇の行は理由に「休暇：…」
+const HEAD = ['日付', '曜日', '会社', '通常シフト時間', '労働時間(休憩)', '変更(実務)シフト時間', '時間数', '時間数（分）', '理由', '確認サイン'];
 
 /** 表の行（1日に記載が2つあれば2行。日付・通常シフトは1行目だけ） */
 function dayRows(day: SheetDay): Row[] {
@@ -16,6 +17,7 @@ function dayRows(day: SheetDay): Row[] {
   return entries.map((en, i) => [
     i === 0 ? sheetMd(day.date) : '',
     i === 0 ? SHEET_DOW[dw] : '',
+    i === 0 && day.company ? COMPANY_LABEL[day.company] : '',
     i === 0 ? (day.nsLines.length ? day.nsLines.join(' / ') : day.offLabel) : '',
     i === 0 ? day.laborText : '',
     en?.actual ?? '',
@@ -51,11 +53,11 @@ export async function exportPayrollSheetsXlsx(opts: {
     const days = daysWithEntries(s.days);
     if (days.length === 0) continue;
     for (const d of days) for (const r of dayRows(d)) list.push([p.employee_no ?? '', p.name, ...r]);
-    list.push([p.employee_no ?? '', p.name, '合計', '', '', '', '', s.total == null ? '' : sheetHm(s.total), s.total, [s.plannedText, s.totalNote, s.absenceDays > 0 ? `欠勤 ${s.absenceDays}日` : ''].filter(Boolean).join('／'), '']);
+    list.push([p.employee_no ?? '', p.name, '合計', '', '', '', '', '', s.total == null ? '' : sheetHm(s.total), s.total, [s.plannedText, s.totalNote, s.absenceDays > 0 ? `欠勤 ${s.absenceDays}日` : ''].filter(Boolean).join('／'), '']);
     list.push([]);
   }
   const ws = XLSX.utils.aoa_to_sheet(list);
-  ws['!cols'] = [10, 14, 7, 5, 22, 14, 22, 9, 9, 40, 18].map(wch => ({ wch }));
+  ws['!cols'] = [10, 14, 7, 5, 16, 22, 14, 22, 9, 9, 40, 18].map(wch => ({ wch }));
   const used = new Set<string>();
   XLSX.utils.book_append_sheet(wb, ws, sheetName('一覧', used));
 
@@ -71,7 +73,7 @@ export async function exportPayrollSheetsXlsx(opts: {
     rows.push([], HEAD);
     for (const d of s.days) rows.push(...dayRows(d));
     const w = XLSX.utils.aoa_to_sheet(rows);
-    w['!cols'] = [7, 5, 22, 14, 22, 9, 9, 40, 18].map(wch => ({ wch }));
+    w['!cols'] = [7, 5, 16, 22, 14, 22, 9, 9, 40, 18].map(wch => ({ wch }));
     XLSX.utils.book_append_sheet(wb, w, sheetName(`${p.employee_no ?? ''} ${p.name}`.trim(), used));
   }
   XLSX.writeFile(wb, `${opts.kindLabel}_表_${opts.periodLabel}.xlsx`.replace(/[\\/:*?"<>|]/g, ''));

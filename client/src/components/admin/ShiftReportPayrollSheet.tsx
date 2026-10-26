@@ -7,7 +7,7 @@ import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
 import { parseSegments, formatSegs, formatSegsFromRecord, segMinutes, calcSegsBreak, shiftReportDiff, summarizeShiftDiffs } from '../../lib/shiftCalc';
 import { compareEmployeeNo } from '../../lib/employeeNo';
 import { SHIFT_TYPE_INFO, type ShiftAppType } from '../../lib/shiftReportTypes';
-import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, type PersonSheet, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
+import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, leaveEntriesOn, SHEET_LEAVE_SELECT, type PersonSheet, type SheetDay, type SheetEntry, type SheetLeave } from '../../lib/payrollSheet';
 import PayrollSheetView from './PayrollSheetView';
 
 /**
@@ -26,7 +26,7 @@ interface Rep {
   labor_minutes: number | null; confirmed_by: string | null; created_at: string;
 }
 interface Staff { id: string; name: string; employee_no: string | null; is_active: boolean; employment_type: string | null; hire_date: string | null; retire_date: string | null }
-interface Loaded { staff: Staff[]; reps: Rep[]; patterns: PatternRow[]; calendar: Record<string, CalendarKind>; names: Record<string, string> }
+interface Loaded { staff: Staff[]; reps: Rep[]; patterns: PatternRow[]; calendar: Record<string, CalendarKind>; names: Record<string, string>; leaves: SheetLeave[] }
 
 const PENDING = ['pending', 'resubmitted'];
 
@@ -47,22 +47,25 @@ const ShiftReportPayrollSheet: React.FC<{
   const end = payPeriodEnd(period);
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
-    const [staffRes, repRes, patRes, calRes] = await Promise.all([
+    const [staffRes, repRes, patRes, calRes, lvRes] = await Promise.all([
       readAllRows<Staff>((a, b) => supabase.from('profiles').select('id, name, employee_no, is_active, employment_type, hire_date, retire_date').order('id').range(a, b)),
       readAllRows<Rep>((a, b) => supabase.from('shift_reports')
         .select('id, applicant_id, work_date, status, pay_period_start, application_type, application_types, reason, original_segments, original_start, original_end, original_outing_start, original_outing_end, original_location, actual_segments, actual_start, actual_end, actual_outing_start, actual_outing_end, actual_location, labor_minutes, confirmed_by, created_at')
         .eq('pay_period_start', period).order('id').range(a, b)),
       readAllRows<PatternRow>((a, b) => supabase.from('weekly_shift_patterns').select('*').order('id').range(a, b)),
       readAllRows<{ date: string; kind: CalendarKind }>((a, b) => supabase.from('company_calendar').select('date, kind').gte('date', period).lte('date', end).order('date').range(a, b)),
+      readAllRows<SheetLeave>((a, b) => supabase.from('leave_requests').select(SHEET_LEAVE_SELECT)
+        .not('status', 'in', '(cancelled,rejected)').lte('start_date', end).gte('end_date', period).order('id').range(a, b)),
     ]);
     const errs = [
       staffRes.error && 'スタッフ：' + staffRes.error, repRes.error && '報告：' + repRes.error,
       patRes.error && '通常シフト：' + patRes.error, calRes.error && '会社カレンダー：' + calRes.error,
+      lvRes.error && '休暇：' + lvRes.error,
     ].filter(Boolean);
     if (errs.length) { setLoadErr('読み込めませんでした（' + errs.join('／') + '）。通信環境の良い場所で、もう一度開いてください。'); setData(null); setLoading(false); return; }
     const calendar: Record<string, CalendarKind> = {};
     calRes.rows.forEach(c => { calendar[c.date] = c.kind; });
-    setData({ staff: staffRes.rows, reps: repRes.rows, patterns: patRes.rows, calendar, names: Object.fromEntries(staffRes.rows.map(s => [s.id, s.name])) });
+    setData({ staff: staffRes.rows, reps: repRes.rows, patterns: patRes.rows, calendar, names: Object.fromEntries(staffRes.rows.map(s => [s.id, s.name])), leaves: lvRes.rows });
     setLoading(false);
   }, [period, end]);
   useEffect(() => { load(); }, [load]);
@@ -105,7 +108,7 @@ const ShiftReportPayrollSheet: React.FC<{
         const t = normalShiftTimeText(ns);
         if (t) { nsLines = t.split(' / '); laborText = `${formatMin(ns.labor_minutes)}(${formatMin(ns.break_minutes)})`; }
       }
-      const entries: SheetEntry[] = dayReps.map((r): SheetEntry => {
+      const entries: SheetEntry[] = [...leaveEntriesOn(data.leaves, person.id, d), ...dayReps.map((r): SheetEntry => {
         const pend = PENDING.includes(r.status);
         const types = (r.application_types?.length ? r.application_types : [r.application_type]) as ShiftAppType[];
         const typeText = types.map(t => SHIFT_TYPE_INFO[t]?.label ?? t).join('・');
@@ -125,13 +128,14 @@ const ShiftReportPayrollSheet: React.FC<{
           timeColor: !pend && diff != null && diff < 0 ? '#c62828' : undefined,
           minutes: pend ? null : diff,
         };
-      });
+      })];
       return {
         date: d,
         nsLines,
         offLabel: !employed && dayReps.length === 0 ? '—' : cal === 'closed_all' ? CALENDAR_CELL_STYLE.closed_all.short : '休み',
         laborText,
         entries,
+        company: cal,
       };
     });
     return {
@@ -142,7 +146,7 @@ const ShiftReportPayrollSheet: React.FC<{
         : null,
       absenceDays: sum.absenceDays,
       pendingText: sum.pendingCount > 0 ? `確認待ちが${sum.pendingCount}件あります。受理されると合計に入ります。` : null,
-      emptyText: reps.length === 0 ? 'この期間の勤務変更の報告はありません' : null,
+      emptyText: reps.length === 0 && !days.some(x => x.entries.length > 0) ? 'この期間の勤務変更の報告はありません' : null,
       days,
     };
   }, [data, people, period]);

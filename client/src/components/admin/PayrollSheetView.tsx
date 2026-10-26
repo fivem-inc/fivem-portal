@@ -3,7 +3,8 @@ import SearchableSelect from '../common/SearchableSelect';
 import { backBtn, tintBtn, TOGGLE_BLUE } from '../../lib/buttonStyles';
 import { payMonthLabel, payPeriodLabel, payPeriodEnd } from '../../lib/breakCalc';
 import { onRowPick, pickedRowBg } from '../../lib/rowPick';
-import { SHEET_DOW, dowOf, sheetMd, sheetHm, daysWithEntries, type PersonSheet, type SheetDay, type SheetPerson } from '../../lib/payrollSheet';
+import { SHEET_DOW, dowOf, sheetMd, sheetHm, daysWithEntries, COMPANY_LABEL, type PersonSheet, type SheetDay, type SheetPerson } from '../../lib/payrollSheet';
+import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
 import { exportPayrollSheetsXlsx } from '../../lib/payrollSheetExcel';
 import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
@@ -18,11 +19,12 @@ import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
 type Mode = 'one' | 'stack';
 const MODE_KEY = 'fivem_payroll_sheet_mode';
-const COLS_KEY = 'fivem_payroll_sheet_cols_v1';
-// 日付・曜日・通常シフト時間・労働時間(休憩)・変更(実務)シフト時間・時間数・理由・確認サイン
-const DEFAULT_COLS = [52, 32, 110, 92, 120, 72, 280, 120];
+// 🚨 列を足したら名前の v を上げる（端末に覚えた前の幅の数と合わなくなるため）
+const COLS_KEY = 'fivem_payroll_sheet_cols_v2';
+// 日付・曜日・会社（2026-10-26）・通常シフト時間・労働時間(休憩)・変更(実務)シフト時間・時間数・理由・確認サイン
+const DEFAULT_COLS = [52, 32, 104, 110, 92, 120, 72, 280, 120];
 const MIN_COL = 28;
-const HEADS = ['日付', '', '通常シフト時間', '労働時間(休憩)', '変更(実務)シフト時間', '時間数', '理由', '確認サイン'];
+const HEADS = ['日付', '', '会社', '通常シフト時間', '労働時間(休憩)', '変更(実務)シフト時間', '時間数', '理由', '確認サイン'];
 
 function readCols(): number[] {
   try {
@@ -146,16 +148,20 @@ const PayrollSheetView: React.FC<{
     const entries = day.entries.length ? day.entries : [{ key: 'none', reason: '', sign: '', actual: '', time: '', muted: false, strike: false }];
     return entries.map((en, i) => {
       const rowKey = `${prefix}|${day.date}|${en.key}`;
-      const rowBg = picked === rowKey ? pickedRowBg(isDark) : cardBg;
+      // 休暇の行は薄いピンク（残業申請のカレンダーの「休暇」の印と同じ色・2026-10-26）
+      const rowBg = picked === rowKey ? pickedRowBg(isDark) : en.tone === 'leave' ? (isDark ? '#3a2a33' : '#fbeaf0') : cardBg;
       const first = i === 0;
       const c = (extra?: React.CSSProperties): React.CSSProperties => ({ ...td, borderTop: first ? `1px solid ${border}` : `1px dotted ${border}`, background: rowBg, ...extra });
-      const mutedColor = en.muted ? gray : text;
+      const mutedColor = en.muted ? gray : en.tone === 'leave' ? (isDark ? '#f4c0d1' : '#72243e') : text;
+      const co = first && day.company ? CALENDAR_CELL_STYLE[day.company] : null;
       const reasonOpen = openReason.has(rowKey);
       const hasNs = day.nsLines.length > 0;
       return (
         <tr key={rowKey} onClick={e => onRowPick(e, rowKey, picked, setPicked)} style={{ cursor: 'pointer' }}>
           <td style={c({ position: 'sticky', left: 0, zIndex: 1, textAlign: 'center', color: dayColor, borderLeft: 'none' })}>{first ? sheetMd(day.date) : ''}</td>
           <td style={c({ position: 'sticky', left: cols[0], zIndex: 1, textAlign: 'center', color: dayColor })}>{first ? SHEET_DOW[dw] : ''}</td>
+          {/* 会社カレンダー（会社休・休館・有休奨励日）。色は勤怠カレンダーのマスと同じ */}
+          <td style={c({ textAlign: 'center', fontSize: 11.5, ...(co ? { background: co.bg, color: co.text } : {}) })}>{first && day.company ? COMPANY_LABEL[day.company] : ''}</td>
           <td style={c({ textAlign: 'center', color: hasNs ? text : gray })}>
             {first ? (hasNs ? day.nsLines.map((t, k) => <div key={k}>{t}</div>) : day.offLabel) : ''}
           </td>

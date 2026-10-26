@@ -9,7 +9,7 @@ import { overtimeApprovedLines, SELF_APPROVED_TEXT } from '../../lib/overtimeApp
 import { plannedBreakdownRows } from '../../lib/overtimeBalance';
 import { compareEmployeeNo } from '../../lib/employeeNo';
 import { isOvertimeType, typeLabelFor } from '../../lib/overtimeTypes';
-import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, sheetMd, type PersonSheet, type SheetDay, type SheetEntry } from '../../lib/payrollSheet';
+import { payrollPeriodOptions, periodDays, readAllRows, sheetHm, sheetMd, leaveEntriesOn, SHEET_LEAVE_SELECT, type PersonSheet, type SheetDay, type SheetEntry, type SheetLeave } from '../../lib/payrollSheet';
 import PayrollSheetView from './PayrollSheetView';
 
 /**
@@ -36,6 +36,8 @@ interface Staff { id: string; name: string; employee_no: string | null; is_activ
 interface Loaded {
   staff: Staff[]; reps: Rep[]; checks: DayCheck[]; patterns: PatternRow[];
   calendar: Record<string, CalendarKind>; furikae: Map<string, string>; names: Record<string, string>;
+  /** 休暇（差し戻し・取消を除く・2026-10-26 表に「休暇：…」の行で出す） */
+  leaves: SheetLeave[];
 }
 
 const OvertimePayrollSheet: React.FC<{
@@ -55,7 +57,7 @@ const OvertimePayrollSheet: React.FC<{
   const end = payPeriodEnd(period);
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
-    const [staffRes, repRes, dcRes, patRes, calRes, furRes] = await Promise.all([
+    const [staffRes, repRes, dcRes, patRes, calRes, furRes, lvRes] = await Promise.all([
       readAllRows<Staff>((a, b) => supabase.from('profiles').select('id, name, employee_no, is_active, hire_date, retire_date').eq('employment_type', '正社員').order('id').range(a, b)),
       readAllRows<Rep>((a, b) => supabase.from('overtime_reports')
         .select('id, applicant_id, reviewer_id, work_date, entry_type, status, pay_period_start, normal_shift, diff_minutes, reason, application_types, confirmed_by, confirmed_at, request_confirmed_at, late_situation, early_situation, created_at, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind)')
@@ -66,10 +68,13 @@ const OvertimePayrollSheet: React.FC<{
       readAllRows<{ applicant_id: string; work_date: string; furikae_origin_date: string | null }>((a, b) => supabase.from('overtime_reports')
         .select('applicant_id, work_date, furikae_origin_date').eq('entry_type', 'manual').neq('status', 'cancelled')
         .contains('application_types', ['furikae_off']).gte('furikae_origin_date', period).lte('furikae_origin_date', end).order('id').range(a, b)),
+      readAllRows<SheetLeave>((a, b) => supabase.from('leave_requests').select(SHEET_LEAVE_SELECT)
+        .not('status', 'in', '(cancelled,rejected)').lte('start_date', end).gte('end_date', period).order('id').range(a, b)),
     ]);
     const errs = [
       staffRes.error && 'スタッフ：' + staffRes.error, repRes.error && '申請：' + repRes.error, dcRes.error && '定時の記録：' + dcRes.error,
       patRes.error && '通常シフト：' + patRes.error, calRes.error && '会社カレンダー：' + calRes.error, furRes.error && '振替休日：' + furRes.error,
+      lvRes.error && '休暇：' + lvRes.error,
     ].filter(Boolean);
     if (errs.length) { setLoadErr('読み込めませんでした（' + errs.join('／') + '）。通信環境の良い場所で、もう一度開いてください。'); setData(null); setLoading(false); return; }
     const names: Record<string, string> = Object.fromEntries(staffRes.rows.map(s => [s.id, s.name]));
@@ -82,7 +87,7 @@ const OvertimePayrollSheet: React.FC<{
     calRes.rows.forEach(c => { calendar[c.date] = c.kind; });
     const furikae = new Map<string, string>();
     furRes.rows.forEach(f => { if (f.furikae_origin_date) furikae.set(`${f.applicant_id}|${f.furikae_origin_date}`, f.work_date); });
-    setData({ staff: staffRes.rows, reps: repRes.rows, checks: dcRes.rows, patterns: patRes.rows, calendar, furikae, names });
+    setData({ staff: staffRes.rows, reps: repRes.rows, checks: dcRes.rows, patterns: patRes.rows, calendar, furikae, names, leaves: lvRes.rows });
     setLoading(false);
   }, [period, end]);
   useEffect(() => { load(); }, [load]);
@@ -121,6 +126,7 @@ const OvertimePayrollSheet: React.FC<{
       const ns = snap ?? (employed ? resolveNormalShift(pats, d, cal) : null);
       const nsText = ns ? normalShiftTimeText(ns) : '';
       const entries: SheetEntry[] = [
+        ...leaveEntriesOn(data.leaves, person.id, d),
         ...dayReps.map((r): SheetEntry => {
           const pendingLabel = r.status === 'request_confirmed' ? '（実績報告待ち）' : r.status === 'confirmed' ? '' : '（確認待ち）';
           const dup = r.status === 'confirmed' && isDup(r);
@@ -153,6 +159,7 @@ const OvertimePayrollSheet: React.FC<{
         offLabel: !employed && !snap ? '—' : cal === 'closed_all' ? CALENDAR_CELL_STYLE.closed_all.short : '休み',
         laborText: nsText && ns ? `${formatMin(ns.labor_minutes)}(${formatMin(ns.break_minutes)})` : '-',
         entries,
+        company: cal,
       };
     });
     return {
@@ -163,7 +170,7 @@ const OvertimePayrollSheet: React.FC<{
         : null,
       absenceDays: balance.absenceDays,
       pendingText: pending > 0 ? `確認待ち・実績報告待ちが${pending}件あります。受理され、実績が確定すると合計に入ります。` : null,
-      emptyText: reps.length === 0 && checks.length === 0 ? 'この期間の残業・時間調整の申請はありません' : null,
+      emptyText: reps.length === 0 && checks.length === 0 && !days.some(x => x.entries.length > 0) ? 'この期間の残業・時間調整の申請はありません' : null,
       days,
     };
   }, [data, people, period]);

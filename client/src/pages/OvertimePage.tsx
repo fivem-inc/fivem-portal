@@ -25,9 +25,11 @@ import {
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
   payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
-  advanceRequestMaxDate, jpDateLabel,
+  advanceRequestMaxDate, jpDateLabel, payPeriodEnd,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
+import { SHEET_LEAVE_SELECT, type SheetLeave } from '../lib/payrollSheet';
+import { mergeLeaveUnits, groupUnitsByDay, renderDayGroup } from '../components/DayFrameList';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import PendingSubmitLine from '../components/PendingSubmitLine';
@@ -4095,6 +4097,25 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   const ownActionRows = ownHistory.filter(isOtActionRow);
   const ownRestRows = ownHistory.filter(r => !isOtActionRow(r));
+  // 休暇と会社の予定（2026-10-26 ユーザー確定・components/DayFrameList）。絞り込み（状態・種類）をしているときは休暇を出さない
+  const ownLeaveFrom = isAdmin ? null : (ownCardIsThisPeriod ? prevPeriodStart : ownCardPeriod);
+  const ownLeaveTo = isAdmin || ownCardIsThisPeriod ? null : payPeriodEnd(ownCardPeriod);
+  const [ownLeaves, setOwnLeaves] = useState<SheetLeave[]>([]);
+  useEffect(() => {
+    let alive = true;
+    let q = supabase.from('leave_requests').select(SHEET_LEAVE_SELECT).eq('user_id', user.id).not('status', 'in', '(cancelled,rejected)');
+    if (ownLeaveFrom) q = q.gte('end_date', ownLeaveFrom);
+    if (ownLeaveTo) q = q.lte('start_date', ownLeaveTo);
+    q.then(({ data, error }) => {
+      if (error) console.error('[残業] 休暇を読めませんでした（履歴には出しません）:', error.message);
+      if (alive) setOwnLeaves(error ? [] : ((data ?? []) as SheetLeave[]));
+    });
+    return () => { alive = false; };
+  }, [user.id, ownLeaveFrom, ownLeaveTo, reports]);
+  const showOwnLeaves = ownHistoryFilter.status === 'all' && ownHistoryFilter.types.length === 0;
+  const ownRestGroups = groupUnitsByDay(mergeLeaveUnits(ownRestRows, r => r.work_date, r => r.id, showOwnLeaves ? ownLeaves : [], user.id,
+    d => (!ownLeaveFrom || d >= ownLeaveFrom) && (!ownLeaveTo || d <= ownLeaveTo), ownHistoryFilter.sortAsc));
+  const groupPeriod = (g: (typeof ownRestGroups)[number]) => g.units.find(u => u.rep)?.rep?.pay_period_start ?? calcPayPeriodStartJst(g.date);
   // 残業に紐づく最新の修正依頼（📩依頼中／✓対応済みバッジ用）
   // 🚨 ここは status で絞らないこと。依頼は申請の状態が変わっても残るため、絞ると
   //    「依頼を出したあとに上長が差し戻す」だけでバッジが消え、本人は取り下げも出し直しもできなくなる
@@ -4917,7 +4938,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   )}
 
                   {/* 履歴リスト */}
-                  {ownHistory.length === 0 && !loadError && (
+                  {ownHistory.length === 0 && ownRestGroups.length === 0 && !loadError && (
                     <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>まだ申請・報告はありません</p>
                   )}
                   {(() => {
@@ -5391,7 +5412,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           ))}
                         </select>
                       </div>
-                      {ownHistory.length === 0 && !loadError && (
+                      {ownHistory.length === 0 && ownRestGroups.length === 0 && !loadError && (
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
                       )}
                       {/* 📩 自分あての申請の依頼（2026-09-09）。
@@ -5430,7 +5451,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffcf8f' : '#b7770d', margin: '4px 0 8px' }}>⚠️ あなたの対応待ち（{ownActionRows.length}）</div>
                       )}
                       {ownActionRows.map(renderOwnCard)}
-                      {ownActionRows.length > 0 && ownRestRows.length > 0 && (
+                      {ownActionRows.length > 0 && ownRestGroups.length > 0 && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 8px' }}>
                           <div style={{ flex: 1, height: 1, background: borderColor }} />
                           <span style={{ fontSize: 11.5, color: subText, whiteSpace: 'nowrap' }}>これまでの申請・報告</span>
@@ -5441,13 +5462,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           数字は合計時間数カードと同じ ownCardRows・同じ computeBalance から作る（食い違わせない）。
                           🚨 絞り込み中でも見出しの数字は「その期の全部」を出す。絞った分だけを足すと
                              「合計が合わない」と読まれるため。 */}
-                      {ownRestRows.map((r, i) => {
-                        const period = r.pay_period_start;
-                        const isNewPeriod = !!period && (i === 0 || ownRestRows[i - 1].pay_period_start !== period);
-                        if (!isNewPeriod) return renderOwnCard(r);
+                      {ownRestGroups.map((g, i) => {
+                        // 休暇の行と、会社の予定の日の枠（2026-10-26）。期の見出しは今までどおり期が変わったところに挟む
+                        const period = groupPeriod(g);
+                        const node = renderDayGroup(g, pageCalendarKinds[g.date], renderOwnCard, isDark, () => navigate('/leave?tab=history'));
+                        const isNewPeriod = !!period && (i === 0 || groupPeriod(ownRestGroups[i - 1]) !== period);
+                        if (!isNewPeriod) return node;
                         const bal = balanceOfPeriod(period);
                         return (
-                          <React.Fragment key={`p-${period}-${r.id}`}>
+                          <React.Fragment key={`p-${period}-${g.date}-${g.units[0].key}`}>
                             <div style={{
                               display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6,
                               margin: '16px 0 8px', padding: '6px 10px', borderRadius: 8,
@@ -5460,7 +5483,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 <OvertimeBalanceInline b={bal} isDark={isDark} totalLabel="合計 " />
                               </span>
                             </div>
-                            {renderOwnCard(r)}
+                            {node}
                           </React.Fragment>
                         );
                       })}
@@ -5881,6 +5904,21 @@ const MemberDetailView: React.FC<{
   const slotMap = usePartialSlotMap(slotDates.length > 0 ? [userId] : [], slotDates[0] ?? '', slotDates[slotDates.length - 1] ?? '', slotReload);
   const visible = rows.filter(r => r.status !== 'cancelled')
     .sort((a, b) => (a.work_date.localeCompare(b.work_date) || a.created_at.localeCompare(b.created_at)) * (detailSortAsc ? 1 : -1));
+  // 休暇と会社の予定（2026-10-26 ユーザー確定・components/DayFrameList）。休暇はリーダー以上なら読める（RLS）。読めなければ出さないだけ
+  const periodEnd = payPeriodEnd(period);
+  const dayKinds = useCompanyCalendar(period, periodEnd);
+  const [memberLeaves, setMemberLeaves] = useState<SheetLeave[]>([]);
+  useEffect(() => {
+    let alive = true;
+    supabase.from('leave_requests').select(SHEET_LEAVE_SELECT).eq('user_id', userId)
+      .not('status', 'in', '(cancelled,rejected)').lte('start_date', periodEnd).gte('end_date', period)
+      .then(({ data, error }) => {
+        if (error) console.error('[残業] 休暇を読めませんでした（一覧には出しません）:', error.message);
+        if (alive) setMemberLeaves(error ? [] : ((data ?? []) as SheetLeave[]));
+      });
+    return () => { alive = false; };
+  }, [userId, period, periodEnd, reloadKey]);
+  const dayGroups = groupUnitsByDay(mergeLeaveUnits(visible, r => r.work_date, r => r.id, memberLeaves, userId, d => d >= period && d <= periodEnd, detailSortAsc));
 
   // 提案者向け：この相手への提案履歴（テンプレ複製・状況把握）。RLSで閲覧可能なぶんのみ返る。
   useEffect(() => {
@@ -5976,7 +6014,7 @@ const MemberDetailView: React.FC<{
       {loadError && <LoadFailedNotice text={loadError} onRetry={() => setReloadKey(n => n + 1)} />}
       {loading ? (
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
-      ) : visible.length === 0 ? (loadError ? null :
+      ) : dayGroups.length === 0 ? (loadError ? null :
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>この期間の申請・報告はありません</p>
       ) : (
         <>
@@ -5987,9 +6025,9 @@ const MemberDetailView: React.FC<{
               {detailSortAsc ? '↑ 昇順' : '↓ 降順'}
             </button>
           </div>
-          {visible.map(r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText}
+          {dayGroups.map(g => renderDayGroup(g, dayKinds[g.date], r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText}
             extra={<PartialShiftToggle report={r} slot={slotMap[`${r.applicant_id}|${r.work_date}`]} canChange={isAdmin || canShiftHere}
-              isDark={isDark} onChanged={() => setSlotReload(n => n + 1)} />} />)}
+              isDark={isDark} onChanged={() => setSlotReload(n => n + 1)} />} />, isDark))}
         </>
       )}
       </>
