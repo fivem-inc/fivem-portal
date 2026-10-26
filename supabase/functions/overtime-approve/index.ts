@@ -160,6 +160,33 @@ serve(async (req) => {
       return null
     }
     const md = (d: string) => `${String(d).slice(5).replace('-', '/')}（${dowLabel(String(d))}）`
+    // 給与の締め（2026-10-26 レビュー 穴A・B）：期間＝16日〜翌15日・給与計算は支給月の17日から。取消（cancel）と同じ日付の決まり
+    const payClose = (): { afterCutoff: boolean; afterPeriodEnd: boolean } => {
+      const [ppy, ppm] = String(r.pay_period_start ?? '').split('-').map(Number)
+      if (!ppy || !ppm) return { afterCutoff: false, afterPeriodEnd: false }
+      const payY = ppm === 12 ? ppy + 1 : ppy, payM = ppm === 12 ? 1 : ppm + 1
+      const mm = String(payM).padStart(2, '0')
+      const jstToday = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)
+      return { afterCutoff: jstToday > `${payY}-${mm}-17`, afterPeriodEnd: jstToday > `${payY}-${mm}-15` }
+    }
+    // 期間の終わり（15日）を過ぎてから締め（17日）までに変更が当たったら、社長・経理へ知らせる（取消の「締め後アラート」と同じ・通知設定の対象外）
+    const alertChangeAfterClose = async (): Promise<void> => {
+      const pc = payClose()
+      if (!pc.afterPeriodEnd || pc.afterCutoff) return
+      try {
+        const { data: adminIds } = await db.rpc('profile_ids_for_roles', { p_spec: ['org_wide'], p_exclude: caller.id })
+        const rows = ((adminIds ?? []) as ({ profile_ids_for_roles: string } | string)[])
+          .map(x => (typeof x === 'string' ? x : x.profile_ids_for_roles))
+          .map(uid => ({
+            user_id: uid,
+            message: `⚠️ ${applicantName}さんの振替休日を、給与締め後に出勤へ変えました（休む日 ${String(r.work_date).slice(5).replace('-', '/')}・振替元 ${originDate.slice(5).replace('-', '/')} は休日出勤）`,
+            sub_message: null, source_type: null, reference_id: null, read: false,
+          }))
+        if (rows.length) { const { error: aErr } = await db.from('notifications').insert(rows); if (aErr) throw aErr }
+      } catch (e) {
+        console.error('[overtime-approve] 振替休日の変更の締め後アラートに失敗:', e instanceof Error ? e.message : String(e))
+      }
+    }
 
     if (action === 'furikae_change') {
       // 🚨 本人だけ。振替休日（取消・却下・差し戻しでない）・勤務しなかった連絡や別の変更の依頼が無いこと・理由が要る
@@ -192,6 +219,7 @@ serve(async (req) => {
       if (selfReview) {
         // 自己受理の方は押した時点で変える
         const err = await applyFurikaeChange()
+        if (!err) await alertChangeAfterClose()
         if (err) {
           await db.from('overtime_reports').update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null }).eq('id', r.id)
           return json({ success: false, error: err }, 409)
@@ -213,8 +241,13 @@ serve(async (req) => {
       // 振替休日の変更の受理（2026-10-26 段6）
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、受理はできません。' }, 403)
+      // 🚨 給与計算が始まった期間（支給月の17日以降）は、上長の受理で給与の数字を変えない＝管理者だけ（2026-10-26 レビュー 穴A）
+      if (!isAdmin && payClose().afterCutoff) {
+        return json({ success: false, error: '給与計算が始まっているため（毎月17日以降）、変更の受理は管理者が行います' }, 403)
+      }
       const err = await applyFurikaeChange()
       if (err) return json({ success: false, error: err }, 409)
+      await alertChangeAfterClose()
       notification = {
         user_id: r.applicant_id,
         message: '🕐 振替休日の変更が受理されました',
