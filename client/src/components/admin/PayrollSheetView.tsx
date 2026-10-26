@@ -5,6 +5,7 @@ import { payMonthLabel, payPeriodLabel, payPeriodEnd } from '../../lib/breakCalc
 import { onRowPick, pickedRowBg } from '../../lib/rowPick';
 import { SHEET_DOW, dowOf, sheetMd, sheetHm, daysWithEntries, type PersonSheet, type SheetDay, type SheetPerson } from '../../lib/payrollSheet';
 import { exportPayrollSheetsXlsx } from '../../lib/payrollSheetExcel';
+import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
 /**
  * 給与計算用の［表で見る］の見た目（残業・勤務変更で共用・2026-10-21 ユーザー確定）。
@@ -119,7 +120,11 @@ const PayrollSheetView: React.FC<{
   const [xlsxErr, setXlsxErr] = useState('');
   const doExcel = async () => {
     setXlsxBusy(true); setXlsxErr('');
-    try { await exportPayrollSheetsXlsx({ kindLabel, periodLabel: periodName, people, sheetFor }); }
+    try {
+      await exportPayrollSheetsXlsx({ kindLabel, periodLabel: periodName, people, sheetFor });
+      // 「受理済みの変更」の確認の印（出した時刻より後の変更が未確認になる・2026-10-26）。残せなくても出力は止めない
+      await recordPayrollCheck(period, kindLabel === '残業' ? 'excel_overtime' : 'excel_shift', { count: people.length });
+    }
     catch (e) { setXlsxErr('Excel を作れませんでした：' + (e instanceof Error ? e.message : String(e))); }
     setXlsxBusy(false);
   };

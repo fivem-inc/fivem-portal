@@ -18,6 +18,7 @@ import ShiftRegWarn from '../ShiftRegWarn';
 import DeleteReasonDialog from '../DeleteReasonDialog';
 import { deleteApplications } from '../../lib/deleteApplication';
 import { useRegisteredShifts } from '../../hooks/useRegisteredShifts';
+import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
 type AppType = ShiftAppType;
 
@@ -443,6 +444,8 @@ const ShiftReportsTab: React.FC = () => {
     // 🚨 ファイル名に「/」は使えないので、期の名前の（10/16〜11/15）は外す（ファイル名は今までどおり）
     const label = csvMode === 'payperiod' ? payPeriodLabel(csvPayPeriod).replace(/（.*）$/, '') : `${csvFrom}〜${csvTo}`;
     a.href = url; a.download = `勤務変更報告_${label}.csv`; a.click();
+    // 「受理済みの変更」の確認の印（給与期間で出したときだけ・2026-10-26）
+    if (csvMode === 'payperiod') void recordPayrollCheck(csvPayPeriod, 'list_shift', { count: rows.length });
     URL.revokeObjectURL(url);
     setCsvExporting(false); setShowCsvModal(false);
   };

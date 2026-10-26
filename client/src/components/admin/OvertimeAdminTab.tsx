@@ -37,6 +37,7 @@ import { compareByListSorts, DEFAULT_LIST_SORTS, isDefaultListSorts, type ListSo
 import ListSortBar from './ListSortBar';
 import { onRowPick, pickedRowBg } from '../../lib/rowPick';
 import OvertimePayrollSheet from './OvertimePayrollSheet';
+import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
 // 言葉はスタッフの画面（lib/overtimeStatus の STATUS_INFO）と同じものを使う（2026-10-13 ユーザー確定）。
 // 🚨 ここに言葉を書き写さない。色だけ管理画面の今の色のまま
@@ -760,6 +761,8 @@ const OvertimeAdminTab: React.FC = () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '残業');
       XLSX.writeFile(wb, `残業_${nameRange}.xlsx`);
+      // 「受理済みの変更」の確認の印（給与期間で出したときだけ・2026-10-26）
+      if (otCsvMode === 'period') await recordPayrollCheck(otCsvPeriod, 'list_overtime', { count: rows.length });
       setOtErr('');
     } catch (e) {
       setOtErr('Excelファイルを作成できませんでした：' + (e instanceof Error ? e.message : String(e)));

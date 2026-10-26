@@ -1,4 +1,4 @@
-// 「削除の記録」（管理画面 → 修正依頼のタブのいちばん下・2026-10-23 ユーザー確定 案A）。
+// 「削除の記録」（管理画面 → 受理済みの変更のタブのいちばん下・2026-10-23 ユーザー確定 案A・2026-10-26 修正依頼のタブから移した）。
 // 休暇・残業・勤務変更・交通費の申請を［削除］したときに DB のトリガーが残した記録（application_deletion_log）を新しい順に出す。
 // 🚨 読めるのは管理者だけ（RLS）。記録はトリガーだけが書き、画面からは書き換えも削除もできない。
 //    3年より古い記録は毎月 cron が消す。消す処理は lib/deleteApplication（理由は必須）
@@ -10,6 +10,7 @@ import { formatLeaveDateSummary } from '../../lib/notifications';
 import { TOGGLE_BLUE } from '../../lib/buttonStyles';
 import LoadFailedNotice from '../LoadFailedNotice';
 import { NOTICE_LOAD_FAILED_TEXT } from '../../lib/netFailure';
+import { statusLabel } from '../../lib/applicationStatus';
 
 type Kind = 'leave' | 'overtime' | 'shift' | 'expense';
 interface LogRow {
@@ -19,11 +20,6 @@ interface LogRow {
 }
 
 const KIND_LABEL: Record<Kind, string> = { leave: '休暇', overtime: '残業', shift: '勤務変更', expense: '交通費' };
-const STATUS_LABEL: Record<string, string> = {
-  pending: '受理待ち', step2_pending: '受理待ち', manager_approved: '受理の途中', admin_approved: '最終受理待ち', approved: '受理済み',
-  rejected: '差し戻し', cancelled: '取消済み', requested: '確認待ち', request_confirmed: '実績報告待ち', reported: '確認待ち',
-  confirmed: '確認済み', returned: '差し戻し', resubmitted: '再提出',
-};
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const md = (d: string | null | undefined) => {
   if (!d) return '';
@@ -135,7 +131,7 @@ const DeletionLogSection: React.FC<{ isDark: boolean }> = ({ isDark }) => {
         return (
           <div key={r.id} style={{ border: `1px solid ${border}`, borderLeft: '4px solid #6c757d', borderRadius: '0 10px 10px 0', padding: '10px 14px', marginTop: 8, fontSize: 13, lineHeight: 1.8, background: cardBg, color: text }}>
             <span style={{ display: 'inline-block', fontSize: 11, borderRadius: 6, padding: '1px 7px', marginRight: 6, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#f8f9fa' : '#495057', fontWeight: 'bold' }}>{KIND_LABEL[r.kind]}</span>
-            <b>{who}さん　{titleOf(r)}</b>{r.status && <span style={{ color: sub }}>（{STATUS_LABEL[r.status] ?? r.status}）</span>}
+            <b>{who}さん　{titleOf(r)}</b>{r.status && <span style={{ color: sub }}>（{statusLabel(r.kind, r.status)}）</span>}
             <div>削除：{at(r.deleted_at)}　{by}　／　理由：{r.reason || <span style={{ color: sub }}>（記入なし）</span>}</div>
             <button type="button" onClick={() => setOpenIds(prev => { const n = new Set(prev); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
               style={{ background: 'none', border: 'none', padding: 0, color: isDark ? '#8ec5f0' : '#1565c0', fontSize: 12, cursor: 'pointer' }}>

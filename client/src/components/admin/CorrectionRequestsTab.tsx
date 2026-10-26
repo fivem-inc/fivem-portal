@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
-import DeletionLogSection from './DeletionLogSection';
+import { statusLabel } from '../../lib/applicationStatus';
 import { resolveCorrectionRequest, declineCorrectionRequest } from '../../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../../lib/correctionRequest';
 import { isOvertimeType, typeLabelFor } from '../../lib/overtimeTypes';
@@ -10,13 +10,7 @@ const RED = '#A32D2D';
 const TYPE_LABEL: Record<string, string> = { leave: '休暇', shift: '勤務変更', overtime: '残業' };
 const TYPE_TAB: Record<string, string> = { leave: 'leave_requests', shift: 'shift_reports', overtime: 'overtime_admin' };
 
-// 状態の日本語。飛ぶ前に「もう取り消し済みか」が分かるようにするため
-const STATUS_LABEL: Record<string, string> = {
-  pending: '確認待ち', step2_pending: '確認待ち', manager_approved: '経理確認待ち', admin_approved: '社長確認待ち',
-  approved: '受理済み', rejected: '差し戻し', cancelled: '取消済み',
-  resubmitted: '再提出', confirmed: '受理済み', returned: '差し戻し',
-  requested: '申請中', request_confirmed: '事前受理', reported: '実績報告済み',
-};
+// 状態の日本語は lib/applicationStatus の statusLabel（飛ぶ前に「もう取り消し済みか」が分かるようにするため）
 
 // 対象の申請の要約（日付・種別・状態）。依頼カードに出して取り違えを防ぐ
 type TargetInfo = { dateLabel: string; typeLabel: string; status: string };
@@ -85,7 +79,7 @@ const CorrectionRequestsTab: React.FC = () => {
         info[r.id] = {
           dateLabel: datesLabel(r.leave_dates, r.start_date),
           typeLabel: sub ?? (r.leave_type === 'その他' && r.leave_type_other ? r.leave_type_other : r.leave_type),
-          status: STATUS_LABEL[r.status] ?? r.status,
+          status: statusLabel('leave', r.status),
         };
       }
     }
@@ -95,7 +89,7 @@ const CorrectionRequestsTab: React.FC = () => {
       const { data: sr } = await supabase.from('shift_reports')
         .select('id, work_date, status').in('id', shiftIds);
       for (const r of (sr as any[] | null) ?? []) {
-        info[r.id] = { dateLabel: mdJp(r.work_date), typeLabel: '勤務変更', status: STATUS_LABEL[r.status] ?? r.status };
+        info[r.id] = { dateLabel: mdJp(r.work_date), typeLabel: '勤務変更', status: statusLabel('shift', r.status) };
       }
     }
 
@@ -109,7 +103,7 @@ const CorrectionRequestsTab: React.FC = () => {
         info[r.id] = {
           dateLabel: mdJp(r.work_date),
           typeLabel: labels.length ? labels.join('＋') : '残業',
-          status: STATUS_LABEL[r.status] ?? r.status,
+          status: statusLabel('overtime', r.status),
         };
       }
     }
@@ -311,7 +305,6 @@ const CorrectionRequestsTab: React.FC = () => {
       )}
 
       {/* 削除の記録（2026-10-23）。修正依頼とは別に、［削除］で消した申請の記録を出す */}
-      <DeletionLogSection isDark={isDarkMode} />
     </div>
   );
 };

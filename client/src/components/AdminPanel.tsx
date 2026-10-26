@@ -22,6 +22,7 @@ import UsagePanel, { type EgressEstimate } from './admin/UsagePanel';
 import FaqTab from './admin/FaqTab';
 import SafetyChecksTab from './admin/SafetyChecksTab';
 import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
+import ChangeLogTab from './admin/ChangeLogTab';
 // シフト管理（勤務表の一括編集・2026-09-15）。docs/計画-管理画面の開放.md の 5
 import ShiftManagementTab from './admin/ShiftManagementTab';
 import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
@@ -598,6 +599,8 @@ const AdminPanelContent: React.FC = () => {
               { key: 'overtime_proposals',  label: '調整提案',      icon: '🤝' },
               { key: 'purchase_requests',   label: '購入申請',      icon: '🧾' },
               { key: 'corrections',         label: '修正依頼',      icon: '📩' },
+              // 受理済みの変更（2026-10-26・経理向け・管理者だけ）。削除の記録もここ
+              { key: 'change_log',          label: '受理済みの変更', icon: '📋' },
             ],
           },
           {
@@ -729,6 +732,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'overtime_admin' && <OvertimeAdminTab />}
         {activeTab === 'overtime_proposals' && <OvertimeProposalsTab />}
         {activeTab === 'corrections' && <CorrectionRequestsTab />}
+        {activeTab === 'change_log' && <ChangeLogTab />}
         {activeTab === 'purchase_requests' && <PurchaseRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}

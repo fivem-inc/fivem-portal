@@ -81,10 +81,22 @@ trap cleanup EXIT
 FAILED=0
 fail() { log "ERROR: $1"; FAILED=1; }
 
+# 取り損ねたときの取り直し（2026-10-26）：--if-missing のときは、12:30 を過ぎていて今日の分がまだ無いときだけ動く。
+# ログインしたときに動くタスク BackupFivemSupabaseDB-CatchUp から呼ぶ。
+# いつものタスクは「このアカウントがログインしている間だけ」動くので、12:30 に別のアカウントで使っていると取れない（10/21 に起きた）
+CATCHUP=0
+if [ "${1:-}" = "--if-missing" ]; then
+    if [ "$(date +%H%M)" -lt 1230 ] || [ -f "$DEST_DAILY/$ARCHIVE_NAME" ]; then
+        exit 0
+    fi
+    CATCHUP=1
+fi
+
 # 保存先を先に作っておく（NASに繋がっていれば、最初の1行目からNASのログに残る）
 mkdir -p "$DEST_ROOT" 2>/dev/null
 
 log "===== バックアップ開始 ====="
+[ "$CATCHUP" = 1 ] && log "（取り直し：ログインしたとき、今日の分がまだ無かったため）"
 
 # --- 前提の確認 ---------------------------------------------
 for cmd in pg_dump psql supabase 7z; do

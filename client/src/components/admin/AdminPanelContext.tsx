@@ -8,13 +8,14 @@ import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 import { isPrehire } from '../../lib/staffState';
+import { recordPayrollCheck } from '../../lib/payrollCheckMark';
 
 // 修正依頼から「どの申請へ飛んだか」を飛び先のタブへ伝えるための型
 export type AdminFocusTarget = { type: 'leave' | 'shift' | 'overtime'; id: string };
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'shift_patterns' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks' | 'faq' | 'retire';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'shift_patterns' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'change_log' | 'safety_checks' | 'faq' | 'retire';
 
-const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'shift_patterns', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks', 'faq', 'retire'];
+const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'shift_patterns', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'change_log', 'safety_checks', 'faq', 'retire'];
 
 interface PrintVoucher {
   submissionId: string;
@@ -1187,6 +1188,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (error) { setErrorMsg('CSV出力に失敗しました。'); return; }
     if (!data || data.length === 0) { setSuccessMsg('承認済みの交通費がありません。'); return; }
     downloadCSV(generateCSVData(data));
+    // 「受理済みの変更」の確認の印（給与期間の初日（16日）から出したときだけ・2026-10-26）
+    if (csvStartDate && csvStartDate.endsWith('-16')) await recordPayrollCheck(csvStartDate, 'expense', { count: data.length });
     setSuccessMsg('CSVを出力しました');
   }, [csvStartDate, csvEndDate, csvDateType]);
 

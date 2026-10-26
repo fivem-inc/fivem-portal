@@ -75,7 +75,9 @@ serve(async (req) => {
       return json({ success: false, error: '差し戻しの理由を入力してください' }, 400)
     }
 
-    const db = createClient(supabaseUrl, serviceKey)
+    // x-actor-id：サーバーの鍵で書くと DB では「だれが」が分からないので、変更の記録（application_change_log）に
+    // した人を渡す（2026-10-26）。🚨 入れるのは上で確かめた JWT の人だけ（画面から送られた値は使わない）
+    const db = createClient(supabaseUrl, serviceKey, { global: { headers: { 'x-actor-id': caller.id } } })
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
       .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at, furikae_change_requested_at, furikae_change_reason, furikae_change_location')
