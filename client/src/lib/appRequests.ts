@@ -28,6 +28,8 @@ export interface ReceivedAppRequest {
   segments: SegmentLike[] | null;
   /** 残業の依頼の申請内容（2026-10-15 から・それより前の依頼と休暇の依頼は null） */
   ot_content: AppRequestOtContent | null;
+  /** 有休を時間外調整休に変更できることの案内（2026-10-27 段2a）のとき、その有休。カードは components/LeaveKindGuideCard */
+  replaces_leave_id?: string | null;
 }
 
 /** 「対応しない」の理由の選択肢。
@@ -57,7 +59,7 @@ export const isFullDayOtContent = (c: string | null | undefined): c is 'chosei_o
 /** 自分あての開いている依頼を読む（kind を渡せばその種類だけ）。読めなかったら error を返す（空で嘘をつかない） */
 export async function loadReceivedAppRequests(userId: string, kind?: AppRequestKind): Promise<{ rows: ReceivedAppRequest[]; error: string | null }> {
   let q = supabase.from('application_requests')
-    .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments, ot_content')
+    .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments, ot_content, replaces_leave_id')
     .eq('recipient_id', userId)
     .eq('status', 'open')
     .order('created_at', { ascending: true });
@@ -88,6 +90,11 @@ export async function dismissAppRequest(r: ReceivedAppRequest, note: string): Pr
   if (error) return '保存できませんでした：' + error.message;
   if (!data || data.length === 0) return '保存できませんでした（すでに処理された可能性があります）';
   const dates = (r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowOf(d)}）`).join('・');
+  // 休暇の種類のご案内（2026-10-27 段2a）：中立な文（ご本人が断ったことを前に出さない・法律の専門家のレビュー）
+  if (r.replaces_leave_id) {
+    void insertNotification(r.requester_id, `📩 ${dates}の休暇の種類のご案内は終了しました（有給休暇のままとなります）`, undefined, 'application_request:dismissed', r.id);
+    return null;
+  }
   void insertNotification(
     r.requester_id,
     `📩 ${APP_REQUEST_KIND_LABEL[r.kind] ?? r.kind}の申請依頼は「対応しない」と回答がありました`,

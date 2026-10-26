@@ -6,6 +6,9 @@ import { DateField } from './common/DateField';
 import { ERROR_BORDER, errorBg } from '../lib/formHighlight';
 import { primaryBtn, backBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 import { APP_REQUEST_OT_CONTENTS, APP_REQUEST_OT_CONTENT_LABEL, type AppRequestOtContent } from '../lib/appRequests';
+import { useAuth } from '../hooks/useAuth';
+import { isReplaceableLeave, leaveDatesOf, leaveReplaceBlockFor, leaveChangeText, mdDowShort, type ReplaceableLeave } from '../lib/leaveReplace';
+import LeaveKindGuideCard from './LeaveKindGuideCard';
 
 // 上長がスタッフに「この内容で申請してください」と依頼するシート（2026-09-09 ユーザー確定）。
 //
@@ -195,6 +198,36 @@ const ApplicationRequestSheet: React.FC<Props> = ({
     return () => { alive = false; };
   }, [kind, recipientId, datesKey]);
 
+  // 休暇の種類のご案内（2026-10-27 段2a・lib/leaveReplace）。時間外調整休の依頼で、その日にご本人の有休があるとき、
+  // 「この有休を、時間外調整休に変更できることをご本人に案内する」にできる（権限「休暇の種類のご案内」の人だけ・DB も同じ権限を見る）。
+  // 🚨 文言は 2026-10-27 ユーザー確定（法律の専門家のレビューのあと）。ご本人には components/LeaveKindGuideCard が出る
+  const { canLeaveTypeChange } = useAuth();
+  const [replaceLeave, setReplaceLeave] = useState<ReplaceableLeave | null>(null);
+  const [replaceBlock, setReplaceBlock] = useState<string | null>(null);
+  const [replaceOn, setReplaceOn] = useState(true);
+  useEffect(() => {
+    setReplaceLeave(null); setReplaceBlock(null);
+    if (!canLeaveTypeChange || kind !== 'overtime' || otContent !== 'chosei_off' || !recipientId || filledDates.length !== 1) return;
+    const d = filledDates[0];
+    let alive = true;
+    (async () => {
+      const { data, error: e } = await supabase.from('leave_requests')
+        .select('id, leave_type, status, reason, leave_dates')
+        .eq('user_id', recipientId).not('status', 'in', '(rejected,cancelled)')
+        .lte('start_date', d).gte('end_date', d);
+      if (e || !data || !alive) return;
+      const hit = (data as ReplaceableLeave[]).find(l => isReplaceableLeave(l) && leaveDatesOf(l).includes(d));
+      if (!hit) return;
+      setReplaceLeave(hit);
+      setReplaceOn(true);
+      const b = await leaveReplaceBlockFor(hit.id, recipientId, d);
+      if (alive) setReplaceBlock(b);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canLeaveTypeChange, kind, otContent, recipientId, datesKey]);
+  const replacing = !!replaceLeave && replaceOn && !replaceBlock;
+
   const validate = (): string => {
     const bad = new Set<string>();
     if (!kind) { bad.add('kind'); }
@@ -220,16 +253,17 @@ const ApplicationRequestSheet: React.FC<Props> = ({
       recipient_id: recipientId,
       kind,
       target_dates: filledDates,
-      memo: memo.trim() || null,
-      due_date: dueDate || null,
-      consulted_on: consultedOn || null,
+      memo: replacing ? null : (memo.trim() || null),
+      due_date: replacing ? null : (dueDate || null),   // 休暇の種類のご案内に期限は付けない（DB も消す）
+      consulted_on: replacing ? null : (consultedOn || null),
       ot_content: kind === 'overtime' ? otContent : null,
+      ...(replacing && replaceLeave ? { replaces_leave_id: replaceLeave.id } : {}),
     }).select('id').single();
     if (err) {
       setSubmitting(false);
       setShowConfirm(false);
       // 🚨 「通信を確認してください」で握りつぶさない。理由をそのまま出す
-      setError('送信できませんでした：' + err.message);
+      setError(leaveChangeText(err) ?? ('送信できませんでした：' + err.message));
       return;
     }
 
@@ -243,8 +277,10 @@ const ApplicationRequestSheet: React.FC<Props> = ({
     const contentLabel = kind === 'overtime' && otContent && otContent !== 'time' && otContent !== 'self' ? `（${APP_REQUEST_OT_CONTENT_LABEL[otContent]}）` : '';
     await insertNotification(
       recipientId,
-      `📩 ${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${contentLabel}${dueLabel}`,
-      memo.trim() || undefined,
+      // 休暇の種類のご案内は、案内であることが分かる文（2026-10-27 ユーザー確定：日付と上長の名前を入れる）
+      replacing ? `📩 休暇の種類のご案内（${mdDowShort(filledDates[0])}・${requesterName}さんから）`
+        : `📩 ${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${contentLabel}${dueLabel}`,
+      replacing ? undefined : (memo.trim() || undefined),
       eventKey,
       data.id,
       eventKey,
@@ -433,8 +469,26 @@ const ApplicationRequestSheet: React.FC<Props> = ({
             この日の依頼を出しても、「未申請」のまま残ります。
           </div>
         )}
+        {/* 休暇の種類のご案内（2026-10-27 段2a・文言はユーザー確定） */}
+        {replaceLeave && (
+          <div style={{ margin: '-6px 0 14px', padding: '9px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.7, textAlign: 'left',
+            background: isDark ? '#3d3520' : '#fff3cd', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe0a3'}`, color: isDark ? '#ffd54f' : '#856404' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', cursor: replaceBlock ? 'default' : 'pointer' }}>
+              <input type="checkbox" checked={replacing} disabled={!!replaceBlock} onChange={e => setReplaceOn(e.target.checked)} style={{ marginTop: 4 }} />
+              <span style={{ fontWeight: 'bold' }}>この有休を、時間外調整休に変更できることをご本人に案内する</span>
+            </label>
+            {/* 2026-10-27 ユーザー確定（労働基準法で不当にならないように・依頼ではなく案内） */}
+            <div style={{ marginTop: 4 }}>・これは変更の依頼ではなく、ご案内です。選ぶのはご本人です。</div>
+            <div>・時間外調整休に変更すると、ご本人の残業時間が減り、残業代も少なくなります。</div>
+            <div>・有給休暇のままとされても、不利益な取扱いをすることはできません。</div>
+            <div>・同じ日の案内は1回限りです。</div>
+            {replaceBlock && <div style={{ marginTop: 4, color: '#c62828' }}>{replaceBlock}</div>}
+          </div>
+        )}
 
-        {/* 相談した日（任意）。メモ（相談で聞いた内容）のすぐ上に置く＝相談まわりをまとめる */}
+        {/* 相談した日（任意）。メモ（相談で聞いた内容）のすぐ上に置く＝相談まわりをまとめる。
+            🚨 休暇の種類のご案内では、相談した日・メモ・期限は出さない（ご本人のカードは数字だけ・2026-10-27 ユーザー確定） */}
+        {!replacing && (<>
         <div style={{ marginBottom: 14 }}>
           <span style={label}>相談した日（任意）</span>
           <DateField value={consultedOn} onChange={setConsultedOn} isDark={isDark} placeholder="指定しない" />
@@ -447,12 +501,15 @@ const ApplicationRequestSheet: React.FC<Props> = ({
             placeholder={MEMO_PLACEHOLDER[kind]}
             style={{ ...field(false), resize: 'vertical', lineHeight: 1.6 }} />
         </div>
+        </>)}
 
-        {/* 期限 */}
+        {/* 期限。🚨 休暇の種類のご案内には期限を付けない（回答しなければ有給休暇のまま・法律の専門家のレビュー）＝出さない */}
+        {!replacing && (
         <div style={{ marginBottom: 16 }}>
           <span style={label}>いつまでに申請してほしいか（任意）</span>
           <DateField value={dueDate} onChange={setDueDate} isDark={isDark} placeholder="指定しない" />
         </div>
+        )}
 
         </>)}
 
@@ -464,12 +521,23 @@ const ApplicationRequestSheet: React.FC<Props> = ({
         {showConfirm ? (
           <div ref={confirmBoxRef} style={{ padding: '12px 14px', borderRadius: 10, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, marginBottom: 10 }}>
             <p style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
+              {replacing ? (
+                // 休暇の種類のご案内（2026-10-27 段2a）。依頼ではなく案内の文にそろえる
+                <>{recipient?.name}さんに、{mdDowShort(filledDates[0])}の有休を時間外調整休に変更できることを案内します。<br />ご本人には、次のカードが届きます。</>
+              ) : (<>
               {recipient?.name}さんに、{kind ? KIND_LABEL[kind] : ''}の申請をお願いします。<br />
               {kind === 'overtime' && otContent && <>申請内容：{APP_REQUEST_OT_CONTENT_LABEL[otContent]}<br /></>}
               対象日：{filledDates.map(d => d.slice(5).replace('-', '/')).join('・')}
-              {dueDate && <><br />申請期限：{dueDate.slice(5).replace('-', '/')}</>}
+              </>)}
+              {!replacing && dueDate && <><br />申請期限：{dueDate.slice(5).replace('-', '/')}</>}
               <br />相手にお知らせが届きます。
             </p>
+            {/* 送る前に、ご本人に届く実際のカードを見せる（2026-10-27 ユーザー確定・ボタンは押せない見本） */}
+            {replacing && replaceLeave && (
+              <LeaveKindGuideCard preview isDark={isDark} userId={recipientId}
+                r={{ id: 'preview', requester_id: requesterId, requester_name: requesterName, kind: 'overtime', target_dates: [filledDates[0]], memo: null, due_date: null, status: 'open', consulted_on: null, segments: null, ot_content: 'chosei_off', replaces_leave_id: replaceLeave.id }}
+                onStart={() => {}} onKept={() => {}} onError={() => {}} />
+            )}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowConfirm(false)} disabled={submitting}
                 style={{ ...backBtn(isDark), flex: 1 }}>
@@ -477,7 +545,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
               </button>
               <button onClick={submit} disabled={submitting}
                 style={{ ...primaryBtn({ disabled: submitting }), flex: 2 }}>
-                {submitting ? '送信中…' : 'この内容で依頼する'}
+                {submitting ? '送信中…' : (replacing ? 'この内容で案内する' : 'この内容で依頼する')}
               </button>
             </div>
           </div>

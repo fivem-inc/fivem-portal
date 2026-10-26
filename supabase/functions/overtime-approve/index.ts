@@ -80,7 +80,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey, { global: { headers: { 'x-actor-id': caller.id } } })
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at, furikae_change_requested_at, furikae_change_reason, furikae_change_location')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at, furikae_change_requested_at, furikae_change_reason, furikae_change_location, replaces_leave_id')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -275,6 +275,11 @@ serve(async (req) => {
         }
       }
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では受理できません' }, 409)
+      // 有休からの変更（2026-10-27 段2a）：受理と同じ取引で有休を取り消す（DB の apply_leave_replacement）。
+      // 🚨 給与計算が始まった期間（支給月の17日以降）は、上長の受理で給与の数字を変えない＝管理者だけ（振替休日の変更と同じ）
+      if (r.replaces_leave_id && !isAdmin && payClose().afterCutoff) {
+        return json({ success: false, error: '給与計算が始まっているため（毎月17日以降）、変更の受理は管理者が行います' }, 403)
+      }
       // 振替元の日に勤務しなかった連絡がある振替休日は受理しない（受理すると働いた時間として確定してしまう・段5で取消か切り替えを選ぶ）
       if (r.furikae_not_worked_at) {
         return json({ success: false, error: '振替元の日に勤務しなかったと連絡がある申請です。受理ではなく、取り消すか休みの種類を切り替えてください' }, 409)
@@ -682,6 +687,36 @@ serve(async (req) => {
       } catch (e) {
         gcalOk = false
         gcalError = e instanceof Error ? e.message : String(e)
+      }
+    }
+
+    // 有休からの変更が受理されたら、有休の予定を直す（2026-10-27 段2a）。取り消し＝消す／1日だけ抜いた＝消してから残りの日で作り直す
+    // 🚨 共用の gcal-sync は変えない（delete と upsert を順に呼ぶだけ）。作り直すのはカレンダーに出る段（マネージャーの受理から）だけ
+    if (action === 'approve' && r.replaces_leave_id && !r.furikae_change_requested_at) {
+      try {
+        const { data: lv } = await db.from('leave_requests').select('id, user_id, status, leave_type, leave_dates, leave_locations').eq('id', r.replaces_leave_id).maybeSingle()
+        const call = async (body: Record<string, unknown>) => {
+          const res3 = await fetch(`${supabaseUrl}/functions/v1/gcal-sync`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+          const d3 = await res3.json()
+          if (!res3.ok || d3?.success === false) throw new Error(d3?.error ?? `status=${res3.status}`)
+        }
+        if (lv) {
+          await call({ action: 'delete', source_type: 'leave', source_id: lv.id, dates: [String(r.work_date)] })
+          const rest = (() => { try { return JSON.parse(String(lv.leave_dates ?? '[]')) as string[] } catch { return [] as string[] } })()
+          if (['manager_approved', 'admin_approved', 'approved'].includes(String(lv.status)) && rest.length > 0) {
+            let locations: Record<string, string> = {}
+            try { locations = JSON.parse(String(lv.leave_locations ?? '{}')) } catch { locations = {} }
+            await call({ action: 'upsert', source_type: 'leave', source_id: lv.id, dates: rest, name: applicantName, leave_type: lv.leave_type, locations })
+          }
+        }
+      } catch (e) {
+        gcalOk = false
+        gcalError = e instanceof Error ? e.message : String(e)
+        console.error('[overtime-approve] 有休の予定の直しに失敗:', gcalError)
       }
     }
 

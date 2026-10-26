@@ -14,9 +14,10 @@ export { dayOffConflictText } from './dayOffConflictText';
  * side='leave'   ：kind＝休暇の種類（有給休暇・調整休 など）。encouragement＝有休奨励日の回答か
  * 🚨 読めなかったときは null（送らせる）。最後は DB のトリガーが止めるので、ここで止め過ぎない
  */
-export async function checkDayOffConflict(dates: string[], side: 'overtime' | 'leave', kind: string, encouragement = false): Promise<string | null> {
+export async function checkDayOffConflict(dates: string[], side: 'overtime' | 'leave', kind: string, encouragement = false, skipLeaveId?: string | null): Promise<string | null> {
   if (dates.length === 0 || !kind) return null;
-  const { data, error } = await supabase.rpc('my_day_off_conflict', { p_dates: dates, p_side: side, p_kind: kind, p_encouragement: encouragement });
+  // skipLeaveId：有休を時間外調整休に変える申請のとき、その有休は重なりに数えない（2026-10-27 段2a・DB も同じ）
+  const { data, error } = await supabase.rpc('my_day_off_conflict', { p_dates: dates, p_side: side, p_kind: kind, p_encouragement: encouragement, ...(skipLeaveId ? { p_skip_leave: skipLeaveId } : {}) });
   if (error) { console.error('[重なりの確かめ]', error.message); return null; }
   return typeof data === 'string' && data ? data : null;
 }

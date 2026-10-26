@@ -53,6 +53,8 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
   );
 };
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+import { isReplaceableLeave, leaveDatesOf, loadPendingReplacements, mdDowShort } from '../lib/leaveReplace';
 import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
 import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
@@ -368,6 +370,11 @@ const DateLocationPicker: React.FC<{
 // ---- メインコンポーネント ----
 const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess, canApproveTab = false, isAdmin = false, canShiftAdjust, canApplicationRequest = false, canPartFormSend = false }) => {
   const navigate = useNavigate();
+  // 有休を時間外調整休に変える（2026-10-27 段2a・lib/leaveReplace）。カードの［時間外調整休に変える］→ 残業ページの申請（?replace_leave=&date=）。
+  // 🚨 残業申請を使えない方（パートなど）には出さない。止めるのは DB（変えられない有休・締め・奨励日）
+  const { canOvertime } = useAuth();
+  const [replaceChooseFor, setReplaceChooseFor] = useState<string | null>(null);
+  const [pendingReplace, setPendingReplace] = useState<Map<string, Set<string>>>(new Map());
   // 時間調整・調整休を残業申請にまとめる区切りの日（2026-10-13・10/16 から）。null＝今までどおり
   const unifyCutoff = useOvertimeUnifyCutoff();
   const unifyMovedNow = !!unifyCutoff && todayJstStr() >= unifyCutoff;
@@ -655,6 +662,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   useEffect(() => {
     if (tab !== 'history') return;
+    // 受理の前の「有休からの変更」の申請（カードの［時間外調整休に変える］を隠し、申請中と出すため）
+    if (canOvertime) void loadPendingReplacements(user.id).then(setPendingReplace);
     const fetchHistory = async () => {
       setLoadingHistory(true);
       const { data, error } = await supabase
@@ -2269,6 +2278,33 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {cancelErrFor?.id === req.id && (
                       <div style={{ marginTop: 8, fontSize: 12.5, color: '#842029', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6, padding: '6px 10px' }}>⚠️ {cancelErrFor.msg}</div>
                     )}
+                    {/* 休暇の種類を変える（2026-10-26 ユーザー確定 案2・薄い青の枠）。有休・バースデー休暇だけ・残業申請を使える方だけ */}
+                    {canOvertime && isReplaceableLeave(req) && (() => {
+                      const pend = pendingReplace.get(req.id) ?? new Set<string>();
+                      const days = leaveDatesOf(req).filter(d => !pend.has(d));
+                      const go = (d: string) => navigate(`/overtime?replace_leave=${req.id}&date=${d}`);
+                      return (
+                        <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, textAlign: 'left', background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}` }}>
+                          <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: days.length > 0 ? 6 : 0 }}>休暇の種類を変える（マネージャーに申請）</div>
+                          {[...pend].sort().map(d => (
+                            <div key={d} style={{ fontSize: 12, color: isDark ? '#dee2e6' : '#0d47a1', marginBottom: 4 }}>{mdDowShort(d)}は、時間外調整休への変更を申請中です</div>
+                          ))}
+                          {days.length > 0 && (replaceChooseFor === req.id && days.length > 1 ? (
+                            <>
+                              <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: 4 }}>どの日を変えますか？</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {days.map(d => (
+                                  <button key={d} type="button" onClick={() => go(d)} style={{ ...changeBtnStyle, padding: '4px 10px' }}>{mdDowShort(d)}</button>
+                                ))}
+                                <button type="button" onClick={() => setReplaceChooseFor(null)} style={{ ...cancelBtnStyle, padding: '4px 10px' }}>やめる</button>
+                              </div>
+                            </>
+                          ) : (
+                            <button type="button" onClick={() => (days.length === 1 ? go(days[0]) : setReplaceChooseFor(req.id))} style={changeBtnStyle}>時間外調整休に変える</button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {/* 🐛 依頼中は状態が変わっても（差し戻しなど）バッジと［依頼を取り下げる］を出す（2026-10-26 不具合4・残業と同じ） */}
                     {(['step2_pending', 'manager_approved', 'admin_approved', 'approved'].includes(req.status) || corrections.get(req.id)?.status === 'open') && (
                       <>

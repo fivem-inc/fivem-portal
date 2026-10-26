@@ -449,6 +449,8 @@ export interface RecordInput {
   shiftNeeded?: boolean;
   /** 出張報告から作った申請の日（2026-10-14・表示だけ）。undefined のときは触らない（送り直し・実績報告で消さない） */
   fromTripDate?: string | null;
+  /** 有休を時間外調整休に変える申請のとき、変える休暇（2026-10-27 段2a・lib/leaveReplace）。新しく出すときだけ。受理された瞬間に DB がその日の有休を取り消す */
+  replacesLeaveId?: string | null;
   /** 振替元の日がまだ来ていない振替休日を新しく出す（切り替えオン・2026-10-26）＝自己受理でも「事前申請 受理済み」で入れる */
   furikaePending?: boolean;
   /** 振替休日の振替元の実績報告（lib/furikaeReport）＝自己受理は確定・上長あては実績の確認待ち */
@@ -520,6 +522,8 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
     modified_from_id: v.modifiedFromId,
     ...(v.fromTripDate !== undefined ? { from_trip_date: v.fromTripDate } : {}),
+    // 有休からの変更（2026-10-27 段2a）。🚨 新しく出すときだけ入れる（あとから変えると DB が止める）
+    ...(v.replacesLeaveId ? { replaces_leave_id: v.replacesLeaveId, replaces_leave_date: v.date } : {}),
     // 🚨 振替元の日がまだ来ていない振替休日の自己受理は「確定」ではなく事前受理（下の request_confirmed_at）
     ...((isSelfReview || isPureZero) && !(fullDayMode && v.furikaePending) ? { confirmed_by: v.userId, confirmed_at: v.nowIso } : {}),
     ...((fullDayMode && v.furikaePending && isSelfReview) ? { request_confirmed_at: v.nowIso, confirmed_by: null, confirmed_at: null } : {}),

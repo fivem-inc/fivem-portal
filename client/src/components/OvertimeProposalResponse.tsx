@@ -12,6 +12,9 @@ import { describeUpdate, describePartial } from '../lib/statusUpdate';
 import type { CalendarKind } from '../lib/breakCalc';
 import { buildTimeAdjustReport, resolveNormalShift } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
+import { computeBalance, type BalanceRow } from '../lib/overtimeBalance';
+import { todayJstStr } from '../lib/breakCalc';
+import { mdDowLong } from '../lib/leaveReplace';
 
 // 残業調整 提案の回答画面（第1段：時間調整のみ）。
 // 通知バナー → /overtime?proposal=<id> から開く。
@@ -105,12 +108,19 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           const { data: ex } = await supabase.from('overtime_reports').select('work_date').eq('applicant_id', prop.recipient_id).eq('pay_period_start', prop.pay_period_start).neq('status', 'cancelled');
           setExistingDates(new Set(((ex as { work_date: string }[] | null) ?? []).map(r => r.work_date)));
         }
+        // 今の残業時間（2026-10-27 ユーザー確定：有休の「休暇の種類のご案内」と同じく、事実の数字を出す）。読めなければ表を出さない
+        const { data: bal, error: balErr } = await supabase.from('overtime_reports')
+          .select('pay_period_start, status, entry_type, work_date, diff_minutes, application_types')
+          .eq('applicant_id', prop.recipient_id).eq('pay_period_start', prop.pay_period_start);
+        if (balErr) console.error('[残業調整のご提案] 残業時間を読めませんでした', balErr.message);
+        else if (alive) setBalRows((bal ?? []) as BalanceRow[]);
       }
       setLoading(false);
     })();
     return () => { alive = false; };
   }, [proposalId, currentUserId]);
 
+  const [balRows, setBalRows] = useState<BalanceRow[] | null>(null);
   const isRecipient = proposal?.recipient_id === currentUserId;
   const canRespond = isRecipient && proposal?.status === 'open';
 
@@ -314,7 +324,20 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
                 お疲れ様です。残業分の調整日についての相談です。下の候補から調整可能な日があれば選んでください（複数選択可）。提案日での調整が難しければ、「後日あらためて調整する」で問題ありません。
               </p>
               {proposal.remarks && <div style={{ marginBottom: 12, padding: '8px 12px', background: inputBg, borderRadius: 8, fontSize: 12.5, color: text }}>📝 {proposal.remarks}</div>}
-              {proposal.response_due_date && <p style={{ margin: '0 0 12px', fontSize: 12, color: subText }}>📅 {proposal.response_due_date} までにお返事をいただけると助かります（任意）</p>}
+              {/* 今の残業時間と、選んだ調整をした場合（2026-10-27 ユーザー確定）。確定の時間（見込みは入れない＝表を短く） */}
+              {balRows && (() => {
+                const total = computeBalance(balRows, proposal.pay_period_start).total;
+                const m = Number(proposal.pay_period_start.slice(5, 7));
+                const hm = (min: number) => `${min < 0 ? '−' : ''}${Math.floor(Math.abs(min) / 60)}時間${String(Math.abs(min) % 60).padStart(2, '0')}分`;
+                return (
+                  <div style={{ marginBottom: 12, padding: '6px 10px', background: inputBg, borderRadius: 8, fontSize: 12.5, color: text }}>
+                    <div style={{ fontSize: 12, color: subText, marginBottom: 2 }}>{mdDowLong(todayJstStr())}時点</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: `1px solid ${border}` }}><span>残業時間（{m}/16〜{m === 12 ? 1 : m + 1}/15）</span><b>{hm(total)}</b></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}><span>選んだ調整をした場合</span><b>{hm(total - chosenTotal)}</b></div>
+                  </div>
+                );
+              })()}
+              {proposal.response_due_date && <p style={{ margin: '0 0 12px', fontSize: 12, color: subText }}>📅 {Number(proposal.response_due_date.slice(5, 7))}/{Number(proposal.response_due_date.slice(8, 10))} までにお返事をお願いいたします。</p>}
 
               {options.map(o => {
                 const pk = picks[o.id]; if (!pk) return null;

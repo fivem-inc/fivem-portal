@@ -90,6 +90,8 @@ const FEATURES = [
   //    ここも同じ役職をONにすること。片方だけだと「通知は届くのに履歴が空」になる
   { key: 'trip_report_history', icon: '📋', label: '出張報告の履歴閲覧', note: '全員分の報告を見られる役職', group: '申請・精算' as FeatureGroup, bySuperior: true },
   { key: 'application_request', icon: '📩', label: '申請の依頼', note: '残業・休暇の申請をスタッフに依頼できる役職', group: '申請・精算' as FeatureGroup, bySuperior: true },
+  // 2026-10-27 段2a：DB（enforce_appreq_leave_replace）も同じ権限を見る。最初はマネージャー・社長・管理者だけ ON
+  { key: 'leave_type_change', icon: '🔁', label: '休暇の種類のご案内', note: '申請の依頼で、有休を時間外調整休に変更できることをご本人に案内できる役職（「申請の依頼」も ON の役職だけ使えます）', group: '申請・精算' as FeatureGroup, bySuperior: true },
 
   // ── 連絡・情報 ──
   { key: 'board',           icon: '💬', label: '連絡板',         note: '', group: '連絡・情報' as FeatureGroup, bySuperior: false },
