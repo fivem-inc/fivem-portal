@@ -11,7 +11,7 @@ import {
 } from '../../lib/breakCalc';
 import type { CalendarKind } from '../../lib/breakCalc';
 import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
-import { normalShiftTimeText } from '../../lib/overtimeShift';
+import { normalShiftTimeText, type NormalShiftSnapshot } from '../../lib/overtimeShift';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
@@ -38,6 +38,7 @@ import ListSortBar from './ListSortBar';
 import { onRowPick, pickedRowBg } from '../../lib/rowPick';
 import OvertimePayrollSheet from './OvertimePayrollSheet';
 import { recordPayrollCheck } from '../../lib/payrollCheckMark';
+import { evalFurikaeChange, type FurikaeChangePlan } from '../../lib/furikaeChange';
 
 // 言葉はスタッフの画面（lib/overtimeStatus の STATUS_INFO）と同じものを使う（2026-10-13 ユーザー確定）。
 // 🚨 ここに言葉を書き写さない。色だけ管理画面の今の色のまま
@@ -330,6 +331,9 @@ const OvertimeAdminTab: React.FC = () => {
   const [otProxyErr, setOtProxyErr] = useState('');
   const [otApprovedMap, setOtApprovedMap] = useState<Record<string, ApprovedLine[]>>({});
   const [otReviewerMap, setOtReviewerMap] = useState<Record<string, { id: string; name: string } | null>>({});
+  // 振替休日の変更（休む日を出勤に）の依頼中の中身（2026-10-28・［代わりに受理］の窓に出す。OvertimeRecord 型を広げずに別の表で持つ）
+  type OtFurikaeChange = { reason: string | null; location: string | null; plan: FurikaeChangePlan | null; originStart: string | null; originEnd: string | null; originLabor: number | null };
+  const [otFcMap, setOtFcMap] = useState<Record<string, OtFurikaeChange>>({});
   const [otActing, setOtActing] = useState(false);
   // 絞り込み・並べ替え（休暇申請タブと同じ操作感）
   const [otFilterStatus, setOtFilterStatus] = useState<'all' | 'pending' | 'done' | 'returned' | 'cancelled'>('all');
@@ -372,13 +376,15 @@ const OvertimeAdminTab: React.FC = () => {
     const from = otLoadFrom(otLoadRange);
     type Row = { id: string; applicant_id: string; reviewer_id: string | null; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null; is_post_hoc: boolean; show_on_calendar: boolean | null; late_situation: string | null; early_situation: string | null;
       from_trip_date: string | null; trip_review_reason: string | null; shift_adjust_needed: boolean;
+      furikae_change_requested_at: string | null; furikae_change_reason: string | null; furikae_change_location: string | null; furikae_change_plan: FurikaeChangePlan | null;
+      furikae_origin_start: string | null; furikae_origin_end: string | null; furikae_origin_labor_minutes: number | null;
       confirmed_by: string | null; request_confirmed_at: string | null;
       segments: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[] | null;
       hist: { change_kind: string | null; change_summary: string | null }[] | null };
     const rows: Row[] = [];
     for (let off = 0; ; off += 1000) {
       let q = supabase.from('overtime_reports')
-        .select('id, applicant_id, reviewer_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, confirmed_by, request_confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, from_trip_date, trip_review_reason, shift_adjust_needed, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
+        .select('id, applicant_id, reviewer_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, confirmed_by, request_confirmed_at, change_reason, is_post_hoc, show_on_calendar, late_situation, early_situation, from_trip_date, trip_review_reason, shift_adjust_needed, furikae_change_requested_at, furikae_change_reason, furikae_change_location, furikae_change_plan, furikae_origin_start, furikae_origin_end, furikae_origin_labor_minutes, segments:overtime_report_segments(phase, seg_no, start_min, end_min), hist:overtime_report_history(change_kind, change_summary)')
         .eq('entry_type', 'manual');
       if (from) q = q.gte('work_date', from);
       const { data, error } = await q.order('work_date', { ascending: false }).order('id').range(off, off + 999);
@@ -418,6 +424,9 @@ const OvertimeAdminTab: React.FC = () => {
     setOtStatusMap(statusMap);
     setOtPartialMap(Object.fromEntries(rows.map(r => [r.id, { request_confirmed_at: r.request_confirmed_at, shift_adjust_needed: r.shift_adjust_needed }])));
     setOtCalMap(calMap);
+    setOtFcMap(Object.fromEntries(rows.filter(r => r.furikae_change_requested_at && r.status !== 'cancelled').map(r => [r.id, {
+      reason: r.furikae_change_reason, location: r.furikae_change_location, plan: r.furikae_change_plan,
+      originStart: r.furikae_origin_start, originEnd: r.furikae_origin_end, originLabor: r.furikae_origin_labor_minutes }])));
     setOtReviewerMap(Object.fromEntries(rows.map(r => [r.id, r.reviewer_id ? { id: r.reviewer_id, name: nameMap[r.reviewer_id] || '不明' } : null])));
     // 誰がいつ受理したか（2026-10-17 ユーザー確定・状況の札の下に出す）。
     // 🚨 事前申請の受理は「誰が」を記録していない（request_confirmed_at だけ）ので申請先（reviewer_id）を出す。
@@ -511,16 +520,28 @@ const OvertimeAdminTab: React.FC = () => {
 
   // 経理が代わりに受理する（2026-10-14 ユーザー確定）。受理は overtime-approve（上長が受理するときと同じ処理）に on_behalf を付けて呼ぶ。
   // サーバーが ①受理 ②本人へいつもの受理のお知らせ ③履歴に「経理が代わりに受理」 ④元の申請先へベル（スマホなし）をまとめて行う
+  /** 振替休日の変更の休む日の申請の中身（lib/furikaeChange・時間や場所が違うときだけ） */
+  const otFcEv = (r: OvertimeRecord) => { const fc = otFcMap[r.id]; return fc?.plan ? evalFurikaeChange(r.normal_shift as NormalShiftSnapshot | null, fc.plan).ev : null; };
+  /** 振替休日の変更の受理で「シフト調整」を出すか（遅出・早退・勤務地変更を含む・今日以降）。🚨 Edge Function・DB の furikae_change_apply と同じ条件 */
+  const otFcShiftCase = (r: OvertimeRecord): boolean => {
+    const fc = otFcMap[r.id];
+    if (!fc || r.work_date < todayJstStr()) return false;
+    if (fc.plan) { const ev = otFcEv(r); return !!ev && isPartialShiftCase(ev.types); }
+    return !!fc.location;
+  };
   const doOtProxyApprove = async () => {
     const r = otProxyTarget;
     if (!r) return;
+    // 振替休日の変更（休む日を出勤に）の依頼：中身を窓に出したので plan_seen を付ける（付けないと Edge Function が「画面が古い」で断る・2026-10-28）
+    const fc = otFcMap[r.id];
     // 🚨 シフト調整を選ぶのは終日の事前の受理だけ（振替休日の振替元の実績の確定では選ばない・2026-10-26）
-    const fullDay = isFullDayReport(r.application_types) && otStatusMap[r.id] === 'requested';
+    const fullDay = !fc && isFullDayReport(r.application_types) && otStatusMap[r.id] === 'requested';
     if (fullDay && !otProxyShift) { setOtProxyErr('シフト調整が必要かどうかを選んでください'); return; }
     setOtActing(true); setOtProxyErr('');
-    const partialCase = otStatusMap[r.id] === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr();
+    const partialCase = fc ? otFcShiftCase(r) : otStatusMap[r.id] === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr();
     const { data, error } = await supabase.functions.invoke('overtime-approve', {
       body: { report_id: r.id, action: 'approve', on_behalf: true, shift_not_needed: fullDay ? otProxyShift === 'not_needed' : undefined,
+        ...(fc ? { plan_seen: true } : {}),
         // 🚨 「必要」を選んだときだけ送る（2026-10-20）
         ...(partialCase && otProxyPartialNeeded ? { shift_needed: true } : {}) },
     });
@@ -1612,6 +1633,8 @@ const OvertimeAdminTab: React.FC = () => {
             const when = fullDay ? '終日' : phaseSegs.map(g => `${minToTime(g.start_min)}〜${minToTime(g.end_min)}`).join('、');
             const kind = (r.application_types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, r)).join('・');
             const someoneElse = !!rv && rv.id !== r.applicant_id;
+            const fc = otFcMap[r.id];
+            const fev = fc ? otFcEv(r) : null;
             const toggle = (v: 'needed' | 'not_needed', l: string) => (
               <button key={v} type="button" onClick={() => { setOtProxyShift(v); setOtProxyErr(''); }}
                 style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13,
@@ -1628,20 +1651,38 @@ const OvertimeAdminTab: React.FC = () => {
                     {r.work_date.slice(5).replace('-', '/')}（{dowLabelOt(r.work_date)}）{' '}{r.applicantName}さん<br />
                     {kind} {when} ・{STATUS_INFO[st as keyof typeof STATUS_INFO]?.label ?? st}
                   </div>
+                  {/* 振替休日の変更（休む日を出勤に）の依頼：上長の受理の画面と同じ中身を出す（2026-10-28） */}
+                  {fc && r.furikae_origin_date && (
+                    <div style={{ margin: '0 0 10px', padding: '10px 12px', borderRadius: 8, background: isDarkMode ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDarkMode ? '#4a90d9' : '#90caf9'}`, fontSize: 12.5, color: isDarkMode ? '#fff' : '#0d47a1', lineHeight: 1.7 }}>
+                      <b>振替休日の変更</b><br />
+                      休む日 {r.work_date.slice(5).replace('-', '/')}（{dowLabelOt(r.work_date)}）→ 出勤{fev
+                        ? `：${fev.types.filter(isOvertimeType).map(t => typeLabelFor(t, { late_situation: fc.plan?.late_choice, early_situation: fc.plan?.early_choice })).join('・')} ${fev.segments.map(x => `${minToTime(x.startMin)}〜${minToTime(x.endMin)}`).join(' ／ ')}（${fev.location}・通常シフトとの差 ${formatSignedMin(fev.diffMin)}）${r.work_date < todayJstStr() ? '・休む日が過ぎているため、実績として記録されます' : ''}`
+                        : fc.location ? `（勤務地：${fc.location}）` : '（いつもどおり）'}<br />
+                      振替元 {r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabelOt(r.furikae_origin_date)}）→ 休日出勤{fc.originStart ? `（${fc.originStart.slice(0, 5)}〜${(fc.originEnd ?? '').slice(0, 5)}）` : ''}<br />
+                      合計時間数 {formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin((fc.originLabor ?? 0) + (fev?.diffMin ?? 0))}<br />
+                      理由：{fc.reason ?? ''}
+                    </div>
+                  )}
                   <div style={{ fontSize: 12.5, color: subText, marginBottom: 12, lineHeight: 1.7 }}>
-                    受理すると、{r.applicantName}さんには「受理されました」{someoneElse ? <>、{rv!.name}さんには「経理が代わりに受理しました」</> : ''}とベルでお知らせします。
+                    {fc ? <>受理すると、振替休日が取り消され、振替元の日は休日出勤になります。{r.applicantName}さんには「振替休日の変更が受理されました」とベルでお知らせします。</>
+                      : <>受理すると、{r.applicantName}さんには「受理されました」{someoneElse ? <>、{rv!.name}さんには「経理が代わりに受理しました」</> : ''}とベルでお知らせします。</>}
                   </div>
-                  {fullDay && st === 'requested' && (
+                  {fullDay && st === 'requested' && !fc && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ fontSize: 12.5, color: text, marginBottom: 6 }}>シフト調整</div>
                       <div style={{ display: 'flex', gap: 6 }}>{toggle('needed', '必要')}{toggle('not_needed', '調整不要')}</div>
                     </div>
                   )}
                   {/* 遅出・早退・勤務地変更の事前申請：いつもの校の代わりが要るか（2026-10-20・初めは調整不要） */}
-                  {st === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr() && (
+                  {!fc && st === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr() && (
                     <ShiftAdjustChoice notNeeded={!otProxyPartialNeeded} onChange={nn => setOtProxyPartialNeeded(!nn)} isDark={isDarkMode}
                       detail={[partialCoverLabel(partialCover(r.application_types ?? [], r.normal_shift,
                         r.segments.filter(g => g.phase === 'planned').map(g => ({ startMin: g.start_min, endMin: g.end_min })), r.location ?? '')), 'いない時間'].filter(Boolean).join(' ')}
+                      note={PARTIAL_SHIFT_NOTE} />
+                  )}
+                  {fc && otFcShiftCase(r) && (
+                    <ShiftAdjustChoice notNeeded={!otProxyPartialNeeded} onChange={nn => setOtProxyPartialNeeded(!nn)} isDark={isDarkMode}
+                      detail={[fev ? partialCoverLabel(partialCover(fev.types, r.normal_shift, fev.segments, fev.location)) : '', 'いない時間'].filter(Boolean).join(' ')}
                       note={PARTIAL_SHIFT_NOTE} />
                   )}
                   {otProxyErr && <div style={{ fontSize: 12.5, color: '#dc3545', marginBottom: 10 }}>{otProxyErr}</div>}

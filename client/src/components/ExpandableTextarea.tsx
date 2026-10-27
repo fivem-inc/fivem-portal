@@ -75,10 +75,16 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
     if (!el) return;
     if (!value) { el.style.height = ''; return; }
     const prev = el.offsetHeight;
+    // 🚨 高さを一度 auto に縮めると、欄の中と画面の位置が一番上に戻る（iPhone で打っている所が見えなくなり、
+    //    画面もずれた・2026-10-28 実機の動画）。計り直したあと、元の位置に戻す
+    const innerTop = el.scrollTop;
+    const pageY = window.scrollY;
     el.style.height = 'auto';
     const need = Math.min(el.scrollHeight + 2, limit);
     // 🚨 縮めないのは「打つたび」だけ。上限より大きくはしない（窓を小さくした・上限が下がったときも上限に収める）
     el.style.height = `${Math.min(Math.max(need, prev), limit)}px`;
+    el.scrollTop = innerTop;
+    if (window.scrollY !== pageY) window.scrollTo(window.scrollX, pageY);
   }, [value, limit]);
 
   useEffect(() => {

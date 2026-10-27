@@ -2612,13 +2612,16 @@ const BoardPage: React.FC = () => {
               wrapStyle={{ flex: 1, minWidth: 0 }}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
             />
+            {/* 🚨 onMouseDown の preventDefault：押したとき先に欄から抜けない（キーボードを閉じない）。iPhone ではキーボードが先に閉じて
+                画面がずれ、押した所が上の［テンプレートに保存］になっていた（2026-10-28 実機の動画）。送ったあとは欄が消えるのでキーボードも閉じる */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <button data-net="write" type="button" disabled={replySending || !(draftFor(g.partnerId) || '').trim()}
+                onMouseDown={e => e.preventDefault()}
                 onClick={() => void sendNoticeReply(notice, g.partnerId, draftFor(g.partnerId) || '')}
                 style={{ padding: '6px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: replySending || !(draftFor(g.partnerId) || '').trim() ? 0.5 : 1 }}>
                 {replySending ? '送信中...' : '送信'}
               </button>
-              <button type="button" onClick={() => { setReplyDraft(null); setReplyErr(''); }}
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setReplyDraft(null); setReplyErr(''); }}
                 style={{ padding: '6px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12 }}>
                 やめる
               </button>
