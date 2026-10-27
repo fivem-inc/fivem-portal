@@ -8,6 +8,8 @@ import { useLocation } from 'react-router-dom';
  * ・右下を引っ張って広げられる（パソコン・スマホとも。パソコンはボタンを付けない＝ユーザー確定）。
  *   🚨 スマホは機種によって引っ張る印が出ない（iPhone など）ので、［⤢］を残す
  * ・スマホ：文字なしの［⤢］で全画面で書ける。［閉じる］で元の欄に戻る（書いた文はそのまま・送信は元の欄から）
+ * ・🚨 スマホは元の欄も16px（2026-10-27 ユーザー確定 案B）。iPhone は16pxより小さい欄を押すと画面を勝手に拡大し、
+ *   位置がずれて近くのボタン（お知らせの［テンプレートに保存］など）が押され、お知らせへの返信ができなかった。呼ぶ側の fontSize より優先する
  */
 interface Props {
   value: string;
@@ -98,7 +100,7 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
       <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', ...wrapStyle }}>
         <textarea ref={ref} value={value} rows={rows} placeholder={placeholder}
           onChange={e => onChange(e.target.value)} onKeyDown={onKeyDown}
-          style={{ ...style, flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto', maxHeight: limit }} />
+          style={{ ...style, ...(isMobile ? { fontSize: 16 } : null), flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto', maxHeight: limit }} />
         {(isMobile || onExpand) && (
           <button type="button" onClick={() => (onExpand ? onExpand() : setFull(true))} aria-label="大きく書く" title="大きく書く"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: isDark ? '#90caf9' : '#1976d2', fontSize: 16, lineHeight: 1, cursor: 'pointer', padding: 0 }}>⤢</button>
