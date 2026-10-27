@@ -65,7 +65,10 @@ serve(async (req) => {
     // shift_needed：遅出・早退・勤務地変更を事前申請の受理で「シフト調整：必要」にする（2026-10-20・docs/計画-遅出早退勤務地変更のシフト調整.md）。
     //   🚨 送られてこない（undefined）なら何もしない＝古い画面でも壊れない。true で条件に合わないときは黙って捨てずにエラーにする
     // change_location：振替休日の休む日を出勤に変えるとき、いつもと違う場所（在宅など）。空ならいつもどおり（2026-10-26 段6）
-    const { report_id, action, comment, shift_not_needed, on_behalf, shift_needed, change_location } = await req.json()
+    // change_plan：休む日の時間や場所が違うとき（2026-10-27）。入力だけ（segments [{start,end}] 分・location・late_choice・early_choice）。
+    //   休憩・労働・差分・種別は DB の furikae_change_eval が計算する（送られた計算の値は使わない）
+    // plan_seen：受理する人の画面が、休む日の時間の変更（change_plan）を出してから受理したか。古い画面（端末の写し）は送らない＝受理させない
+    const { report_id, action, comment, shift_not_needed, on_behalf, shift_needed, change_location, change_plan, plan_seen } = await req.json()
     // not_worked：振替休日の振替元の日に勤務しなかった（本人が［この日は勤務しませんでした］・2026-10-26 段5）
     // furikae_change：振替休日の休む日を出勤に変える依頼（振替元の休日出勤は残す・2026-10-26 段6）
     if (!report_id || !['approve', 'return', 'cancel', 'not_worked', 'furikae_change'].includes(action)) {
@@ -80,7 +83,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey, { global: { headers: { 'x-actor-id': caller.id } } })
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at, furikae_change_requested_at, furikae_change_reason, furikae_change_location, replaces_leave_id')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start, is_post_hoc, from_trip_date, furikae_report_needed, furikae_origin_date, furikae_not_worked_at, request_confirmed_at, furikae_change_requested_at, furikae_change_reason, furikae_change_location, furikae_change_plan, normal_shift, replaces_leave_id')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -146,11 +149,34 @@ serve(async (req) => {
         console.error('[overtime-approve] 振替休日の取消のお知らせに失敗:', e instanceof Error ? e.message : String(e))
       }
     }
+    // 「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者か（休暇の受理と同じ）
+    const canShiftAdjust = async (): Promise<boolean> => {
+      if (isAdmin) return true
+      const { data: me } = await db.from('profiles').select('role_id').eq('id', caller.id).maybeSingle()
+      if (!me?.role_id) return false
+      const { data: fp } = await db.from('feature_permissions').select('enabled')
+        .eq('role_id', me.role_id).eq('feature_key', 'leave_shift_adjust').maybeSingle()
+      return fp?.enabled === true
+    }
+    // 休む日の申請の中身の1行（お知らせ用）。種別の名前は lib/overtimeTypes の typeLabelFor と同じ
+    const TYPE_LABEL: Record<string, string> = { overtime: '残業', early_start: '早出', tardiness: '遅刻', early_leave: '早退',
+      location_change: '勤務地変更', late_start_adj: '調整遅出', early_end_adj: '調整早退' }
+    const SITUATION: Record<string, string> = { short_term: '短期・イベントなど', match: '練習・試合・遠征など', event: '会議・大掃除など', telework: '出張・在宅など' }
+    const hm = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`
+    const planLine = (ev: Record<string, unknown>): string => {
+      const ts = ((ev.types as string[]) ?? []).map(t =>
+        t === 'late_start_adj' && SITUATION[String(ev.late_situation)] ? `遅出(${SITUATION[String(ev.late_situation)]})`
+        : t === 'early_end_adj' && SITUATION[String(ev.early_situation)] ? `早退(${SITUATION[String(ev.early_situation)]})`
+        : (TYPE_LABEL[t] ?? t)).join('・')
+      const segs = ((ev.segs as number[][]) ?? []).map(([a, b]) => `${hm(a)}〜${hm(b)}`).join('／')
+      return `${ts} ${segs}（${String(ev.location ?? '')}）`
+    }
     // あとで Google カレンダーに同期し直す申請（変更で新しくできた休日出勤・勤務地変更）
     const extraSyncIds: string[] = []
-    // 振替休日の変更を当てる（DB の furikae_change_apply が 取消→休日出勤→勤務地変更 を1回で行う）
-    const applyFurikaeChange = async (): Promise<string | null> => {
-      const { data: res, error: aErr } = await db.rpc('furikae_change_apply', { p_id: r.id, p_actor: caller.id })
+    // 振替休日の変更を当てる（DB の furikae_change_apply が 取消→休日出勤→休む日の申請 を1回で行う）
+    // shiftNeeded：休む日の申請をシフト調整「必要」で作る（2026-10-27・呼ぶ前に権限を確かめる）
+    const applyFurikaeChange = async (shiftNeeded = false): Promise<string | null> => {
+      const { data: res, error: aErr } = await db.rpc('furikae_change_apply', { p_id: r.id, p_actor: caller.id, p_shift_needed: shiftNeeded })
       if (aErr) {
         const m = String(aErr.message ?? '')
         return m.includes('FURIKAE_CHANGE|') ? m.slice(m.indexOf('FURIKAE_CHANGE|') + 'FURIKAE_CHANGE|'.length) : '変更できませんでした: ' + m
@@ -200,7 +226,33 @@ serve(async (req) => {
       const why = String(comment ?? '').trim()
       if (!why) return json({ success: false, error: '理由を入力してください' }, 400)
       if (why.length > 200) return json({ success: false, error: '理由は200字までにしてください' }, 400)
-      const loc = String(change_location ?? '').trim().slice(0, 100)
+      let loc = String(change_location ?? '').trim().slice(0, 100)
+      // 時間や場所が違うとき（2026-10-27）：入力だけを受け取り、DB で計算できるか先に確かめる（できなければ印を付けずに止める）
+      let plan: Record<string, unknown> | null = null
+      let planEv: Record<string, unknown> | null = null
+      if (change_plan != null) {
+        const p = change_plan as { segments?: unknown; location?: unknown; late_choice?: unknown; early_choice?: unknown }
+        const segs = Array.isArray(p.segments) ? p.segments.slice(0, 3).map(x => ({
+          start: Number((x as { start?: unknown })?.start), end: Number((x as { end?: unknown })?.end) })) : []
+        if (segs.length === 0 || segs.some(x => !Number.isInteger(x.start) || !Number.isInteger(x.end))) {
+          return json({ success: false, error: '勤務時間の入力を確認してください' }, 400)
+        }
+        const ch = (v: unknown) => (typeof v === 'string' && v ? v.slice(0, 20) : null)
+        plan = { segments: segs, location: String(p.location ?? '').trim().slice(0, 100), late_choice: ch(p.late_choice), early_choice: ch(p.early_choice) }
+        const { data: ev, error: evErr } = await db.rpc('furikae_change_eval', { p_normal: r.normal_shift, p_plan: plan })
+        if (evErr) {
+          const m = String(evErr.message ?? '')
+          return json({ success: false, error: m.includes('FURIKAE_CHANGE|') ? m.slice(m.indexOf('FURIKAE_CHANGE|') + 'FURIKAE_CHANGE|'.length) : '内容を確かめられませんでした: ' + m }, 400)
+        }
+        planEv = (ev ?? {}) as Record<string, unknown>
+        // 場所の列は今までどおり「いつもと違う場所のときだけ」（お知らせ・古い画面の表示に使う）
+        loc = ((planEv.types as string[]) ?? []).includes('location_change') ? String(planEv.location ?? '') : ''
+      }
+      const selfReviewReq = !r.reviewer_id || r.reviewer_id === r.applicant_id
+      // 自己受理の方の「シフト調整：必要」（受理と同じく、シフト調整の権限がある方だけ）
+      if (shift_needed === true && (!selfReviewReq || !(await canShiftAdjust()))) {
+        return json({ success: false, error: 'シフト調整の「必要」を選べるのは、シフト調整の権限がある方だけです' }, 403)
+      }
       // 給与の締め（17日）を過ぎたら本人からは変えられない（取消と同じ）
       if (!isAdmin) {
         const [ppy, ppm] = String(r.pay_period_start ?? '').split('-').map(Number)
@@ -213,17 +265,16 @@ serve(async (req) => {
       }
       const { data: marked, error: mErr } = await db.from('overtime_reports')
         .update({ furikae_change_requested_at: new Date().toISOString(), furikae_change_requested_by: caller.id,
-          furikae_change_reason: why, furikae_change_location: loc || null })
+          furikae_change_reason: why, furikae_change_location: loc || null, furikae_change_plan: plan })
         .eq('id', r.id).eq('status', r.status).is('furikae_change_requested_at', null).select('id')
       if (mErr) return json({ success: false, error: '更新に失敗しました: ' + mErr.message }, 500)
       if (!marked || marked.length === 0) return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
-      const selfReview = !r.reviewer_id || r.reviewer_id === r.applicant_id
-      if (selfReview) {
+      if (selfReviewReq) {
         // 自己受理の方は押した時点で変える
-        const err = await applyFurikaeChange()
+        const err = await applyFurikaeChange(shift_needed === true)
         if (!err) await alertChangeAfterClose()
         if (err) {
-          await db.from('overtime_reports').update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null }).eq('id', r.id)
+          await db.from('overtime_reports').update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null, furikae_change_plan: null }).eq('id', r.id)
           return json({ success: false, error: err }, 409)
         }
         slackEventKey = 'overtime:cancelled'
@@ -232,7 +283,7 @@ serve(async (req) => {
         notification = {
           user_id: r.reviewer_id,
           message: `🕐 ${applicantName}さんから振替休日の変更（休む日 ${md(r.work_date)} を出勤に）が届きました`,
-          sub_message: `振替元 ${md(originDate)} は休日出勤のまま${loc ? `・休む日の勤務地：${loc}` : ''}`,
+          sub_message: `振替元 ${md(originDate)} は休日出勤のまま${planEv ? `・休む日：${planLine(planEv)}` : loc ? `・休む日の勤務地：${loc}` : ''}`,
           source_type: 'overtime_request:pending_approval',
           reference_id: r.id,
           event_key: 'overtime:new_request',
@@ -247,7 +298,14 @@ serve(async (req) => {
       if (!isAdmin && payClose().afterCutoff) {
         return json({ success: false, error: '給与計算が始まっているため（毎月17日以降）、変更の受理は管理者が行います' }, 403)
       }
-      const err = await applyFurikaeChange()
+      // 🚨 休む日の時間の変更がある依頼は、それを出す新しい画面からだけ受理する（古い画面は「出勤（勤務地）」としか出さない・2026-10-27）
+      if (r.furikae_change_plan && plan_seen !== true) {
+        return json({ success: false, error: '画面が古いため受理できません。画面を更新してから、もう一度受理してください' }, 409)
+      }
+      if (shift_needed === true && !(await canShiftAdjust())) {
+        return json({ success: false, error: 'シフト調整の「必要」を選べるのは、シフト調整の権限がある方だけです' }, 403)
+      }
+      const err = await applyFurikaeChange(shift_needed === true)
       if (err) return json({ success: false, error: err }, 409)
       await alertChangeAfterClose()
       notification = {
@@ -292,15 +350,6 @@ serve(async (req) => {
       const next: Record<string, unknown> = toRequestConfirmed
         ? { status: 'request_confirmed', request_confirmed_at: new Date().toISOString() }
         : { status: 'confirmed', confirmed_by: caller.id, confirmed_at: new Date().toISOString() }
-      // 「シフト調整の記録」の権限（leave_shift_adjust）を持つ人か管理者か（休暇の受理と同じ）
-      const canShiftAdjust = async (): Promise<boolean> => {
-        if (isAdmin) return true
-        const { data: me } = await db.from('profiles').select('role_id').eq('id', caller.id).maybeSingle()
-        if (!me?.role_id) return false
-        const { data: fp } = await db.from('feature_permissions').select('enabled')
-          .eq('role_id', me.role_id).eq('feature_key', 'leave_shift_adjust').maybeSingle()
-        return fp?.enabled === true
-      }
       // 遅出・早退・勤務地変更の事前申請を受理するときの「シフト調整：必要」（2026-10-20）。受理と同じ1回の保存で書く。
       // 🚨 条件（DB の見張り enforce_overtime_shift_needed と同じ）：事前申請の受理・終日を含まない・遅出などを含む・事後報告でない・出張報告からでない・今日以降
       if (shift_needed === true) {
@@ -430,7 +479,7 @@ serve(async (req) => {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、差し戻しはできません。' }, 403)
       const { data: back, error: bErr } = await db.from('overtime_reports')
-        .update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null })
+        .update({ furikae_change_requested_at: null, furikae_change_requested_by: null, furikae_change_reason: null, furikae_change_location: null, furikae_change_plan: null })
         .eq('id', r.id).not('furikae_change_requested_at', 'is', null).select('id')
       if (bErr) return json({ success: false, error: '更新に失敗しました: ' + bErr.message }, 500)
       if (!back || back.length === 0) return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)

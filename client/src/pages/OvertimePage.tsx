@@ -49,6 +49,7 @@ import { isPointerDevice } from '../lib/idleLogout';
 import type { OvertimeStatus } from '../lib/overtimeStatus';
 import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES, situationOf } from '../lib/overtimeSubmit';
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
+import { evalFurikaeChange, normalSegmentsOf, type FurikaeChangePlan } from '../lib/furikaeChange';
 import { isFurikaeReportRow, furikaeReportGate, furikaeOriginWindow, isFurikaeUnreported, furikaeSelfCancelLocked, furikaePeriodNg, payPeriodRangeLabel } from '../lib/furikaeReport';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftSegsSorted, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
@@ -169,6 +170,8 @@ interface OvertimeReport {
   furikae_change_requested_at?: string | null;
   furikae_change_reason?: string | null;
   furikae_change_location?: string | null;
+  /** 休む日の時間や場所が違うときの入力（2026-10-27・lib/furikaeChange。書けるのは Edge Function だけ） */
+  furikae_change_plan?: FurikaeChangePlan | null;
   furikae_planned?: { date?: string | null; location?: string | null; start?: string | null; end?: string | null; break_minutes?: number | null; labor_minutes?: number | null; diff_minutes?: number | null } | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
@@ -3647,12 +3650,21 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   /** この申請の受理の画面に、遅出などの「シフト調整」を出すか（事前申請・事後でない・出張からでない・今日以降）。🚨 Edge Function・DB の見張りと同じ条件 */
   const partialChoiceCase = (r: OvertimeReport): boolean =>
     r.status === 'requested' && isPartialShiftCase(r.application_types) && !r.is_post_hoc && !r.from_trip_date && r.work_date >= todayJstStr();
+  // 振替休日の変更（休む日を出勤に）で、休む日の申請の中身（時間や場所が違うとき・2026-10-27・lib/furikaeChange）
+  const furikaeChangeEvOf = (r: OvertimeReport) => (r.furikae_change_plan ? evalFurikaeChange(r.normal_shift, r.furikae_change_plan).ev : null);
+  /** 振替休日の変更の受理で「シフト調整」を出すか（遅出・早退・勤務地変更を含む・今日以降）。🚨 Edge Function・DB の furikae_change_apply と同じ条件 */
+  const furikaeChangeShiftCase = (r: OvertimeReport): boolean => {
+    if (!r.furikae_change_requested_at || r.work_date < todayJstStr()) return false;
+    if (r.furikae_change_plan) { const ev = furikaeChangeEvOf(r); return !!ev && isPartialShiftCase(ev.types); }
+    return !!r.furikae_change_location;
+  };
   const callApproveFunction = async (
     reportId: string, action: 'approve' | 'return' | 'cancel', comment?: string, shiftNotNeeded?: boolean, shiftNeeded?: boolean,
+    extra?: Record<string, unknown>,
   ): Promise<{ ok: boolean; error?: string; gcalOk?: boolean }> => {
     const { data, error } = await supabase.functions.invoke('overtime-approve', {
       // 🚨 shift_needed は「必要」を選んだときだけ送る（送らなければ Edge Function は何もしない）
-      body: { report_id: reportId, action, comment, shift_not_needed: shiftNotNeeded === true, ...(shiftNeeded === true ? { shift_needed: true } : {}) },
+      body: { report_id: reportId, action, comment, shift_not_needed: shiftNotNeeded === true, ...(shiftNeeded === true ? { shift_needed: true } : {}), ...extra },
     });
     const res = data as { success?: boolean; error?: string; gcal_ok?: boolean } | null;
     if (error || !res?.success) return { ok: false, error: res?.error ?? error?.message ?? '通信エラー' };
@@ -3766,8 +3778,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const doApprove = async (r: OvertimeReport) => {
     setActingId(r.id);
     setActionError('');
-    const res = await callApproveFunction(r.id, 'approve', undefined, isFullDayReport(r.application_types) && !!shiftNotNeededFor[r.id],
-      canChooseShiftAdjust && partialChoiceCase(r) && !!shiftNeededFor[r.id]);
+    // 振替休日の変更は、休む日の中身を出したこの画面からの受理だという印（plan_seen）を付ける（古い画面からは Edge Function が断る）
+    const res = r.furikae_change_requested_at
+      ? await callApproveFunction(r.id, 'approve', undefined, false, canChooseShiftAdjust && furikaeChangeShiftCase(r) && !!shiftNeededFor[r.id], { plan_seen: true })
+      : await callApproveFunction(r.id, 'approve', undefined, isFullDayReport(r.application_types) && !!shiftNotNeededFor[r.id],
+        canChooseShiftAdjust && partialChoiceCase(r) && !!shiftNeededFor[r.id]);
     if (!res.ok) {
       setActionError('受理に失敗しました：' + (res.error ?? ''));
     } else if (res.gcalOk === false) {
@@ -3786,6 +3801,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [fcPlace, setFcPlace] = useState<'usual' | 'other'>('usual');
   const [fcLoc, setFcLoc] = useState('');
   const [fcLocCustom, setFcLocCustom] = useState('');
+  // 時間や場所が違うとき（2026-10-27）：休む日の勤務時間（2本シフトの方は2つまで）・遅出／早退の理由・シフト調整（自己受理の方だけ・初めは調整不要）
+  const [fcSegs, setFcSegs] = useState<{ start: string; end: string }[]>([]);
+  const [fcLate, setFcLate] = useState<LateChoice | null>(null);
+  const [fcEarly, setFcEarly] = useState<EarlyChoice | null>(null);
+  const [fcShiftNeeded, setFcShiftNeeded] = useState(false);
+  const [fcTried, setFcTried] = useState(false);
+  const resetFcPlace = () => {
+    setFcPlace('usual'); setFcLoc(''); setFcLocCustom(''); setFcSegs([]); setFcLate(null); setFcEarly(null);
+    setFcShiftNeeded(false); setFcTried(false); setFcError('');
+  };
   const [fcReason, setFcReason] = useState('');
   const [fcSending, setFcSending] = useState(false);
   const [fcError, setFcError] = useState('');
@@ -4618,13 +4643,31 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   ) : (
                     <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>シフト調整は、マネージャーが受理後に判断します</p>
                   ))}
+                  {/* 振替休日の変更で、休む日が遅出・早退・勤務地変更になるとき（2026-10-27・初めは調整不要） */}
+                  {furikaeChangeShiftCase(r) && (canChooseShiftAdjust ? (
+                    <ShiftAdjustChoice notNeeded={!shiftNeededFor[r.id]} onChange={nn => setShiftNeededFor(p => ({ ...p, [r.id]: !nn }))} isDark={isDark}
+                      detail={(() => { const fev = furikaeChangeEvOf(r); return [fev ? partialCoverLabel(partialCover(fev.types, r.normal_shift, fev.segments, fev.location)) : '', 'いない時間'].filter(Boolean).join(' '); })()}
+                      note={PARTIAL_SHIFT_NOTE} />
+                  ) : (
+                    <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>シフト調整は、マネージャーが受理後に判断します</p>
+                  ))}
                   {r.furikae_change_requested_at && r.furikae_origin_date && (
                     <div style={{ margin: '0 0 10px', padding: '10px 12px', borderRadius: 8, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}` }}>
                       <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#fff' : '#0d47a1', lineHeight: 1.7 }}>
                         <b>振替休日の変更</b>（{r.applicant?.name ?? ''}さんから）<br />
-                        休む日 {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）→ 出勤{r.furikae_change_location ? `（勤務地：${r.furikae_change_location}）` : '（いつもどおり）'}<br />
+                        {(() => {
+                          const fev = furikaeChangeEvOf(r);
+                          const wmd = `${r.work_date.slice(5).replace('-', '/')}（${dowLabel(r.work_date)}）`;
+                          return fev ? (
+                            <>
+                              休む日 {wmd} → 出勤：<TypeChips types={fev.types} isDark={isDark} situation={{ late_situation: r.furikae_change_plan?.late_choice, early_situation: r.furikae_change_plan?.early_choice }} />
+                              {' '}{fev.segments.map(x => `${minToTime(x.startMin)}〜${minToTime(x.endMin)}`).join(' ／ ')}（{fev.location}・通常シフトとの差 {formatSignedMin(fev.diffMin)}）
+                              {r.work_date < todayJstStr() && '・休む日が過ぎているため、実績として記録されます'}<br />
+                            </>
+                          ) : <>休む日 {wmd} → 出勤{r.furikae_change_location ? `（勤務地：${r.furikae_change_location}）` : '（いつもどおり）'}<br /></>;
+                        })()}
                         振替元 {r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）→ 休日出勤{r.furikae_origin_start ? `（${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}・労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}<br />
-                        合計時間数 {formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin(r.furikae_origin_labor_minutes ?? 0)}<br />
+                        合計時間数 {formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin((r.furikae_origin_labor_minutes ?? 0) + (furikaeChangeEvOf(r)?.diffMin ?? 0))}<br />
                         理由：{r.furikae_change_reason ?? ''}
                       </p>
                     </div>
@@ -5267,25 +5310,50 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           }
                           if (cancelLockedByPeriod) return null;
                           const originReported = !isFurikaeReportRow(r) || r.status === 'confirmed';
+                          // 休む日の時間や場所が違うとき（2026-10-27）。計算は lib/furikaeChange 1か所（受理のときは DB が同じ決まりで作る）
                           const effLoc = fcPlace === 'other' ? (fcLoc === 'その他' ? fcLocCustom.trim() : fcLoc) : '';
+                          const planOf = (segs: { start: string; end: string }[], late: LateChoice | null, early: EarlyChoice | null): FurikaeChangePlan => ({
+                            segments: segs.map(s => ({ start: timeToMin(s.start) ?? -1, end: timeToMin(s.end) ?? -1 })),
+                            location: effLoc, late_choice: late, early_choice: early,
+                          });
+                          const fcEval = fcPlace === 'other' ? evalFurikaeChange(r.normal_shift, planOf(fcSegs, fcLate, fcEarly)) : null;
+                          const fcEv = fcEval?.ev ?? null;
+                          const fcErr = fcEval?.error ?? '';
+                          const fcErrIsChoice = fcErr.includes('理由」');
+                          const fcPast = r.work_date < todayJstStr();
+                          const fcPlanCheck = fcEv && !fcPast ? planBreakCheck(fcEv.segments, fcEv.breakMin) : null;
+                          // 時刻を直したら、遅出・早退でなくなった理由は消す（切り替えたときのリセット）
+                          const setSegs = (next: { start: string; end: string }[]) => {
+                            setFcSegs(next); setFcError('');
+                            const ev2 = evalFurikaeChange(r.normal_shift, planOf(next, fcLate, fcEarly)).ev;
+                            if (ev2 && !ev2.lateQ) setFcLate(null);
+                            if (ev2 && !ev2.earlyQ) setFcEarly(null);
+                          };
+                          const fcShiftCase = self && canChooseShiftAdjust && !fcPast && !!fcEv && isPartialShiftCase(fcEv.types);
                           const send = async () => {
-                            if (fcPlace === 'other' && !effLoc) { setFcError('休む日の勤務地を選んでください'); return; }
+                            setFcTried(true);
+                            if (fcPlace === 'other') {
+                              if (fcErr) { setFcError(fcErr); return; }
+                              if (fcPlanCheck && !fcPlanCheck.ok) { setFcError(fcPlanCheck.message); return; }
+                            }
                             if (!fcReason.trim()) { setFcError('理由を入力してください'); return; }
                             setFcSending(true); setFcError('');
                             const { data, error } = await supabase.functions.invoke('overtime-approve', {
-                              body: { report_id: r.id, action: 'furikae_change', comment: fcReason.trim(), change_location: effLoc || undefined },
+                              body: { report_id: r.id, action: 'furikae_change', comment: fcReason.trim(),
+                                ...(fcPlace === 'other' ? { change_plan: planOf(fcSegs, fcLate, fcEarly) } : {}),
+                                ...(fcShiftCase && fcShiftNeeded ? { shift_needed: true } : {}) },
                             });
                             const res = data as { success?: boolean; error?: string } | null;
                             setFcSending(false);
                             if (error || !res?.success) { setFcError('送れませんでした：' + (res?.error ?? error?.message ?? '通信を確認してください')); return; }
-                            setFcOpen(null); setFcReason(''); setFcPlace('usual'); setFcLoc(''); setFcLocCustom('');
+                            setFcOpen(null); setFcReason(''); resetFcPlace();
                             setFcDone(self
                               ? `振替休日を変えました。休む日 ${wm} は出勤、振替元 ${om} は休日出勤になりました`
                               : `${who}さんに振替休日の変更を依頼しました。受理されると、休む日 ${wm} は出勤、振替元 ${om} は休日出勤になります`);
                             fetchOwn(); fetchOwnCard();
                           };
                           return fcOpen !== r.id ? (
-                            <button type="button" onClick={() => { setFcOpen(r.id); setFcError(''); setFcDone(''); }}
+                            <button type="button" onClick={() => { setFcOpen(r.id); resetFcPlace(); setFcReason(''); setFcDone(''); }}
                               style={{ ...tintBtn(false), marginTop: 8, padding: '6px 14px', fontSize: 12.5 }}>
                               休む日を出勤に変える（休日出勤は残す）
                             </button>
@@ -5294,37 +5362,120 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               <p style={{ margin: '0 0 6px', fontSize: 12.5, color: text, lineHeight: 1.7 }}>
                                 休む日 {wm} は出勤にします。<br />
                                 振替元 {om} の勤務{r.furikae_origin_start ? `（${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}）` : ''}は「休日出勤」になります{originReported ? '' : '（実際の時間は、振替元の日のあとに報告します）'}。<br />
-                                合計時間数：{formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin(r.furikae_origin_labor_minutes ?? 0)}
+                                合計時間数：{formatSignedMin(r.diff_minutes ?? 0)} → {formatSignedMin((r.furikae_origin_labor_minutes ?? 0) + (fcEv && !fcErr ? fcEv.diffMin : 0))}
                               </p>
                               <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>休む日の勤務</span>
                               <div style={{ display: 'flex', gap: 6, margin: '4px 0 6px', flexWrap: 'wrap' }}>
-                                {([['usual', 'いつもどおり'], ['other', 'いつもと違う場所（在宅など）']] as const).map(([v, l]) => (
-                                  <button key={v} type="button" onClick={() => { setFcPlace(v); setFcError(''); }}
+                                {([['usual', 'いつもどおり'], ['other', '時間や場所が違う']] as const).map(([v, l]) => (
+                                  <button key={v} type="button" onClick={() => {
+                                    if (v === fcPlace) return;
+                                    resetFcPlace();
+                                    if (v === 'other') {
+                                      // 最初は通常シフト（時間・いつもの校）を入れておき、変えたいところだけ直してもらう
+                                      const nl = (r.normal_shift?.location ?? '').trim();
+                                      setFcSegs(normalSegmentsOf(r.normal_shift).map(s => ({ start: minToTime(s.startMin), end: minToTime(s.endMin) })));
+                                      if (nl && workplaces.includes(nl)) setFcLoc(nl);
+                                      else if (nl) { setFcLoc('その他'); setFcLocCustom(nl); }
+                                      setFcPlace('other');
+                                    }
+                                  }}
                                     style={{ padding: '6px 12px', borderRadius: 16, fontSize: 12.5, fontWeight: 'bold', border: 'none', cursor: 'pointer',
                                       background: fcPlace === v ? TOGGLE_BLUE : '#e3f2fd', color: fcPlace === v ? '#fff' : '#1565c0' }}>{l}</button>
                                 ))}
                               </div>
                               {fcPlace === 'other' && (
                                 <>
-                                  <select value={fcLoc} onChange={e => setFcLoc(e.target.value)}
-                                    style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, marginBottom: 6 }}>
+                                  <div style={{ background: isDark ? '#343a40' : '#f1f3f5', borderRadius: 6, padding: '6px 10px', fontSize: 12, color: isDark ? '#ced4da' : '#495057', marginBottom: 8 }}>
+                                    この日の通常シフト：{normalShiftTimeText(r.normal_shift) || 'なし'}{r.normal_shift?.location ? `　${r.normal_shift.location}` : ''}
+                                  </div>
+                                  <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>{fcPast ? 'この日に勤務した時間' : 'この日の勤務時間'} <span style={{ color: '#dc3545' }}>*</span></span>
+                                  {fcSegs.map((s, i) => {
+                                    const a = timeToMin(s.start), b = timeToMin(s.end);
+                                    const rowBad = (s.start || s.end || fcTried) && (a == null || b == null || b <= a);
+                                    return (
+                                      <div key={i}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0' }}>
+                                          {fcSegs.length > 1 && <span style={{ fontSize: 12, color: subText, width: 38, flexShrink: 0 }}>{i + 1}つ目</span>}
+                                          <TimeInput value={s.start} onChange={v => setSegs(fcSegs.map((x, j) => j === i ? { ...x, start: v } : x))} isDark={isDark} advance invalid={!!rowBad}
+                                            ariaLabel={`休む日の勤務${i + 1} 開始時刻`} style={{ flex: 1, minWidth: 0 }} />
+                                          <span style={{ color: subText }}>〜</span>
+                                          <TimeInput value={s.end} onChange={v => setSegs(fcSegs.map((x, j) => j === i ? { ...x, end: v } : x))} isDark={isDark} invalid={!!rowBad}
+                                            ariaLabel={`休む日の勤務${i + 1} 終了時刻`} style={{ flex: 1, minWidth: 0 }} />
+                                          {fcSegs.length > 1 && (
+                                            <button type="button" aria-label={`${i + 1}つ目の時間を消す`} onClick={() => setSegs(fcSegs.filter((_, j) => j !== i))}
+                                              style={{ flexShrink: 0, border: 'none', background: 'transparent', color: subText, fontSize: 14, cursor: 'pointer', padding: '4px 6px' }}>✕</button>
+                                          )}
+                                        </div>
+                                        {rowBad && <p style={{ margin: '0 0 4px', fontSize: 11.5, color: '#dc3545' }}>勤務時間の入力を確認してください</p>}
+                                      </div>
+                                    );
+                                  })}
+                                  {fcErr && !fcErrIsChoice && !fcErr.includes('勤務地') && !fcErr.includes('勤務時間の入力') && (
+                                    <p style={{ margin: '0 0 4px', fontSize: 11.5, color: '#dc3545' }}>{fcErr}</p>
+                                  )}
+                                  <span style={{ display: 'block', marginTop: 6, fontSize: 12, fontWeight: 'bold', color: subText }}>勤務地 <span style={{ color: '#dc3545' }}>*</span></span>
+                                  <select value={fcLoc} onChange={e => { setFcLoc(e.target.value); setFcError(''); }}
+                                    style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, margin: '4px 0 6px' }}>
                                     <option value="">選択してください</option>
                                     {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
                                     <option value="その他">その他（在宅など・自由入力）</option>
                                   </select>
                                   {fcLoc === 'その他' && (
-                                    <input type="text" value={fcLocCustom} onChange={e => setFcLocCustom(e.target.value)} maxLength={100} placeholder="例：在宅"
+                                    <input type="text" value={fcLocCustom} onChange={e => { setFcLocCustom(e.target.value); setFcError(''); }} maxLength={100} placeholder="例：在宅"
                                       style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, marginBottom: 6, boxSizing: 'border-box' }} />
                                   )}
-                                  <p style={{ margin: '0 0 6px', fontSize: 11.5, color: subText }}>休む日に、いつものシフトの時間で「勤務地変更」もできます</p>
+                                  {fcTried && fcErr.includes('勤務地') && <p style={{ margin: '0 0 4px', fontSize: 11.5, color: '#dc3545' }}>{fcErr}</p>}
+                                  {/* 遅出・早退の理由：ふだんの残業申請と同じ選択肢・同じ形（lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES） */}
+                                  {([
+                                    ['late', fcEv?.lateQ, '開始が遅い理由', LATE_CHOICES, fcLate, 'tardiness'],
+                                    ['early', fcEv?.earlyQ, '早く終わる理由', EARLY_CHOICES, fcEarly, 'early_leave'],
+                                  ] as const).map(([k, on, title, list, cur, wide]) => on ? (
+                                    <div key={k} style={{ margin: '6px 0 8px' }}>
+                                      <span style={{ fontSize: 12, fontWeight: 'bold', color: subText, display: 'block', marginBottom: 4 }}>{title} <span style={{ color: '#dc3545' }}>*</span></span>
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                                        {list.map(({ value: v, label }) => (
+                                          <button key={v} type="button" onClick={() => { if (k === 'late') setFcLate(v as LateChoice); else setFcEarly(v as EarlyChoice); setFcError(''); }}
+                                            style={{
+                                              gridColumn: v === wide ? '1 / -1' : undefined,
+                                              padding: '9px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 12, lineHeight: 1.35,
+                                              fontWeight: cur === v ? 'bold' : 'normal',
+                                              background: cur === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                                              color: cur === v ? '#fff' : text,
+                                            }}>{label}</button>
+                                        ))}
+                                      </div>
+                                      {fcTried && !cur && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#dc3545' }}>「{title}」を選んでください</p>}
+                                    </div>
+                                  ) : null)}
+                                  {fcEv && !fcErr && (
+                                    <div style={{ background: isDark ? '#1e3a5f' : '#e3f2fd', border: `1px solid ${isDark ? '#4a90d9' : '#bbdefb'}`, borderRadius: 8, padding: '8px 10px', fontSize: 12, color: isDark ? '#fff' : '#0d47a1', lineHeight: 1.7, margin: '4px 0 8px' }}>
+                                      休む日 {wm} は、次の内容になります
+                                      <div style={{ margin: '3px 0' }}><TypeChips types={fcEv.types} isDark={isDark} situation={{ late_situation: fcLate, early_situation: fcEarly }} /></div>
+                                      {fcEv.segments.map(s => `${minToTime(s.startMin)}〜${minToTime(s.endMin)}`).join(' ／ ')}　{fcEv.location}<br />
+                                      通常シフトとの差：{formatSignedMin(fcEv.diffMin)}
+                                      {fcPast && <><br />休む日が過ぎているため、実績として記録されます</>}
+                                    </div>
+                                  )}
+                                  {fcPlanCheck && !fcPlanCheck.ok && fcEv && !fcErr && (
+                                    <p style={{ margin: '0 0 6px', fontSize: 11.5, color: '#dc3545', lineHeight: 1.6 }}>{fcPlanCheck.message}</p>
+                                  )}
+                                  {fcShiftCase && fcEv && !fcErr && (
+                                    <ShiftAdjustChoice notNeeded={!fcShiftNeeded} onChange={nn => setFcShiftNeeded(!nn)} isDark={isDark}
+                                      detail={[partialCoverLabel(partialCover(fcEv.types, r.normal_shift, fcEv.segments, fcEv.location)), 'いない時間'].filter(Boolean).join(' ')}
+                                      note={PARTIAL_SHIFT_NOTE} />
+                                  )}
                                 </>
                               )}
                               <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>理由 <span style={{ color: '#dc3545' }}>*</span></span>
                               <textarea value={fcReason} onChange={e => setFcReason(e.target.value)} rows={2} maxLength={200} placeholder="例：休む日に業務が入ったため"
                                 style={{ width: '100%', padding: '8px', borderRadius: 8, border: `1px solid ${borderColor}`, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }} />
                               {fcError && <p style={{ margin: '4px 0 0', fontSize: 12.5, color: '#dc3545' }}>{fcError}</p>}
-                              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                                <button type="button" onClick={() => { setFcOpen(null); setFcError(''); }} style={{ ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 13 }}>戻る</button>
+                              <p style={{ margin: '8px 0 0', fontSize: 12.5, color: subText }}>
+                                {self ? '自己受理のため、押すとすぐに変わります'
+                                  : `申請先：${who}さん${(() => { const rt = reviewers.find(x => x.id === r.reviewer_id)?.role_title; return rt ? `（${rt}）` : ''; })()}`}
+                              </p>
+                              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                                <button type="button" onClick={() => { setFcOpen(null); setFcError(''); resetFcPlace(); }} style={{ ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 13 }}>戻る</button>
                                 <button type="button" data-net="write" onClick={send} disabled={fcSending}
                                   style={{ ...primaryBtn({ disabled: fcSending }), flex: 2, padding: '8px 0', fontSize: 13 }}>{fcSending ? '送信中...' : self ? '変更する' : 'この内容で送る'}</button>
                               </div>
