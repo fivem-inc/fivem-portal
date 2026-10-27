@@ -1461,7 +1461,8 @@ const OvertimeForm: React.FC<{
     && editTarget && furikaeReportGate(editTarget, todayJstStr(), nowMinLive()) !== 'both')
     ? `🕐 ${furikaeBase.end} 以降に報告できます。早く終わった場合は［勤務時間が申請と異なりました］から報告してください` : '';
   // 🐛 依頼から開いたとき、依頼した人が申請先の候補に居ないと「申請先：さん」のまま送れていた（2026-10-26 不具合2）。選び直してもらう
-  const reviewerUnknown = (): string => (!editTarget && reviewerId && reviewerId !== user.id && !reviewers.some(r => r.id === reviewerId)) ? '申請先を選択してください' : '';
+  // 🚨 自己受理（SELF_REVIEW_VALUE）は候補の一覧に載らないので、ここで外す（2026-10-27 不具合：自己受理の新規が全部止まっていた）
+  const reviewerUnknown = (): string => (!editTarget && reviewerId && reviewerId !== SELF_REVIEW_VALUE && reviewerId !== user.id && !reviewers.some(r => r.id === reviewerId)) ? '申請先を選択してください' : '';
   // 有休からの変更の申請先はマネージャー以上（欠勤と同じ形・DB の enforce_overtime_replaces_leave でも止める）
   const replaceReviewerBad = (): string => (replaceLink && reviewerId && !isSelfReview && !reviewerIsManager(reviewerId)) ? '有休からの変更の申請先は、マネージャー以上の方にしてください' : '';
   const validate = (): string => (replaceLink && replaceBlockMsg) || furikaeAsPlannedTooEarly() || reviewerUnknown() || replaceReviewerBad() || validateOvertime({
