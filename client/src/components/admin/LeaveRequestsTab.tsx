@@ -26,6 +26,12 @@ import { ENC_REASON_MARK, ENC_CHOICES, encChoiceLabel, leavePurposeLabel } from 
 import EncouragementExemptSection from './EncouragementExemptSection';
 import { syncEncouragementCalendar } from '../../lib/gcalEncouragement';
 import { dayOffConflictText } from '../../lib/dayOffConflictText';
+import { replacedFromChoseiLabel, leaveChangeText } from '../../lib/leaveReplace';
+import { syncOvertimeGcal } from '../../lib/overtimeSubmitApi';
+/** 時間外調整休を有休に変更する申請のとき、その時間外調整休（2026-10-27 段2b）。AdminLeaveRequest（2人共通の型）には足さずにここで読む */
+const replacesOtOf = (r: unknown): string | null => ((r as { replaces_overtime_id?: string | null }).replaces_overtime_id ?? null);
+/** DB が受理・差し戻しを止めたとき（時間外調整休からの変更の印など）の文 */
+const choseiSyncAfter = async (r: unknown) => { const ot = replacesOtOf(r); if (ot && !(await syncOvertimeGcal(ot))) console.error('[時間外調整休の予定の直し] 失敗', ot); };
 import { fetchUnavailableIds, withoutUnavailable, fetchOpenLeaves, leaveActiveOnDay, type StaffLeave } from '../../lib/staffLeave';
 
 // 休暇の履歴行（leave_request_history）
@@ -1521,7 +1527,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 </div>
                               )}
                             </td>
-                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}{replacesOtOf(req) && <div style={{ fontSize: 10.5, color: isDarkMode ? '#90caf9' : '#1565c0' }}>{replacedFromChoseiLabel(req.start_date ?? '')}</div>}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 11 }}>{dateDisplay}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>{days}日</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
@@ -1627,7 +1633,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         // 🚨 error も見る。見ないと、通信やRLSの失敗まで
                                         //    「他の受理者が先に処理した」と誤って伝えることになる（data は null で0件に見えるため）
                                         const { data: locked, error: lockErr } = await supabase.from('leave_requests').update({ status: nextSt, ...shiftFields }).eq('id', req.id).eq('status', req.status).select('id');
-                                        if (lockErr) { setErrorMsg('受理に失敗しました：' + lockErr.message); return; }
+                                        if (lockErr) { setErrorMsg(leaveChangeText(lockErr) ?? ('受理に失敗しました：' + lockErr.message)); return; }
                                         if (!locked || locked.length === 0) { setErrorMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました'); fetchLeaveRequests(); return; }
 
                                         // 🚨 受理はDBで確定済み。画面の更新は通知（数秒かかる）より先に行う
@@ -1654,6 +1660,8 @@ const LeaveRequestsTab: React.FC = () => {
                                           } catch (e) {
                                             console.error('[gcal-sync] 書き込み失敗:', e);
                                           }
+                                          // 時間外調整休からの変更：DB が取り消した時間外調整休の予定を消す（2026-10-27 段2b）
+                                          await choseiSyncAfter(req);
                                         }
 
                                         // 🚨 通知の失敗を受理の成否に巻き込まない。
@@ -1903,7 +1911,9 @@ const LeaveRequestsTab: React.FC = () => {
                         <button type="button" onClick={() => setModalError('')} style={{ background: 'none', border: 'none', color: '#842029', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}>✕</button>
                       </div>
                     )}
-                    <div style={{ marginBottom: 12 }}>
+                    {replacesOtOf(rejectModal) ? (
+                      <div style={{ fontSize: 12.5, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 12, lineHeight: 1.6 }}>{replacedFromChoseiLabel(rejectModal.start_date ?? '')}です。差し戻す・取り消すと、時間外調整休に戻ります（種別は変えられません）。</div>
+                    ) : <div style={{ marginBottom: 12 }}>
                       <div style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 6 }}>種別を変更する（任意）</div>
                       <select value={rejectNewType} onChange={e => setRejectNewType(e.target.value)}
                         style={{ width: '100%', padding: '8px', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, fontSize: 14, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333' }}>
@@ -1911,7 +1921,7 @@ const LeaveRequestsTab: React.FC = () => {
                         {LEAVE_TYPE_CHOICES.filter(t => t !== currentLeaveTypeLabel(rejectModal)).map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                       {rejectNewType && <div style={{ fontSize: 12, color: '#e65100', marginTop: 4 }}>「{rejectModal.leave_type}」→「{rejectNewType}」に変更して差し戻します</div>}
-                    </div>
+                    </div>}
                     <div style={{ marginBottom: 16 }}>
                       <div style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 6 }}>
                         差し戻し理由（任意）
@@ -1976,6 +1986,7 @@ const LeaveRequestsTab: React.FC = () => {
                           if (!(await deleteLeaveGcal(rejectModal.id))) {
                             setPartialMsg(describePartial('差し戻し', 'Googleカレンダーからの削除に失敗しました'));
                           }
+                          await choseiSyncAfter(rejectModal); // DB が元に戻した時間外調整休の予定を作り直す（2026-10-27 段2b）
                           if (rejectNewType) {
                             // 種別変更あり → 新申請を受理済みで自動作成
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（元の申請から自動作成）`;
@@ -2052,6 +2063,7 @@ const LeaveRequestsTab: React.FC = () => {
                           if (!(await deleteLeaveGcal(rejectModal.id))) {
                             setPartialMsg(describePartial('受理の取り消し', 'Googleカレンダーからの削除に失敗しました'));
                           }
+                          await choseiSyncAfter(rejectModal); // DB が元に戻した時間外調整休の予定を作り直す（2026-10-27 段2b）
                           // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
                           const cancelType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
                           const cancelVars = { 申請者名: rejectModal.profile?.name ?? '', 休暇種別: cancelType, 取り消し理由: rejectReason || '' };

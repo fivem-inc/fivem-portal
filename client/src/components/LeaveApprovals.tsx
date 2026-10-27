@@ -15,6 +15,8 @@ import type { AuthUser, AdminLeaveRequest } from '../types';
 import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import { leavePurposeLabel } from '../lib/encouragementDay';
 import CorrectionNotice from './CorrectionNotice';
+import { replacedFromChoseiLabel, leaveChangeText } from '../lib/leaveReplace';
+import { syncOvertimeGcal } from '../lib/overtimeSubmitApi';
 import { useLatestCorrections } from '../lib/correctionNotice';
 
 interface Props {
@@ -53,6 +55,8 @@ interface LeaveReq {
   requester?: { name: string } | null;
   /** シフト調整の状態。有休奨励日だけの休暇は登録のときに DB が 'not_needed' を入れる（2026-09-28 受理の選択で使う） */
   shift_adjust_status?: string | null;
+  /** 時間外調整休を有休に変更する申請のとき、その時間外調整休（2026-10-27 段2b）。マネージャーが受理した瞬間に DB が取り消す */
+  replaces_overtime_id?: string | null;
 }
 
 interface Approver {
@@ -340,7 +344,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       //    この関数を通るので、条件を付けないと**後の人の日時で上書きされる**。
       const nowIso = new Date().toISOString();
       const stamp = isManagerStep ? { approved2_at: nowIso, ...shiftFieldsFor(req, nowIso) } : {};
-      const { data: locked } = await supabase.from('leave_requests').update({ status: next, ...stamp }).eq('id', req.id).eq('status', req.status).select('id');
+      const { data: locked, error: lockErr } = await supabase.from('leave_requests').update({ status: next, ...stamp }).eq('id', req.id).eq('status', req.status).select('id');
+      // 🚨 DB が止めたとき（時間外調整休からの変更を締めのあとに受理など）は、その理由を出す（「他の受理者が先に処理」と出さない・2026-10-27 段2b）
+      if (lockErr) { setStaleMsg(leaveChangeText(lockErr) ?? ('受理できませんでした：' + lockErr.message)); return; }
       if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
 
       // 🚨 受理はDBで確定済み。画面の更新を通知より先に行う。
@@ -353,6 +359,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         if (req.status === 'step2_pending') {
           // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
           await emitManagerApproved(req);
+          // 時間外調整休からの変更：DB が取り消した時間外調整休の Google カレンダーの予定を消す（sync は今の状態から作り直す・2026-10-27 段2b）
+          if (req.replaces_overtime_id && !(await syncOvertimeGcal(req.replaces_overtime_id))) console.error('[時間外調整休の予定の直し] 失敗', req.replaces_overtime_id);
         } else if (req.status === 'manager_approved') {
           // 経理の受理で「最終受理待ち」になる → 最終受理者（社長）へベル（2026-09-27・案A）
           await notifyLeaveFinalApprovers(req, req.requester?.name ?? '', user.id);
@@ -383,7 +391,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     // 🚨 この経路は1人目と2人目を同じ人が兼ねるので、受理日時も**両方**に同じ値を入れる（2026-09-11）
     const nowIso = new Date().toISOString();
     // シフト調整の選択（2026-09-28）も受理と同じ1回の保存で書く
-    const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id, approved_at: nowIso, approved2_at: nowIso, ...shiftFieldsFor(req, nowIso) }).eq('id', req.id).eq('status', req.status).select('id');
+    const { data: locked, error: lockErr } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id, approved_at: nowIso, approved2_at: nowIso, ...shiftFieldsFor(req, nowIso) }).eq('id', req.id).eq('status', req.status).select('id');
+    if (lockErr) { setStaleMsg(leaveChangeText(lockErr) ?? ('受理できませんでした：' + lockErr.message)); setSelectingManagerFor(null); return; }
     if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
 
     // 画面の更新を先に確定（通知の完了を待たない）
@@ -393,6 +402,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
     try {
       await emitManagerApproved(req); // leader_approved通知は送らない（次のマネージャーがいないため）
+      if (req.replaces_overtime_id && !(await syncOvertimeGcal(req.replaces_overtime_id))) console.error('[時間外調整休の予定の直し] 失敗', req.replaces_overtime_id);
     } catch (e) {
       console.error('[leave] 受理後の通知に失敗:', e);
       setStaleMsg('受理は完了しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
@@ -452,7 +462,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     //    見ないと、差し戻せていないのに申請者へ「差し戻されました」と通知が飛ぶ。
     const { data: rejected, error: rejectErr } = await supabase.from('leave_requests')
       .update(update).eq('id', rejectingReq.id).select('id');
-    if (rejectErr) { setStaleMsg('差し戻しできませんでした：' + rejectErr.message); return; }
+    if (rejectErr) { setStaleMsg(leaveChangeText(rejectErr) ?? ('差し戻しできませんでした：' + rejectErr.message)); return; }
     if (!rejected || rejected.length === 0) {
       setStaleMsg('差し戻しできませんでした（すでに取り消された可能性があります）。一覧を更新しました。');
       fetchRequests();
@@ -478,6 +488,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       } catch (e) {
         console.error('[gcal-sync] 削除失敗:', e);
       }
+      // 時間外調整休からの変更：DB が元に戻した時間外調整休の予定を作り直す（戻していなければ今の状態のまま・2026-10-27 段2b）
+      if (target.replaces_overtime_id && !(await syncOvertimeGcal(target.replaces_overtime_id))) console.error('[時間外調整休の予定の直し] 失敗', target.replaces_overtime_id);
 
       // 申請者へ差し戻し通知（サイト内通知・Slack・メール）
       const rejectTypeName = target.leave_type === 'その他' ? (target.leave_type_other || 'その他') : target.leave_type;
@@ -582,6 +594,10 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                       <span style={{ marginLeft: 8, fontSize: 14, color: subText }}>
                         {req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}
                       </span>
+                      {/* 時間外調整休からの変更（2026-10-27 段2b・残業の受理の画面の「◯/◯（有休）からの変更」と同じ形） */}
+                      {req.replaces_overtime_id && (
+                        <span style={{ marginLeft: 8, display: 'inline-block', fontSize: 11.5, padding: '1px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, color: isDark ? '#90caf9' : '#1565c0' }}>{replacedFromChoseiLabel(req.start_date)}</span>
+                      )}
                     </div>
                     <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', background: '#e67e22', color: 'white' }}>
                       {STATUS_LABEL[req.status] || req.status}
@@ -865,7 +881,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
               {rejectingReq.requester?.name}　{rejectingReq.leave_type === 'その他' ? rejectingReq.leave_type_other : rejectingReq.leave_type}
             </div>
 
-            <div style={{ marginBottom: 12 }}>
+            {!rejectingReq.replaces_overtime_id && <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 13, color: subText, marginBottom: 6 }}>種別を変更する（任意）</div>
               <select value={rejectNewType} onChange={e => setRejectNewType(e.target.value)}
                 style={{ width: '100%', padding: '8px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}>
@@ -879,7 +895,10 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   「{rejectingReq.leave_type}」→「{rejectNewType}」に変更して差し戻します
                 </div>
               )}
-            </div>
+            </div>}
+            {rejectingReq.replaces_overtime_id && (
+              <div style={{ fontSize: 12.5, color: subText, marginBottom: 12, lineHeight: 1.6 }}>{replacedFromChoseiLabel(rejectingReq.start_date)}です。差し戻すと、時間外調整休のままになります。</div>
+            )}
 
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, color: subText, marginBottom: 6 }}>差し戻し理由（任意）</div>

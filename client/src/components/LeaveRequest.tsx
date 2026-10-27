@@ -54,7 +54,7 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 };
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { isReplaceableLeave, leaveDatesOf, loadPendingReplacements, mdDowShort } from '../lib/leaveReplace';
+import { isReplaceableLeave, leaveDatesOf, loadPendingReplacements, mdDowShort, choseiBannerTitle, choseiBannerNote, myOvertimeReplaceBlock, leaveChangeText, LEAVE_REPLACE_TYPES } from '../lib/leaveReplace';
 import { supabase } from '../lib/supabaseClient';
 import { checkDayOffConflict, dayOffConflictText } from '../lib/dayOffConflict';
 import { sendFailureText, sendUnstableOnceText, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_DELIVERED_CHANGED_TEXT, SEND_SLOW_TEXT } from '../lib/netFailure';
@@ -303,6 +303,9 @@ const MultiDatePicker: React.FC<{
 };
 
 // 選択日の表示用ヘルパー
+/** 申請先の候補のうちマネージャー以上の方か（時間外調整休からの変更の申請先・2026-10-27 段2b） */
+const isManagerApprover = (a: Approver) => !!embeddedRole(a as EmbeddedRoleRow<{ is_manager_plus?: boolean }>)?.is_manager_plus;
+
 const formatSelectedDates = (dates: string[]): string => {
   if (dates.length === 0) return '';
   if (dates.length === 1) return dates[0];
@@ -375,6 +378,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const { canOvertime } = useAuth();
   const [replaceChooseFor, setReplaceChooseFor] = useState<string | null>(null);
   const [pendingReplace, setPendingReplace] = useState<Map<string, Set<string>>>(new Map());
+  // 時間外調整休を有休に変更する申請（2026-10-27 段2b・lib/leaveReplace）。残業ページの時間外調整休のカードの［有休に変更する］→ ?replace_ot=&date=。
+  // 日付は固定・種類は有給休暇かバースデー休暇・申請先はマネージャー以上（リーダーを飛ばしてマネージャーの受理の段から）。止めるのは DB
+  type ChoseiLink = { otId: string; date: string };
+  const [choseiLink, setChoseiLink] = useState<ChoseiLink | null>(null);
+  const [choseiAsk, setChoseiAsk] = useState<ChoseiLink | null>(null);
+  const [choseiBlockMsg, setChoseiBlockMsg] = useState<string | null>(null);
   // 時間調整・調整休を残業申請にまとめる区切りの日（2026-10-13・10/16 から）。null＝今までどおり
   const unifyCutoff = useOvertimeUnifyCutoff();
   const unifyMovedNow = !!unifyCutoff && todayJstStr() >= unifyCutoff;
@@ -401,6 +410,36 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     else setManagerView(null);
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
+
+  // ?replace_ot=時間外調整休のID&date=日付 で来たとき（残業ページの［有休に変更する］・2026-10-27 段2b）。🚨 書きかけは黙って消さない
+  const replaceOtParam = searchParams.get('replace_ot');
+  const replaceOtDateParam = searchParams.get('date');
+  const startChoseiReplace = (o: ChoseiLink, force = false) => {
+    const hasDraft = selectedDates.length > 0 && !(selectedDates.length === 1 && selectedDates[0] === o.date);
+    setTab('form'); setManagerView(null);
+    if (hasDraft && !force) { setChoseiAsk(o); return; }
+    setChoseiAsk(null);
+    setEditLeaveId(null); setEditLeaveApproverId(null); setReapplySourceId(null);
+    setLeaveType('有給休暇'); setLeaveTypeOther('');
+    setSelectedDates([o.date]);
+    setDateLocations(prev => (prev[o.date] ? { [o.date]: prev[o.date] } : {}));
+    // 🚨 事由は空（本人の言葉で書く）。申請先はマネージャー以上の方だけ（前の申請先がリーダーなら外す）
+    setPurpose(''); setNotes('');
+    setSelectedApproverId(prev => (approvers.some(a => a.id === prev && isManagerApprover(a)) ? prev : ''));
+    setLocError(''); setErrFields(new Set());
+    setChoseiLink(o);
+    setChoseiBlockMsg(null);
+    void myOvertimeReplaceBlock(o.otId).then(setChoseiBlockMsg);
+    window.scrollTo({ top: 0 });
+  };
+  const replaceOtDone = React.useRef(false);
+  useEffect(() => {
+    if (!replaceOtParam || !replaceOtDateParam || replaceOtDone.current) return;
+    replaceOtDone.current = true;
+    startChoseiReplace({ otId: replaceOtParam, date: replaceOtDateParam });
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('replace_ot'); n.delete('date'); return n; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replaceOtParam, replaceOtDateParam]);
 
   // 休暇を申請できるいちばん先の日（1年先の前月末）。シフトが決まっていない先の日を
   // 押さえられないようにするための上限（2026-09-09 ユーザー確定）。判定は breakCalc に集約
@@ -503,8 +542,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   // 休暇申請フォームの下書きを自動保存
   useEffect(() => {
+    if (choseiLink) return; // 時間外調整休からの変更の申請は下書きに残さない（2026-10-27 段2b）
     saveDraft(DRAFT_KEYS.leave, { leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId });
-  }, [leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId]);
+  }, [leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId, choseiLink]);
 
   // 確認画面を開いたら、選んだ日に「欠勤」がすでに登録されていないかを見る（2026-10-05 ユーザー指示・カレンダーの欠勤の登録と両方で確かめる）。
   // 🚨 10/7 ある方の申請で、調整休の休暇と同じ日に欠勤も登録され、カレンダーに2つ並んだ。休暇は受理の流れがあるので止めずに知らせるだけ
@@ -527,10 +567,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     if (selectedDates.length === 0 || !leaveType) { setDateBlockMsg(null); return; }
     let alive = true;
     const t = setTimeout(() => {
-      void checkDayOffConflict(selectedDates, 'leave', leaveType).then(m => { if (alive) setDateBlockMsg(m); });
+      void checkDayOffConflict(selectedDates, 'leave', leaveType, false, null, choseiLink?.otId).then(m => { if (alive) setDateBlockMsg(m); });
     }, 400);
     return () => { alive = false; clearTimeout(t); };
-  }, [selectedDates, leaveType]);
+  }, [selectedDates, leaveType, choseiLink]);
   // 時間調整フォームの下書きを自動保存
   useEffect(() => {
     saveDraft(DRAFT_KEYS.leaveAdjustment, { adjLateStart, adjEarlyEnd, adjDate, adjLateTime, adjEarlyTime, adjReason, adjLocation, adjApproverMode, adjApproverSelectedId, adjApproverFree });
@@ -628,7 +668,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     supabase
       .from('profiles')
       // 🚨 役職名ではなく属性で引く（2026-09-09 属性化）。申請先の候補＝承認者のうち、経営（社長・経理）を除く
-      .select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as, is_leader_plus)')
+      .select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as, is_leader_plus, is_manager_plus)')
       .eq('roles.is_approver', true)
       .eq('roles.is_org_wide', false)
       .eq('is_active', true)
@@ -759,7 +799,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   // 「フロア責任者を除く」＝リーダー以上（属性 is_leader_plus）で判定する
   // 🚨 自分は候補に出さない（2026-09-24）。DB の insert_own が「承認者に自分」を弾くので、
   //    出すと選んだ瞬間に申請できなくなる（リーダー・マネージャーが自分の休暇を出すとき）
-  const leaveApprovers = approvers.filter(a => a.id !== user.id && !!embeddedRole(a as EmbeddedRoleRow<{ is_leader_plus?: boolean }>)?.is_leader_plus);
+  const leaveApprovers = approvers.filter(a => a.id !== user.id && !!embeddedRole(a as EmbeddedRoleRow<{ is_leader_plus?: boolean }>)?.is_leader_plus
+    // 時間外調整休からの変更はマネージャー以上の方だけ（2026-10-27 段2b・DB の create_leave_from_chosei も同じ）
+    && (!choseiLink || isManagerApprover(a)));
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
   const handleSubmit = async () => {
@@ -834,9 +876,13 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         current_approver: 'first',
         approver_id: selectedApproverId,
       };
+      const link = choseiLink;
       const r = await submitOnce({
-        userId: user.id, slot: 'leave', fingerprint: JSON.stringify(payload),
-        insert: (id, signal) => supabase.from('leave_requests').insert({ id, ...payload }).abortSignal(signal),
+        userId: user.id, slot: 'leave', fingerprint: JSON.stringify(link ? { ...payload, replaces_overtime_id: link.otId } : payload),
+        // 🚨 時間外調整休からの変更は、本人の insert では入れられない（受理の段から出すため）。DB の create_leave_from_chosei で（2026-10-27 段2b）
+        insert: (id, signal) => (link
+          ? supabase.rpc('create_leave_from_chosei', { p_id: id, p_ot: link.otId, p_leave_type: leaveType, p_approver: selectedApproverId, p_purpose: purpose, p_reason: notes || null, p_location: dateLocations[link.date] ?? null }).abortSignal(signal)
+          : supabase.from('leave_requests').insert({ id, ...payload }).abortSignal(signal)),
         exists: (id, signal) => supabase.from('leave_requests').select('id').eq('id', id).abortSignal(signal),
         onSlow: () => setSendSlow(true),
       });
@@ -849,6 +895,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       setSubmittedApproverLabel(selectedApprover?.name ?? '');
       setSubmitted(true);
       setShowConfirm(false);
+      setChoseiLink(null);
       clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
       void (async () => { try {
       // 再申請の場合、元申請を取消済みにする
@@ -900,7 +947,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       } })();
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err));
-      setSubmitError(dayOffConflictText(errMsg) ?? approverOnLeaveText(errMsg) ?? sendFailureText(err) ?? ('送信に失敗しました。' + errMsg));
+      setSubmitError(leaveChangeText({ message: errMsg }) ?? dayOffConflictText(errMsg) ?? approverOnLeaveText(errMsg) ?? sendFailureText(err) ?? ('送信に失敗しました。' + errMsg));
     } finally {
       setIsSubmitting(false);
     }
@@ -921,6 +968,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setChoseiSubType('furikae');
     setChoseiOriginDates([]);
     setReapplySourceId(null);
+    setChoseiLink(null); setChoseiAsk(null); setChoseiBlockMsg(null);
     // 🚨 変更の途中でやめたとき、次の［申請］が前の申請の書き換えにならないように（2026-10-26 不具合1）
     setEditLeaveId(null); setEditLeaveApproverId(null);
     // 初期選択なし（ユーザーに明示的に選ばせる）
@@ -1125,6 +1173,31 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               ))}
             </div>
           )}
+          {/* 書きかけがあるときの置き換えの確認（2026-10-27 段2b・残業ページの有休からの変更と同じ形） */}
+          {choseiAsk && (
+            <div style={{ marginBottom: 12, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d', textAlign: 'left' }}>
+              <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。時間外調整休からの変更の申請に置き換えますか？</p>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => startChoseiReplace(choseiAsk, true)} style={{ ...primaryBtn(), flex: 1, padding: '8px 0', fontSize: 12.5 }}>置き換える</button>
+                <button onClick={() => setChoseiAsk(null)} style={{ ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 12.5 }}>やめる</button>
+              </div>
+            </div>
+          )}
+          {/* 時間外調整休を有休に変更する申請の帯（2026-10-27 ユーザー確定・残業ページの有休からの変更の帯と同じ形） */}
+          {choseiLink && (
+            <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}>
+              <div>
+                <div style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#90c9f5' : '#004085' }}>{choseiBannerTitle(choseiLink.date)}</div>
+                <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#555', marginTop: 2 }}>{choseiBannerNote(choseiLink.date)}</div>
+              </div>
+              <button onClick={() => { clearLeaveForm(); }} style={{ marginLeft: 12, padding: '4px 10px', background: 'transparent', border: `1px solid ${isDark ? '#90c9f5' : '#004085'}`, borderRadius: 6, color: isDark ? '#90c9f5' : '#004085', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                やめる
+              </button>
+            </div>
+          )}
+          {choseiLink && choseiBlockMsg && (
+            <div role="alert" style={{ marginBottom: 16, padding: '8px 12px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 13, lineHeight: 1.6, textAlign: 'left' }}>{choseiBlockMsg}</div>
+          )}
           {/* ［内容を変更する］の帯（2026-10-26 不具合1：前は帯が無く、変更中だと分からなかった） */}
           {editLeaveId && (
             <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}>
@@ -1264,7 +1337,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                    ダークで暗い色にすると本文が沈んで読めなくなるため
                    （🎨🔒 バナー配色の固定ルール・例外なし）。
                    落ち着いた側のグレー文字は「地に馴染ませる」ものなのでテーマ追従のまま */}
-            {selectedApproverId ? (
+            {choseiLink ? (
+              <div style={{ fontSize: 12, color: subText, marginBottom: 6, lineHeight: 1.6 }}>
+                時間外調整休からの変更は、マネージャーに申請します
+              </div>
+            ) : selectedApproverId ? (
               <div style={{ fontSize: 12, color: subText, marginBottom: 6, lineHeight: 1.6 }}>
                 申請先は、原則、休暇を取る日の勤務校リーダーを選んでください
               </div>
@@ -1315,10 +1392,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             >
               <option value="有給休暇">有給休暇</option>
               {!leaveRequestEnabled && <option value="バースデー休暇（有給）">バースデー休暇（有給）</option>}
-              {!leaveRequestEnabled && <option value="慶弔休暇">慶弔休暇</option>}
+              {/* 時間外調整休からの変更は有給休暇・バースデー休暇だけ（2026-10-27 段2b・DB も同じ） */}
+              {!leaveRequestEnabled && !choseiLink && <option value="慶弔休暇">慶弔休暇</option>}
               {/* 片付けの日（11/16）から調整休は出さない。🚨 すでに調整休の申請を直しているときだけは出す（選択が消えて見えないように） */}
-              {!leaveRequestEnabled && (!unifyCleanedNow || leaveType === '調整休') && <option value="調整休">調整休</option>}
-              {!leaveRequestEnabled && <option value="その他">その他</option>}
+              {!leaveRequestEnabled && !choseiLink && (!unifyCleanedNow || leaveType === '調整休') && <option value="調整休">調整休</option>}
+              {!leaveRequestEnabled && !choseiLink && <option value="その他">その他</option>}
             </select>
             {leaveType === 'その他' && (
               <input
@@ -1434,8 +1512,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           {/* 休暇日 カレンダー */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: errFields.has('dates') ? '#dc3545' : text }}>
-              休暇日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除・{jpDateLabel(leaveMaxDate)}まで）</span>
+              休暇日 <span style={{ color: '#dc3545' }}>*</span> {!choseiLink && <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除・{jpDateLabel(leaveMaxDate)}まで）</span>}
             </label>
+            {choseiLink ? (
+              <div style={{ padding: '10px 14px', background: isDark ? '#495057' : '#f8f9fa', borderRadius: 8, color: text, fontWeight: 'bold' }}>{mdDowShort(choseiLink.date)}<span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 8 }}>（時間外調整休の日・変えられません）</span></div>
+            ) : (
             <MultiDatePicker
               selectedDates={selectedDates}
               onChange={dates => {
@@ -1447,6 +1528,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               isDark={isDark}
               calendarKinds={calendarKinds}
             />
+            )}
             {/* 会社の休館日を選んだときの注意書き。
                 止めない（試合・イベントで出勤する日もある）。気づいてもらうだけ */}
             {(() => {
@@ -1539,6 +1621,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               // 🐛 依頼から開いたとき、依頼した人が申請先の候補に居ないと「申請先：さん」のまま送れていた（2026-10-26 不具合2）
               if (!selectedApproverId || (!editLeaveId && !leaveApprovers.some(a => a.id === selectedApproverId))) { errs.push('申請先を選んでください'); bad.add('approver'); }
               if (selectedDates.length === 0) { errs.push('休暇日を選択してください'); bad.add('dates'); }
+              if (choseiLink && !(LEAVE_REPLACE_TYPES as readonly string[]).includes(leaveType)) { errs.push('有給休暇・バースデー休暇を選んでください'); bad.add('type'); }
+              if (choseiLink && choseiBlockMsg) { errs.push(choseiBlockMsg); }
               // 🚨 先の日付の上限（2026-09-09 ユーザー確定）。日付選びでも押せなくしているが、
               //    下書きの復元や作り直しで上限を越えた日が残ることがあるので送信前にも必ず弾く
               if (selectedDates.some(d => d > leaveMaxDate)) { errs.push(`休暇の申請は${jpDateLabel(leaveMaxDate)}までです`); bad.add('dates'); }
@@ -1555,7 +1639,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               if (isFurikae && choseiOriginDates.some(d => !originLocations[d])) { errs.push('振替元のすべての日付で勤務校を選択してください'); bad.add('originLocations'); }
               if (errs.length > 0) { setLocError(errs.join('\n')); setErrFields(bad); return; }
               // 残業申請の終日の休み（時間外調整休・振替休日・欠勤）と同じ日に出さない（2026-10-19・最後は DB のトリガーが止める）
-              const dayOffMsg = await checkDayOffConflict(selectedDates, 'leave', leaveType);
+              const dayOffMsg = await checkDayOffConflict(selectedDates, 'leave', leaveType, false, null, choseiLink?.otId);
               if (dayOffMsg) { setLocError(dayOffMsg); setErrFields(new Set(['dates'])); return; }
               setLocError(''); setErrFields(new Set());
               setShowConfirm(true);
@@ -2278,20 +2362,20 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {cancelErrFor?.id === req.id && (
                       <div style={{ marginTop: 8, fontSize: 12.5, color: '#842029', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6, padding: '6px 10px' }}>⚠️ {cancelErrFor.msg}</div>
                     )}
-                    {/* 休暇の種類を変える（2026-10-26 ユーザー確定 案2・薄い青の枠）。有休・バースデー休暇だけ・残業申請を使える方だけ */}
+                    {/* 休暇の種類を変更する（2026-10-26 ユーザー確定 案2・薄い青の枠・言葉は 2026-10-27「変更する」）。有休・バースデー休暇だけ・残業申請を使える方だけ */}
                     {canOvertime && isReplaceableLeave(req) && (() => {
                       const pend = pendingReplace.get(req.id) ?? new Set<string>();
                       const days = leaveDatesOf(req).filter(d => !pend.has(d));
                       const go = (d: string) => navigate(`/overtime?replace_leave=${req.id}&date=${d}`);
                       return (
                         <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, textAlign: 'left', background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}` }}>
-                          <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: days.length > 0 ? 6 : 0 }}>休暇の種類を変える（マネージャーに申請）</div>
+                          <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: days.length > 0 ? 6 : 0 }}>休暇の種類を変更する（マネージャーに申請）</div>
                           {[...pend].sort().map(d => (
                             <div key={d} style={{ fontSize: 12, color: isDark ? '#dee2e6' : '#0d47a1', marginBottom: 4 }}>{mdDowShort(d)}は、時間外調整休への変更を申請中です</div>
                           ))}
                           {days.length > 0 && (replaceChooseFor === req.id && days.length > 1 ? (
                             <>
-                              <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: 4 }}>どの日を変えますか？</div>
+                              <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: 4 }}>どの日を変更しますか？</div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                 {days.map(d => (
                                   <button key={d} type="button" onClick={() => go(d)} style={{ ...changeBtnStyle, padding: '4px 10px' }}>{mdDowShort(d)}</button>
@@ -2300,7 +2384,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                               </div>
                             </>
                           ) : (
-                            <button type="button" onClick={() => (days.length === 1 ? go(days[0]) : setReplaceChooseFor(req.id))} style={changeBtnStyle}>時間外調整休に変える</button>
+                            <button type="button" onClick={() => (days.length === 1 ? go(days[0]) : setReplaceChooseFor(req.id))} style={changeBtnStyle}>時間外調整休に変更する</button>
                           ))}
                         </div>
                       );
@@ -2344,7 +2428,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
               <tbody>
                 <tr><td style={{ padding: '8px 0', color: subText, width: '30%', verticalAlign: 'top' }}>申請者</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{profileName || user.email}</td></tr>
-                <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇種別</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{leaveType === 'その他' ? leaveTypeOther : leaveType}</td></tr>
+                <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇種別</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{leaveType === 'その他' ? leaveTypeOther : leaveType}{choseiLink && <div style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>{mdDowShort(choseiLink.date)}の時間外調整休からの変更</div>}</td></tr>
                 <tr>
                   <td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇日</td>
                   <td style={{ padding: '8px 0', color: text }}>

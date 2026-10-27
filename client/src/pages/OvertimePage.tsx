@@ -36,7 +36,7 @@ import { retireeReturnNote } from '../lib/retire';
 import PendingSubmitLine from '../components/PendingSubmitLine';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, confirmAsPlanned, loadFurikaeReportSwitch, confirmTripRostered, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import { checkDayOffConflict } from '../lib/dayOffConflict';
-import { replaceBannerTitle, replaceBannerNote, myLeaveReplaceBlock, syncReplacedLeaveGcal, replacedFromLabel } from '../lib/leaveReplace';
+import { replaceBannerTitle, replaceBannerNote, myLeaveReplaceBlock, syncReplacedLeaveGcal, replacedFromLabel, loadPendingChoseiReplacements, mdDowShort } from '../lib/leaveReplace';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
 import { loadMyOpenClockInquiries, type MyOpenClockInquiry } from '../lib/clockInquiry';
@@ -3391,7 +3391,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // ---- data fetch ----
   // profiles への embed は auth.users 向きの既存FKでは解決できないため、
   // 20260727 マイグレーションで追加した profiles 向き named FK を使う。
+  // マネージャーの受理の前の「時間外調整休 → 有休」の休暇（時間外調整休の ID）。カードの［有休に変更する］を隠して「申請中」と出すため（2026-10-27 段2b）
+  const [pendingChosei, setPendingChosei] = useState<Set<string>>(new Set());
   const fetchOwn = useCallback(async () => {
+    void loadPendingChoseiReplacements(user.id).then(setPendingChosei);
     let q = supabase.from('overtime_reports')
       .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('applicant_id', user.id)
@@ -5457,6 +5460,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           </div>
                         )}
 
+                        {/* 休暇の種類を変更する（2026-10-27 段2b・有休のカードの枠と同じ形）。受理済みの時間外調整休（終日）だけ・締め（支給月の17日）のあとは出さない。
+                            押すと休暇申請（?replace_ot=）。マネージャーが受理した瞬間に DB が時間外調整休を取り消す。止めるのは DB */}
+                        {!isAuto && r.status === 'confirmed' && (r.application_types ?? []).length === 1 && (r.application_types ?? [])[0] === 'chosei_off'
+                          && !(otTodayStr > payPeriodCloseCutoff(r.pay_period_start)) && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, textAlign: 'left', background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}` }}>
+                            <div style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', marginBottom: 6 }}>休暇の種類を変更する（マネージャーに申請）</div>
+                            {pendingChosei.has(r.id) ? (
+                              <div style={{ fontSize: 12, color: isDark ? '#dee2e6' : '#0d47a1' }}>{mdDowShort(r.work_date)}は、有休への変更を申請中です</div>
+                            ) : (
+                              <button type="button" onClick={() => navigate(`/leave?replace_ot=${r.id}&date=${r.work_date}`)}
+                                style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
+                                有休に変更する
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {/* 実績報告済み（上長の確認まち）・受理済みは本人が直せないので、ここから管理者へ依頼する。
                             🚨 「対応待ちの依頼がある行」も状態を問わず必ず出すこと。status だけで出し分けると、
                                依頼を出したあとに上長が差し戻した瞬間にバッジごと消え、本人は取り下げも
