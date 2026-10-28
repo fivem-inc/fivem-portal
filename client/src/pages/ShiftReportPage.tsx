@@ -30,7 +30,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
-import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, cardChangeBtn, cardCancelBtn, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import type { TodoItem } from '../lib/shiftReportTodo';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
@@ -2094,7 +2094,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <li>残業・早退・遅刻・欠勤が発生した場合に報告してください。</li>
                 <li>報告先は、出勤する校の担当のリーダー・マネージャー（またはフロア責任者）を選択してください。</li>
                 <li>受理されると「受理済み」に変わります。</li>
-                <li>間違えた場合、受理前はご自身で修正・取消ができます。受理後は「📩 修正依頼」から依頼してください。</li>
+                <li>間違えた場合、受理前はご自身で修正・取消ができます。受理後は「📩 修正を依頼」から依頼してください。</li>
                 {tripNotesOn && <li>出張報告（到着か終了）を送った日は、上の「📋 出張の申請がまだの日」から、日付と勤務地が入った下書きを開けます。実際の時刻と理由を入れて報告してください。登録シフトに入っている出張先へ、シフトの時間内に行った日は、下書きを作成しません。</li>}
                 {/* 🚨 報告できる期間の上限（2026-09-09）。休暇と同じ上限にそろえている。
                     判定は lib/breakCalc の leaveRequestMaxDate 1か所 */}
@@ -2265,7 +2265,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                       // 本人が自分で直せる/取り消せるのは「未承認（承認前）」のときだけ。受理済みは修正/取消依頼へ。
                       const canSelfEdit = r.applicant_id === user.id && ['pending', 'resubmitted', 'returned'].includes(r.status);
                       return (
-                        <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', display: 'flex', alignItems: 'flex-start', gap: 10, transition: 'background 0.6s' }}>
+                        <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10, transition: 'background 0.6s' }}>
                           <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#555', minWidth: 52, flexShrink: 0, marginTop: 2 }}>
                             {r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）
                           </div>
@@ -2321,18 +2321,6 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                             <span style={{ fontSize: 10, fontWeight: 'bold', color: (STATUS_INFO[r.status] ?? STATUS_INFO['pending']).color, background: (STATUS_INFO[r.status] ?? STATUS_INFO['pending']).bg, borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' }}>
                               {(STATUS_INFO[r.status] ?? STATUS_INFO['pending']).label}
                             </span>
-                            {canSelfEdit && (
-                              <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }}
-                                style={{ fontSize: 11, color: isDark ? '#90caf9' : '#1565c0', background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                内容を変更する
-                              </button>
-                            )}
-                            {canSelfEdit && (
-                              <button data-net="write" onClick={() => { setCancelTarget(r); setCancelReason(''); }}
-                                style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#495057', background: 'none', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                この申請を取り消す
-                              </button>
-                            )}
                             {isAdmin && (
                               (
                                 <button onClick={() => { setHardDeleteErr(null); setHardDeleteTarget(r); }}
@@ -2342,6 +2330,18 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               )
                             )}
                           </div>
+                          {/* ［内容を変更する］［この申請を取り消す］をカードの幅いっぱいに横に並べる（2026-10-28 ユーザー確定・休暇・残業と同じ形・lib/buttonStyles）。
+                              中の列に置くとスマホで1つ65pxほどになり、文字が2行に折れるため、下の段に出す */}
+                          {canSelfEdit && (
+                            <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+                              <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }} style={cardChangeBtn(isDark)}>
+                                内容を変更する
+                              </button>
+                              <button data-net="write" onClick={() => { setCancelTarget(r); setCancelReason(''); }} style={cardCancelBtn(isDark)}>
+                                この申請を取り消す
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}

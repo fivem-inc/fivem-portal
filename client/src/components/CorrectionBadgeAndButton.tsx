@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import CorrectionRequestModal from './CorrectionRequestModal';
 import type { CorrectionField } from './CorrectionRequestModal';
-import { withdrawCorrectionRequest } from '../lib/correctionRequest';
+import { withdrawCorrectionRequest, correctionFrameTitle } from '../lib/correctionRequest';
 import type { CorrectionRequestRow, CorrectionTargetType, CorrectionRequestKind } from '../lib/correctionRequest';
 
 // 本人の履歴カードに置く「依頼中/対応済み/対応不可バッジ ＋ 依頼ボタン(修正/取消) ＋ 取り下げ ＋ モーダル」一式。
@@ -17,7 +17,7 @@ interface Props {
   canRequest: boolean;                    // 依頼ボタンを出す条件（承認後など）
   onSubmitted: () => void;                // 送信・取り下げ後に親が再取得する
   note?: string;                          // 依頼の画面に出す案内の1行（任意）
-  /** 灰色の枠の見出し（休暇は「日付などの誤りを…」・既定は「日付・時間などの誤りを…」） */
+  /** 灰色の枠の見出し。ご自分で直せない理由と、次にすること（correctionFrameTitle で作る・既定は受理済み） */
   frameTitle?: string;
 }
 
@@ -66,10 +66,10 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
       )}
 
       {/* 未依頼 or 対応済み/不可/取下げ後：灰色の枠の中に［📩 修正を依頼］［取消を依頼］（2026-10-26 ユーザー確定 案2・言葉をそろえる）。
-          枠の見出しで「管理者に依頼する」ことを伝えるので、ボタンには「管理者に」を書かない。説明の文は出さない */}
+          枠の見出しで「ご自分で直せない理由」と「管理者に依頼する」ことを伝えるので、ボタンには「管理者に」を書かない（2026-10-28 見出しを理由の1行に） */}
       {canReRequest && (
         <div style={{ width: '100%', border: `1px solid ${isDark ? '#495057' : '#dee2e6'}`, background: isDark ? '#2b3035' : '#f8f9fa', borderRadius: 8, padding: '8px 10px', textAlign: 'left' }}>
-          <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 6 }}>{frameTitle ?? '日付・時間などの誤りを直す・取り消す（管理者に依頼）'}</div>
+          <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 6 }}>{frameTitle ?? correctionFrameTitle('accepted')}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button data-net="write" type="button" onClick={() => setModalKind('edit')}
               style={{ fontSize: 12.5, padding: '6px 14px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: isDark ? '#343a40' : '#fff', color: isDark ? '#f8f9fa' : '#212529', cursor: 'pointer' }}>

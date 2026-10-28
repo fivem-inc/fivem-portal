@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { fetchUnavailableIds, withoutUnavailable, approverOnLeaveText } from '../lib/staffLeave';
 import { useUnavailableIds } from '../hooks/useUnavailableIds';
-import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, cardChangeBtn, cardCancelBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import ManagerTabs from './ManagerTabs';
 import AppRequestBox from './AppRequestBox';
 import PartLeaveFormBox from './PartLeaveFormBox';
@@ -68,7 +68,7 @@ import { useRoles } from '../hooks/useRoles';
 import { attrsFor, embeddedRole } from '../lib/roleAttrs';
 import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { sendLeaveSlack } from '../lib/leaveSlack';
-import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
+import { fetchLatestCorrectionByTarget, correctionFrameTitle } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import CorrectionBadgeAndButton from './CorrectionBadgeAndButton';
 import { PageTabs } from './PageTabs';
@@ -992,8 +992,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   const isDark = useDarkMode();
   // 履歴のカードの［内容を変更する］（薄い青）と［この申請を取り消す］（枠）（2026-10-26 言葉をそろえる・残業・勤務変更と同じ形）
-  const changeBtnStyle: React.CSSProperties = { flex: 1, padding: '8px 0', borderRadius: 8, border: '1px solid ' + (isDark ? '#3d5166' : '#90caf9'), background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer' };
-  const cancelBtnStyle: React.CSSProperties = { ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 12.5 };
+  const changeBtnStyle = cardChangeBtn(isDark);
+  const cancelBtnStyle = cardCancelBtn(isDark);
   const bg = isDark ? '#343a40' : 'white';
   const text = isDark ? '#fff' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
@@ -2393,7 +2393,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {(['step2_pending', 'manager_approved', 'admin_approved', 'approved'].includes(req.status) || corrections.get(req.id)?.status === 'open') && (
                       <>
                         <CorrectionBadgeAndButton
-                          frameTitle="日付などの誤りを直す・取り消す（管理者に依頼）"
+                          frameTitle={correctionFrameTitle(req.status === 'approved' ? 'accepted' : 'accepting')}
                           targetType="leave"
                           targetId={req.id}
                           targetLabel={`休暇 ${dateDisplay}`}

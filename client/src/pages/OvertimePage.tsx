@@ -61,7 +61,7 @@ import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
-import { primaryBtn, backBtn, tintBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, cardChangeBtn, cardCancelBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 import AppRequestBox from '../components/AppRequestBox';
 import ManagerTabs from '../components/ManagerTabs';
 import { DAY_MARK_STYLE, DAY_MARK_LEGEND, loadDayMarks, monthRange, dayMarkBlocksForm, recordDayCheck, cancelDayCheck, fetchDayCheckEnabled } from '../lib/overtimeDayMark';
@@ -89,7 +89,7 @@ import { usePartialSlotMap } from '../hooks/usePartialSlotMap';
 import ClockReasonPicker from '../components/ClockReasonPicker';
 import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, clockKindOf, clockTimeFields, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
 import type { OvertimeType, SituationLike } from '../lib/overtimeTypes';
-import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
+import { fetchLatestCorrectionByTarget, correctionFrameTitle } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { toDbTime } from '../lib/timeInput';
@@ -5558,24 +5558,42 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                       </button>
                                     </div>
                                   </div>
-                                ) : (
-                                <button data-net="write" onClick={() => { setModifyTargetId(r.id); setCancelTargetId(null); }} disabled={actingId === r.id}
-                                  style={{ width: '100%', marginTop: canReport ? 8 : 0, padding: '11px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
-                                  内容を変更する
-                                </button>
-                                )}
+                                ) : null}
+                              </>
+                            )}
+                            {/* ［内容を変更する］［この申請を取り消す］を横に並べる（2026-10-28 ユーザー確定・休暇の形にそろえた・lib/buttonStyles の cardChangeBtn／cardCancelBtn）。
+                                変更が無い（実績報告が出ている）ときの取消は、今までどおり下に小さく出す（主役は［実績を報告する］） */}
+                            {(() => {
+                              const showMod = (canModify && modifyTargetId !== r.id) || canResubmit;
+                              if (!showMod) return null;
+                              const showCan = canCancel && cancelTargetId !== r.id;
+                              return (
+                                <div style={{ display: 'flex', gap: 8, marginTop: canReport ? 8 : 0 }}>
+                                  <button data-net="write" disabled={actingId === r.id}
+                                    onClick={() => {
+                                      if (canResubmit) { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); return; }
+                                      setModifyTargetId(r.id); setCancelTargetId(null);
+                                    }}
+                                    style={cardChangeBtn(isDark)}>
+                                    内容を変更する
+                                  </button>
+                                  {showCan && (
+                                    <button data-net="write" onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
+                                      style={cardCancelBtn(isDark)}>
+                                      この申請を取り消す
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {canModify && (
+                              <>
                                 {!r.is_post_hoc && (
                                   <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
                                     ※ 勤務日のあとは「実績を報告する」から変更できます（残業なしの報告もこちら）
                                   </p>
                                 )}
                               </>
-                            )}
-                            {canResubmit && (
-                              <button data-net="write" onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
-                                style={{ width: '100%', padding: '11px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
-                                内容を変更する
-                              </button>
                             )}
                             {canCancel && (
                               cancelTargetId === r.id ? (
@@ -5599,8 +5617,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                     </button>
                                   </div>
                                 </div>
-                              ) : (
-                                // 取消は常に控えめ（中央・小さめ・同じ文言）。主役は実績報告・内容の確認。
+                              ) : (canModify && modifyTargetId !== r.id) || canResubmit ? null : (
+                                // 変更のボタンが無いとき（実績報告が出ている・変更の確認中）は控えめに（中央・小さめ）。主役は実績報告。
                                 <div style={{ textAlign: 'center', marginTop: 10 }}>
                                   <button data-net="write" onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
                                     style={{ ...backBtn(isDark), padding: '6px 16px', fontSize: 12 }}>
@@ -5648,6 +5666,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             isDark={isDark}
                             latest={corrections.get(r.id) ?? null}
                             canRequest
+                            frameTitle={correctionFrameTitle(r.status === 'reported' ? 'reported' : 'accepted')}
                             onSubmitted={reloadCorrections}
                             // 振替休日の休む日に出勤（在宅など）することになったとき（2026-10-26 ユーザー確定）
                             note={(r.application_types ?? []).includes('furikae_off')

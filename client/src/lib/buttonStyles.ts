@@ -58,6 +58,20 @@ export const confirmPageCount: React.CSSProperties = {
   background: '#fff', color: CONFIRM_PAGE_ORANGE, borderRadius: 10, padding: '1px 8px', fontSize: 12, fontWeight: 'bold',
 };
 
+/**
+ * 履歴のカードの［内容を変更する］（薄い青）と［この申請を取り消す］（枠だけ）。2つを横に並べる（flex 1 : 1）。
+ * 休暇・残業・勤務変更の3つでそろえる（2026-10-28 ユーザー確定・休暇の形に合わせた）
+ */
+export function cardChangeBtn(isDark: boolean): React.CSSProperties {
+  return {
+    flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`,
+    background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer',
+  };
+}
+export function cardCancelBtn(isDark: boolean): React.CSSProperties {
+  return { ...backBtn(isDark), flex: 1, padding: '8px 0', fontSize: 12.5 };
+}
+
 /** 追加など2番目のボタン（薄い青）。大きさは呼ぶ側で足す */
 export function tintBtn(isDark: boolean): React.CSSProperties {
   return {
