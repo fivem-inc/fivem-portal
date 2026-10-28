@@ -132,7 +132,9 @@ export async function fetchLatestCorrectionByTarget(
  * 灰色の枠の見出し（2026-10-28 ユーザー確定 案A）。受理のあとご自分で直せない理由を、ボタンのすぐ上に1行で出す。
  * 🚨 状態に合う言い方を選ぶ（受理の途中・実績の報告のあとは「受理されたため」と書かない）
  */
-export function correctionFrameTitle(why: 'accepted' | 'accepting' | 'reported'): string {
-  const head = why === 'reported' ? '実績を報告したため' : why === 'accepting' ? '受理が始まっているため' : '受理されたため';
+export function correctionFrameTitle(why: 'accepted' | 'accepting' | 'reported' | 'dayCame', dayLabel?: string): string {
+  // dayCame：振替休日が受理の前に休む日・振替元の日を迎えた（2026-10-29 ユーザー確定 案B「休む日（10/30（木））が来たため」）
+  const head = why === 'reported' ? '実績を報告したため' : why === 'accepting' ? '受理が始まっているため'
+    : why === 'dayCame' ? `${dayLabel ?? '振替休日の日'}が来たため` : '受理されたため';
   return `${head}、ご自分では変更・取消できません。誤りがあるときは管理者に依頼してください。`;
 }

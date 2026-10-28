@@ -50,7 +50,7 @@ import type { OvertimeStatus } from '../lib/overtimeStatus';
 import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES, situationOf } from '../lib/overtimeSubmit';
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
 import { evalFurikaeChange, normalSegmentsOf, type FurikaeChangePlan } from '../lib/furikaeChange';
-import { isFurikaeReportRow, furikaeReportGate, furikaeOriginWindow, isFurikaeUnreported, furikaeSelfCancelLocked, furikaePeriodNg, payPeriodRangeLabel } from '../lib/furikaeReport';
+import { isFurikaeReportRow, furikaeReportGate, furikaeOriginWindow, isFurikaeUnreported, furikaeSelfCancelLocked, furikaeLockedDayLabel, furikaePeriodNg, payPeriodRangeLabel } from '../lib/furikaeReport';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftSegsSorted, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance, diffColor } from '../lib/overtimeBalance';
@@ -5666,7 +5666,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             isDark={isDark}
                             latest={corrections.get(r.id) ?? null}
                             canRequest
-                            frameTitle={correctionFrameTitle(r.status === 'reported' ? 'reported' : 'accepted')}
+                            // 受理の前（requested・returned）に振替休日の日が来たときは「受理されたため」と書かない（2026-10-29 ユーザー確定 案B）
+                            frameTitle={furikaeCancelLocked && (r.status === 'requested' || r.status === 'returned')
+                              ? correctionFrameTitle('dayCame', furikaeLockedDayLabel(r) ?? undefined)
+                              : correctionFrameTitle(r.status === 'reported' ? 'reported' : 'accepted')}
                             onSubmitted={reloadCorrections}
                             // 振替休日の休む日に出勤（在宅など）することになったとき（2026-10-26 ユーザー確定）
                             note={(r.application_types ?? []).includes('furikae_off')

@@ -65,6 +65,15 @@ export function furikaeSelfCancelLocked(r: FurikaeRow, todayStr: string): boolea
   return todayStr >= first;
 }
 
+/** 取り消せなくなった理由の日（休む日・振替元の日のうち先に来た方）。灰色の枠の一文に使う。例「休む日（10/30（木））」 */
+export function furikaeLockedDayLabel(r: FurikaeRow): string | null {
+  if (!isFurikaeReportRow(r)) return null;
+  const origin = r.furikae_origin_date as string;
+  const d = r.work_date < origin ? r.work_date : origin;
+  const dow = '日月火水木金土'[new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10))).getUTCDay()];
+  return `${r.work_date < origin ? '休む日' : '振替元の日'}（${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dow}））`;
+}
+
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 /** 給与期間の終わり（翌月15日）。pps は期間の初日（16日） */
 const periodEnd = (pps: string) => {
