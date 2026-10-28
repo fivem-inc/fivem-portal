@@ -1544,8 +1544,8 @@ const OvertimeAdminTab: React.FC = () => {
                           </td>
                           <td style={cell}>
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
-                              {/* 経理が代わりに受理（受理まちの行だけ・2026-10-14） */}
-                              {(st === 'requested' || st === 'reported') && (
+                              {/* 経理が代わりに受理（受理まちの行だけ・2026-10-14）。振替休日の変更の依頼は受理済みの行に付くので、依頼中なら出す（2026-10-29） */}
+                              {(st === 'requested' || st === 'reported' || !!otFcMap[r.id]) && (
                                 <button onClick={() => { setOtProxyTarget(r); setOtProxyShift('needed'); setOtProxyErr(''); /* 初めは「必要」（受理の画面・休暇と同じ・2026-10-14） */ }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: BTN_BLUE, color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>代わりに受理</button>
                               )}
                               {/* 終日行（調整休・欠勤）は修正モーダル非対応（segments前提の再計算で差分が壊れるため。種別変更UIは公開準備時に対応） */}

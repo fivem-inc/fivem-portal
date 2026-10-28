@@ -294,6 +294,7 @@ serve(async (req) => {
       // 振替休日の変更の受理（2026-10-26 段6）
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、受理はできません。' }, 403)
+      if (on_behalf === true && !isAdmin) return json({ success: false, error: '代わりに受理できるのは経理（管理者）だけです' }, 403)
       // 🚨 給与計算が始まった期間（支給月の17日以降）は、上長の受理で給与の数字を変えない＝管理者だけ（2026-10-26 レビュー 穴A）
       if (!isAdmin && payClose().afterCutoff) {
         return json({ success: false, error: '給与計算が始まっているため（毎月17日以降）、変更の受理は管理者が行います' }, 403)
@@ -318,6 +319,27 @@ serve(async (req) => {
         read: false,
       }
       slackEventKey = 'overtime:cancelled'
+      // 経理が代わりに受理したとき（2026-10-29・ふつうの受理と同じ：履歴に1行・元の申請先へベルだけ＝スマホに乗らない）
+      if (on_behalf === true && r.reviewer_id && r.reviewer_id !== caller.id) {
+        const { data: rv } = await db.from('profiles').select('name').eq('id', r.reviewer_id).maybeSingle()
+        const reviewerName = (rv as { name?: string } | null)?.name ?? ''
+        const { error: hErr } = await db.from('overtime_report_history').insert({
+          report_id: r.id, changed_by: caller.id, change_kind: 'approved',
+          change_summary: `経理が代わりに受理（振替休日の変更・申請先：${reviewerName || '不明'}）`, snapshot: r,
+        })
+        if (hErr) console.error('[overtime-approve] 代わりに受理の履歴の記録に失敗:', hErr.message)
+        if (r.reviewer_id !== r.applicant_id) {
+          const { error: fErr } = await db.from('notifications').insert({
+            user_id: r.reviewer_id,
+            message: '経理が代わりに受理しました',
+            sub_message: `${applicantName}さん 振替休日の変更（休む日 ${md(r.work_date)} は出勤・振替元 ${md(originDate)} は休日出勤）`,
+            source_type: 'overtime_request:proxy_fyi',
+            reference_id: r.id,
+            read: false,
+          })
+          if (fErr) console.error('[overtime-approve] 元の申請先へのお知らせに失敗:', fErr.message)
+        }
+      }
     } else if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (await onLeaveBlocked()) return json({ success: false, error: '現在、受理はできません。' }, 403)
