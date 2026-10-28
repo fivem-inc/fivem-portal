@@ -472,6 +472,8 @@ const ShiftReportForm: React.FC<{
   };
   const visiblePastReasons = useMemo(() => pastReasons.filter(r => !hiddenReasons.includes(r)), [pastReasons, hiddenReasons]);
   useEffect(() => {
+    // 相手がまだ決まっていない（管理者が代わりに入力する前）は読まない。空の ID は 400 になる
+    if (!applicantId) { setPastReasons([]); return; }
     supabase.from('shift_reports').select('reason, created_at').eq('applicant_id', applicantId)
       .not('reason', 'is', null).order('created_at', { ascending: false }).limit(50)
       .then(({ data }) => {
