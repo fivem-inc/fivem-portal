@@ -85,14 +85,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     //    Supabase は通信に失敗しても例外を投げないので try/catch では防げない。
     bootMark('boot:4 在籍の確認をはじめた');
     // 本人の表示に使う列も一緒に読み、hooks/useAuth に渡す（lib/profilePrefetch・2026-10-28 ログの量の見直し B2：前は開くたびに profiles を2回読んでいた）
-    const { data: profile, error } = await supabase
+    let gate = await supabase
       .from('profiles')
       .select(`is_active, approval_status, ${PROFILE_PREFETCH_COLUMNS}` as const)
       .eq('id', sessionUser.id)
       .abortSignal(timeoutSignal(AUTH_TIMEOUT_MS))
       .single();
+    if (gate.data && !gate.error) putPrefetchedProfile(sessionUser.id, gate.data as unknown as Record<string, unknown>);
+    // 🚨 表示用の列が原因で読めないとき（列を消した 42703・列の権限 42501 など＝code がある）も、門の判定（在籍・承認）は必ずする。
+    //    読めないまま下へ進むと「通信の失敗」と同じ扱いで、退職者・停止中の人も通ってしまう（2026-10-28 点検）。通信の失敗は code が空
+    if (gate.error && gate.error.code && gate.error.code !== 'PGRST116') {
+      gate = await supabase
+        .from('profiles')
+        .select('is_active, approval_status')
+        .eq('id', sessionUser.id)
+        .abortSignal(timeoutSignal(AUTH_TIMEOUT_MS))
+        .single() as unknown as typeof gate;
+    }
+    const { data: profile, error } = gate;
     bootMark('boot:5 在籍の確認が終わった');
-    if (profile && !error) putPrefetchedProfile(sessionUser.id, profile as unknown as Record<string, unknown>);
 
     // プロフィールが存在しない（PGRST116 = 行なし＝削除済みアカウント）→ 弾く。
     // ネットワーク等の一時的な取得失敗（別エラーでdataもnull）は、正常ユーザーを

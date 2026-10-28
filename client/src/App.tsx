@@ -1629,9 +1629,12 @@ const BANNER_ONLY_SOURCE_TYPES = [
   'overtime_request:pending_resubmit',
 ];
 
-// ホームのバナーの読み直し（2026-10-28 ログの量の見直し）：前はホームを開くたびに、お知らせと関係する申請を読み直していた。
-// 同じ人なら10分は読み直さない。新しいお知らせが来た（'bell'）・自分が申請や安否を書いた（下の話題）ときはすぐ読む（hooks/useRefreshOn）
+// ホームのバナーの読み直し：ホームを開くたびに読む（新しいお知らせ・自分の書き込みでも読む＝hooks/useRefreshOn）。
+// 🚨 key を付けて「10分は読み直さない」にしない（2026-10-28 点検で戻した）。このバナーは「助けが必要」（safety_check_urgent）を出す
+//    唯一の場所で、ほかの人の回答は自分の書き込みにならず、気づくのが3分ごとの確認まで遅れる（安否確認は読み直しを減らさない決まり）
 const TOPICS_HOME_BANNER = ['bell', 'leave', 'shift_report', 'overtime', 'safety'] as const;
+/** ホームのバナーで自動で既読にしようとしたお知らせ（同じものを2回送らない） */
+const autoDismissTried = new Set<string>();
 const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useStickyState<{ id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }[]>('homeBanner:' + userId, []);
   const [expanded, setExpanded] = useState(false);
@@ -1776,14 +1779,17 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
 
     const shouldAutoDismiss = (n: typeof data[number]) => isAlreadyReadInBoard(n) || isResolvedPending(n);
 
-    const toAutoDismiss = data.filter(shouldAutoDismiss);
+    // 🚨 同じお知らせを2回送らない（既読にする書き込みが 'bell' の書き込みになり、このバナーが読み直す。
+    //    書き込みが0件のまま通り続けると「読む→書く→読む…」が止まらないため・2026-10-28 点検）
+    const toAutoDismiss = data.filter(n => shouldAutoDismiss(n) && !autoDismissTried.has(n.id));
     if (toAutoDismiss.length > 0) {
+      toAutoDismiss.forEach(n => autoDismissTried.add(n.id));
       supabase.from('notifications').update({ read: true, banner_dismissed: true }).in('id', toAutoDismiss.map(n => n.id)).then(...logFail('ベル通知の既読化'));
     }
     setNotifs(data.filter(n => !shouldAutoDismiss(n)));
   }, [userId]);
 
-  useRefreshOn(fetchNotifs, TOPICS_HOME_BANNER, 'homeBanner:' + userId);
+  useRefreshOn(fetchNotifs, TOPICS_HOME_BANNER);
 
   const dismiss = useCallback(async (id: string) => {
     // 🚨 update は0件でもエラーにならない。失敗すると、閉じたはずのバナーが

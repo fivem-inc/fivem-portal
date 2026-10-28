@@ -474,9 +474,13 @@ const ShiftReportForm: React.FC<{
   useEffect(() => {
     // 相手がまだ決まっていない（管理者が代わりに入力する前）は読まない。空の ID は 400 になる
     if (!applicantId) { setPastReasons([]); return; }
+    // 相手を切り替えたあとに前の相手の答えが遅れて届いても上書きしない（alive）。読めなければ候補は前のまま（補助の表示なので文は出さない）
+    let alive = true;
     supabase.from('shift_reports').select('reason, created_at').eq('applicant_id', applicantId)
       .not('reason', 'is', null).order('created_at', { ascending: false }).limit(50)
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { console.warn('過去の理由を読めませんでした', error.message); return; }
         const seen = new Set<string>(); const list: string[] = [];
         for (const r of (data ?? []) as { reason: string | null }[]) {
           const t = (r.reason ?? '').trim();
@@ -484,6 +488,7 @@ const ShiftReportForm: React.FC<{
         }
         setPastReasons(list.slice(0, 12));
       }, () => {});
+    return () => { alive = false; };
   }, [applicantId]);
 
   // 修正で開いたときは空のままにする（既定の12:00を入れると、入力していない時刻が

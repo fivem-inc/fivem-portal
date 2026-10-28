@@ -45,6 +45,16 @@ async function flush(): Promise<void> {
   flushScheduled = false;
   const batch = queued;
   queued = new Map();
+  // 🚨 途中で投げても、待っている全員に必ず返す（返さないと連絡板などが「読み込み中」のまま止まる）
+  try {
+    await flushBatch(batch);
+  } catch (e) {
+    const r: AppSettingResult = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    batch.forEach(rs => rs.forEach(res => res(r)));
+  }
+}
+
+async function flushBatch(batch: Map<string, ((r: AppSettingResult) => void)[]>): Promise<void> {
   const { data: sess } = await supabase.auth.getSession();
   const uid = sess.session?.user?.id ?? null;
   if (uid !== cacheUser) { cache.clear(); hotLoaded = false; cacheUser = uid; }
@@ -58,12 +68,14 @@ async function flush(): Promise<void> {
     batch.forEach(rs => rs.forEach(res => res(r)));
     return;
   }
-  if (withHot) hotLoaded = true;
+  // 読んでいる間にログインした人が変わったら、使い回しには入れない（前の人の結果を次の人の分にしない）
+  const sameUser = !!uid && uid === cacheUser;
+  if (withHot && sameUser) hotLoaded = true;
   const rows = new Map((data ?? []).map((x: { key: string; value: unknown }) => [x.key, x.value]));
   for (const k of keys) {
     const found = rows.has(k);
     // ログインしていないときは使い回さない（読めないだけで「行が無い」と覚えると、ログインしたあとも既定値で動く）
-    if (uid) cache.set(k, { at, found, value: found ? rows.get(k) : null });
+    if (sameUser) cache.set(k, { at, found, value: found ? rows.get(k) : null });
   }
   batch.forEach((rs, k) => {
     const r: AppSettingResult = { ok: true, found: rows.has(k), value: rows.has(k) ? rows.get(k) : null };
