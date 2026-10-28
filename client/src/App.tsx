@@ -1629,8 +1629,11 @@ const BANNER_ONLY_SOURCE_TYPES = [
   'overtime_request:pending_resubmit',
 ];
 
+// ホームのバナーの読み直し（2026-10-28 ログの量の見直し）：前はホームを開くたびに、お知らせと関係する申請を読み直していた。
+// 同じ人なら10分は読み直さない。新しいお知らせが来た（'bell'）・自分が申請や安否を書いた（下の話題）ときはすぐ読む（hooks/useRefreshOn）
+const TOPICS_HOME_BANNER = ['bell', 'leave', 'shift_report', 'overtime', 'safety'] as const;
 const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
-  const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }[]>([]);
+  const [notifs, setNotifs] = useStickyState<{ id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }[]>('homeBanner:' + userId, []);
   const [expanded, setExpanded] = useState(false);
 
   const fetchNotifs = useCallback(async () => {
@@ -1780,7 +1783,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
     setNotifs(data.filter(n => !shouldAutoDismiss(n)));
   }, [userId]);
 
-  useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
+  useRefreshOn(fetchNotifs, TOPICS_HOME_BANNER, 'homeBanner:' + userId);
 
   const dismiss = useCallback(async (id: string) => {
     // 🚨 update は0件でもエラーにならない。失敗すると、閉じたはずのバナーが

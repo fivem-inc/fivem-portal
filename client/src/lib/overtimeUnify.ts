@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from './supabaseClient';
+import { getAppSetting } from './appSettings';
 
 // 休暇申請の「時間調整」「調整休（時間外調整休・振替休日）」を残業申請にまとめる（2026-10-13 ユーザー確定）。
 // ・区切りの日 overtime_unify_cutoff（10/16）：この日以降の勤務日は残業申請だけ。休暇申請は案内に変わる
@@ -13,13 +13,13 @@ export function useAppDateSetting(key: string): string | null {
   const [v, setV] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
-      .then(({ data, error }) => {
-        if (!alive) return;
-        if (error) { console.error(`[残業へのまとめ] ${key} を読めませんでした`, error.message); return; }
-        const x = (data as { value?: unknown } | null)?.value;
-        setV(typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : null);
-      });
+    // 🚨 読み込みは lib/appSettings（同じ瞬間の頼みを1回に・画面の中で10分使い回す・2026-10-28 ログの量の見直し）
+    void getAppSetting(key).then(r => {
+      if (!alive) return;
+      if (!r.ok) { console.error(`[残業へのまとめ] ${key} を読めませんでした`, r.error); return; }
+      const x = r.value;
+      setV(typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : null);
+    });
     return () => { alive = false; };
   }, [key]);
   return v;

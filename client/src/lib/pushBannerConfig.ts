@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { getAppSetting } from './appSettings';
 
 // プッシュ通知ON促進バナー（PushEnableBanner）の管理画面設定。
 // app_settings（key/value形式の設定保管庫）に1レコード（jsonb）で保存する。
@@ -37,14 +38,24 @@ export const DEFAULT_PUSH_BANNER_CONFIG: PushBannerConfig = {
 };
 
 // jsonbの型崩れ（手動編集・旧形式）に耐える形で読み込む。未設定・取得失敗時は初期値
-export const fetchPushBannerConfig = async (): Promise<PushBannerConfig> => {
-  const { data, error } = await supabase
-    .from('app_settings')
-    .select('value')
-    .eq('key', PUSH_BANNER_CONFIG_KEY)
-    .maybeSingle();
-  if (error || !data?.value || typeof data.value !== 'object') return DEFAULT_PUSH_BANNER_CONFIG;
-  const v = data.value as Partial<PushBannerConfig>;
+// fresh：管理画面の設定の画面は true（直接読む）。ふだんは lib/appSettings（2026-10-28 ログの量の見直し）
+export const fetchPushBannerConfig = async (opts?: { fresh?: boolean }): Promise<PushBannerConfig> => {
+  let raw: unknown = null;
+  if (opts?.fresh) {
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', PUSH_BANNER_CONFIG_KEY)
+      .maybeSingle();
+    if (error) return DEFAULT_PUSH_BANNER_CONFIG;
+    raw = data?.value ?? null;
+  } else {
+    const r = await getAppSetting(PUSH_BANNER_CONFIG_KEY);
+    if (!r.ok) return DEFAULT_PUSH_BANNER_CONFIG;
+    raw = r.value;
+  }
+  if (!raw || typeof raw !== 'object') return DEFAULT_PUSH_BANNER_CONFIG;
+  const v = raw as Partial<PushBannerConfig>;
   const days = Number(v.redisplayDays);
   return {
     enabled: typeof v.enabled === 'boolean' ? v.enabled : true,

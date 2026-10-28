@@ -6,6 +6,7 @@ import { bootMark } from '../lib/bootMark';
 import { fetchAccessState, mdLabel } from '../lib/retire';
 import { readStoredAuthUser } from '../lib/authStorage';
 import { clearOfflineCopies, keepOnlyCopiesOf } from '../lib/offlineCopy';
+import { PROFILE_PREFETCH_COLUMNS, putPrefetchedProfile } from '../lib/profilePrefetch';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
@@ -83,13 +84,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     //    起動画面のまま永久に固まって安否確認に辿り着けない。
     //    Supabase は通信に失敗しても例外を投げないので try/catch では防げない。
     bootMark('boot:4 在籍の確認をはじめた');
+    // 本人の表示に使う列も一緒に読み、hooks/useAuth に渡す（lib/profilePrefetch・2026-10-28 ログの量の見直し B2：前は開くたびに profiles を2回読んでいた）
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('is_active, approval_status')
+      .select(`is_active, approval_status, ${PROFILE_PREFETCH_COLUMNS}` as const)
       .eq('id', sessionUser.id)
       .abortSignal(timeoutSignal(AUTH_TIMEOUT_MS))
       .single();
     bootMark('boot:5 在籍の確認が終わった');
+    if (profile && !error) putPrefetchedProfile(sessionUser.id, profile as unknown as Record<string, unknown>);
 
     // プロフィールが存在しない（PGRST116 = 行なし＝削除済みアカウント）→ 弾く。
     // ネットワーク等の一時的な取得失敗（別エラーでdataもnull）は、正常ユーザーを

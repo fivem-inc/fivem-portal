@@ -45,7 +45,7 @@ const IdleLogoutSettingsSection: React.FC = () => {
 
   useEffect(() => {
     let alive = true;
-    void loadIdleConfig().then(c => {
+    void loadIdleConfig({ fresh: true }).then(c => {
       if (!alive) return;
       // 🚨 読めなかったときは「設定なし」と決めつけず、理由を出す（既定値で塗り潰さない）
       if (!c) { setErr('設定を読み込めませんでした。画面を開き直してください'); return; }

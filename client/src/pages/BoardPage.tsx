@@ -31,6 +31,8 @@ import { TOPICS_BOARD } from '../lib/badgeTopics';
 import LoadFailedNotice from '../components/LoadFailedNotice';
 import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure, timeoutSignal, sendFailureText } from '../lib/netFailure';
 import { saveCopy, loadCopy } from '../lib/offlineCopy';
+import { getAppSetting } from '../lib/appSettings';
+import { writtenSince } from '../lib/writeWatch';
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
 const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
 
@@ -474,6 +476,24 @@ const ConfirmStatusBox: React.FC<{
   );
 };
 
+// 連絡板の loadAll で、変わりにくい読み込み（全員の一覧・既読の詳細の設定・グループを作れるか）を、この画面の中で10分使い回す
+// （2026-10-28 ログの量の見直し B3・前は読み直すたびに毎回読んでいた）。🚨 端末には持たない＝開き直せば最新。
+// 自分が管理の設定（'admin'）を書いたら捨てる。失敗した結果は覚えない
+const BOARD_STATIC_FRESH_MS = 10 * 60 * 1000;
+const boardStatic = new Map<string, { at: number; uid: string; res: unknown }>();
+function reuseBoardStatic<T extends { error: unknown }>(name: string, uid: string, load: () => PromiseLike<T>): Promise<T> {
+  const c = boardStatic.get(name);
+  if (c && c.uid === uid && Date.now() - c.at < BOARD_STATIC_FRESH_MS && !writtenSince(['admin'], c.at)) return Promise.resolve(c.res as T);
+  const at = Date.now();
+  return Promise.resolve(load()).then(res => {
+    if (!res.error) boardStatic.set(name, { at, uid, res });
+    return res;
+  });
+}
+/** 設定（app_settings）を、今までの { data: { value } } の形で返す（読み込みは lib/appSettings） */
+const boardSetting = (key: string) =>
+  getAppSetting(key).then(r => ({ data: r.ok && r.found ? { value: r.value } : null }));
+
 const BoardPage: React.FC = () => {
   const { user, isAdmin, profileName, roleTitle, employmentType, roles, canBoardTemplateGlobal } = useAuth();
   const { previewRole } = useContext(AuthContext);
@@ -879,13 +899,13 @@ const BoardPage: React.FC = () => {
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, status, send_hold, send_batch, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
-      supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name'),
-      supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
-      supabase.from('app_settings').select('value').eq('key', 'dm_default_send_permissions').maybeSingle(),
-      supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
-      supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
-      supabase.rpc('board_can_manage_groups'),
-      supabase.from('app_settings').select('value').eq('key', 'board_recipient_exclude_user_ids').maybeSingle(),
+      reuseBoardStatic('profiles', user.id, () => supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name')),
+      reuseBoardStatic('readDetail', user.id, () => supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1)),
+      boardSetting('dm_default_send_permissions'),
+      boardSetting('board_notice_send_roles'),
+      boardSetting('board_notice_cc_user_ids'),
+      reuseBoardStatic('canManage', user.id, () => supabase.rpc('board_can_manage_groups')),
+      boardSetting('board_recipient_exclude_user_ids'),
     ]);
     if (dmSettingsRes.data?.value) setDmDefaultPerms(dmSettingsRes.data.value as SendPermissions);
     if (noticeSendRes.data?.value) setNoticeSendRoles(noticeSendRes.data.value as string[]);

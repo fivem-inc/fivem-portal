@@ -12,6 +12,7 @@ import { clearOfflineCopies } from '../lib/offlineCopy';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
+import { PROFILE_PREFETCH_COLUMNS, takePrefetchedProfile } from '../lib/profilePrefetch';
 
 // 🚨 役職名の配列（旧 APPROVER_ROLES 等）はここに書かない。判定は roles の属性（lib/roleAttrs.ts）。
 //    2026-09-09 に「社長」を改名しただけで承認者判定が外れ、本番の権限が壊れた。
@@ -156,17 +157,23 @@ const previewPermsCache = new Map<string, Record<string, boolean>>();
 let previewLeaveKeysCache: string[] | null = null;
 const EMPTY_PERMS: Record<string, boolean> = {};
 
-async function fetchPermsForRole(roleName: string): Promise<Record<string, boolean> | null> {
-  const { data: roleData, error: roleErr } = await supabase
-    .from('roles')
-    .select('id')
-    .eq('name', roleName)
-    .single();
-  if (roleErr || !roleData) return null;
+// roleId：本人の profiles.role_id（2026-10-28）。分かっているときは roles を名前で引き直さない（1日 約186件の読み込みを減らす・ログの量の見直し）。
+// 🚨 role_id は profiles のトリガーが role_title から必ず決める。空のとき・役職プレビューは今までどおり名前で引く
+async function fetchPermsForRole(roleName: string, roleId?: string | null): Promise<Record<string, boolean> | null> {
+  let rid = roleId ?? null;
+  if (!rid) {
+    const { data: roleData, error: roleErr } = await supabase
+      .from('roles')
+      .select('id')
+      .eq('name', roleName)
+      .single();
+    if (roleErr || !roleData) return null;
+    rid = roleData.id as string;
+  }
   const { data, error } = await supabase
     .from('feature_permissions')
     .select('feature_key, enabled')
-    .eq('role_id', roleData.id);
+    .eq('role_id', rid);
   if (error) return null;
   const map: Record<string, boolean> = {};
   (data || []).forEach((p: { feature_key: string; enabled: boolean }) => {
@@ -247,17 +254,21 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
   }
 
   const promise = (async (): Promise<ProfileLoad | null> => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor, nav_order, nav_two_row')
-      .eq('id', userId)
-      .single();
+    // 起動の直後は、AuthContext が在籍の確認で一緒に読んだ行を使う（lib/profilePrefetch・30秒以内・1回だけ）。それ以外はいつもどおり読む
+    const pre = takePrefetchedProfile(userId);
+    const { data, error } = pre
+      ? { data: pre as { name: string | null; role_title: string | null; role_id: string | null; employment_type: string | null; leave_request_enabled: boolean | null; is_faq_editor: boolean | null; nav_order: unknown; nav_two_row: unknown }, error: null }
+      : await supabase
+        .from('profiles')
+        .select(PROFILE_PREFETCH_COLUMNS)
+        .eq('id', userId)
+        .single();
     if (error || !data) return null;
     const navOrder = Array.isArray(data.nav_order) ? (data.nav_order as string[]) : null;
     const navTwoRow = typeof data.nav_two_row === 'boolean' ? data.nav_two_row : null;
 
     const role = data.role_title || '一般';
-    const perms = await fetchPermsForRole(role);
+    const perms = await fetchPermsForRole(role, (data as { role_id?: string | null }).role_id);
 
     // 次回起動時に即表示できるよう名前・役職・権限をキャッシュ保存。
     // 🚨 権限の取得に失敗したとき（不安定な回線など）は、空の権限で上書きしてはいけない。

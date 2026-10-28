@@ -21,12 +21,12 @@ export const useLeavePendingCount = (userId: string | undefined, roleTitle: stri
     if (!userId) { setPendingCount(0); return; }
     if (!isAdmin && !isLeaderPlus) { setPendingCount(0); return; }
 
-    const { data: d1 } = await supabase.from('leave_requests').select('id').eq('status', 'pending').eq('approver_id', userId);
-    const { data: d2 } = await supabase.from('leave_requests').select('id').eq('status', 'step2_pending').eq('approver2_id', userId);
-    const { data: d3 } = isPresident
-      ? await supabase.from('leave_requests').select('id').eq('status', 'admin_approved')
-      : { data: [] };
-    setPendingCount((d1?.length ?? 0) + (d2?.length ?? 0) + (d3?.length ?? 0));
+    // 🚨 3つの条件を1本の問い合わせに（2026-10-28 ログの量の見直し・前は1つの数字のために3本読んでいた）。条件は status で分かれるので重ならない
+    const conds = [`and(status.eq.pending,approver_id.eq.${userId})`, `and(status.eq.step2_pending,approver2_id.eq.${userId})`];
+    if (isPresident) conds.push('status.eq.admin_approved');
+    const { data, error } = await supabase.from('leave_requests').select('id').or(conds.join(','));
+    if (error) return;   // 読めなかったときは前の数字のまま（0 に戻さない）
+    setPendingCount(data?.length ?? 0);
   }, [userId, isAdmin, isLeaderPlus, isPresident, setPendingCount]);
 
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）

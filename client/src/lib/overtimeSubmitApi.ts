@@ -7,6 +7,7 @@
 // 🚨 失敗は握りつぶさない。error と件数を必ず見て、段階（stage）と理由を返す。
 
 import { supabase } from './supabaseClient';
+import { getAppSetting } from './appSettings';
 import { logFail } from './logFail';
 import { friendlyOvertimeDbError } from './overtimeSubmit';
 import { describeUpdate } from './statusUpdate';
@@ -179,9 +180,10 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
  * 🚨 読めなければ false（今までどおりの文を出す）。どちらでも DB のトリガーが正しい状態にするので、ここは画面の文と事前の確かめだけ
  */
 export async function loadFurikaeReportSwitch(): Promise<boolean> {
-  const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'furikae_report_on').maybeSingle();
-  if (error) { console.error('[残業] 振替休日の切り替えを読めませんでした', error.message); return false; }
-  return (data as { value?: unknown } | null)?.value === true;
+  // 🚨 読み込みは lib/appSettings（同じ瞬間の頼みを1回に・画面の中で10分・2026-10-28 ログの量の見直し）
+  const r = await getAppSetting('furikae_report_on');
+  if (!r.ok) { console.error('[残業] 振替休日の切り替えを読めませんでした', r.error); return false; }
+  return r.value === true;
 }
 
 export async function confirmAsPlanned(reportId: string): Promise<boolean> {

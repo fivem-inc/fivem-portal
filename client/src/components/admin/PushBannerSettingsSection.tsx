@@ -30,7 +30,7 @@ const PushBannerSettingsSection: React.FC = () => {
   const inputBg = isDarkMode ? '#495057' : 'white';
 
   useEffect(() => {
-    fetchPushBannerConfig().then(c => {
+    fetchPushBannerConfig({ fresh: true }).then(c => {
       setConfig(c);
       setSavedConfig(c);
       setLoading(false);

@@ -24,6 +24,9 @@ const IGNORE = new Set([
   'login_events', 'session_devices', 'gcal-sync', 'send-push', 'send-email', 'slack-notify', 'push-dispatch',
   'record-signup-ip', 'receipt-signed-url', 'storage-usage-check', 'password-setup-mail',
   'overtime_banner_dismissals',   // 目安超えの帯を閉じた記録（ナビの数字には出ない）
+  // ホームを開いた時刻の記録（2026-10-28）。画面は markSeenLocal で 🏠 の数字を消しているので、ここで 'home' を立てると
+  // ホームを開くたびに my_home_feed をもう1回読んでいた（ログの量の見直し・docs/計画-ログの量を減らす-読み込みの見直し.md）
+  'home_mark_seen',
 ]);
 
 /** 表・RPC・Edge Function の名前 → 話題 */
