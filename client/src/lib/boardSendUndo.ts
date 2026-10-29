@@ -25,7 +25,9 @@ export const UNDO_TEXT = {
 export type BoardRestore =
   | { kind: 'notice'; recipientIds: string[]; presetKeys: string[]; subject: string; body: string;
       deadlineType: string; deadline: string; answerPrompt: string; answerLocation: string; answerLink: string;
-      allowReply: boolean; includeCC: boolean }
+      allowReply: boolean; includeCC: boolean;
+      /** アンケートの質問（2026-10-29）。null＝ふつうの「回答」 */
+      survey?: unknown; surveyVisibility?: string }
   | { kind: 'channel'; channelId: string; parentId: string | null; body: string;
       title: string; deadline: string; deadlineType: string; answerPrompt: string; answerLocation: string; answerLink: string }
   | { kind: 'noticeReply'; noticeId: string; partnerId: string; body: string }

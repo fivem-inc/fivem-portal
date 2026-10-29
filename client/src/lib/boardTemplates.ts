@@ -22,6 +22,8 @@ export interface BoardTemplate {
   category_id: string | null;
   subject: string;
   body: string;
+  /** アンケートの質問（2026-10-29・{v:1,questions}）。使うときは lib/boardSurvey の parseSurvey で読む */
+  survey?: unknown;
   created_at: string;
   updated_at: string;
   updated_by: string | null;

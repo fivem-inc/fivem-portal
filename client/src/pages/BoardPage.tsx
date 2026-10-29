@@ -1,4 +1,9 @@
 import ExpandableTextarea from '../components/ExpandableTextarea';
+import SurveyEditor from '../components/board/SurveyEditor';
+import SurveyAnswerForm from '../components/board/SurveyAnswerForm';
+import SurveyResultsPanel from '../components/board/SurveyResultsPanel';
+import { type SurveyDef, type SurveyVisibility, parseSurvey, cleanSurvey, cloneSurveyFresh, surveyDraftProblem, emptyQuestion, surveyBadgeText, SURVEY_KIND_LABEL, SURVEY_VISIBILITY_LABEL } from '../lib/boardSurvey';
+import { loadConfirmCounts } from '../lib/boardSurveyApi';
 import React, { useState, useEffect, useCallback, useRef, useMemo, useContext, useSyncExternalStore } from 'react';
 import LinkifiedText from '../components/LinkifiedText';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -99,6 +104,9 @@ interface BoardMessage {
   answer_prompt: string | null;
   answer_location: string | null;
   answer_link: string | null;
+  // アンケート（2026-10-29・lib/boardSurvey の parseSurvey で読む）。お知らせの「回答」だけ
+  survey?: unknown;
+  survey_visibility?: string | null;
   // 返信を受け付けるお知らせ（2026-09-21）。判定は lib/boardReply.ts の1か所
   allow_reply?: boolean | null;
   reply_until?: string | null;
@@ -251,6 +259,8 @@ const fmtConfirmDate = (ts: string) => {
 const SCHEDULE_RULE = { requireTime: true, future: true } as const;
 
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
+// アンケートなら「📋 アンケート（8問）」（一覧・詳細の札の3か所が使う）。ふつうのお知らせは null
+const surveyTitleOf = (m: { survey?: unknown }): string | null => { const sv = parseSurvey(m.survey); return sv ? surveyBadgeText(sv) : null; };
 
 
 // 宛先の一括ボタン「マネージャー・リーダー」に入れる役職＝リーダー以上（属性）から経理を除いたもの。
@@ -495,7 +505,7 @@ const boardSetting = (key: string) =>
   getAppSetting(key).then(r => ({ data: r.ok && r.found ? { value: r.value } : null }));
 
 const BoardPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, employmentType, roles, canBoardTemplateGlobal } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, employmentType, roles, canBoardTemplateGlobal, canBoardSurvey } = useAuth();
   const { previewRole } = useContext(AuthContext);
   const isDark = useDarkMode();
   const navigate = useNavigate();
@@ -641,6 +651,7 @@ const BoardPage: React.FC = () => {
     subject: string; body: string; recipientIds: string[]; deadlineType: string;
     deadline: string; scheduledAt: string; answerPrompt: string; answerLocation: string; answerLink: string;
     presetKeys?: string[];
+    survey?: SurveyDef | null; surveyVisibility?: SurveyVisibility;
   }
   const [cd] = useState(() => loadDraft<ComposeDraft>(DRAFT_KEYS.boardCompose));
   // 宛先で押した一括ボタン（送信時に「選び方」として保存し、「コピーして作成」で当て直す）。
@@ -651,6 +662,12 @@ const BoardPage: React.FC = () => {
   const [composeBody,          setComposeBody]          = useState(cd?.body ?? '');
   const [composeRecipientIds,  setComposeRecipientIds]  = useState<string[]>(cd?.recipientIds ?? []);
   const [composeDeadlineType,  setComposeDeadlineType]  = useState(cd?.deadlineType ?? '');
+  // アンケート（2026-10-29）。種別「回答」で［質問に答えてもらう］を選んだときだけ。null＝今までの「自由に書いてもらう」
+  const [composeSurvey,        setComposeSurvey]        = useState<SurveyDef | null>(() => parseSurvey(cd?.survey));
+  const [composeSurveyVisibility, setComposeSurveyVisibility] = useState<SurveyVisibility>(cd?.surveyVisibility ?? 'sender');
+  const [composeSurveyOpen,    setComposeSurveyOpen]    = useState(false);   // 質問を作る大きな画面
+  // 回答の数（「◯人/◯人」の分子）。宛先の人はほかの人の回答の行を読めない（2026-10-29）ので、数は board_confirm_counts から
+  const [confirmCounts,        setConfirmCounts]        = useState<Record<string, number>>({});
   const [composeDeadline,      setComposeDeadline]      = useState(cd?.deadline ?? '');
   const [composeScheduledAt,   setComposeScheduledAt]   = useState(cd?.scheduledAt ?? '');
   // 「⚡当日の連絡・緊急」：受信時間を設定している人にもすぐプッシュを届ける印。
@@ -687,7 +704,7 @@ const BoardPage: React.FC = () => {
   const [tplNotice, setTplNotice] = useState<string | null>(null);           // 入れた直後の青い案内（テンプレ名）
   const [tplSuccess, setTplSuccess] = useState<{ text: string; sub?: string } | null>(null); // 薄緑カード
   // 保存・修正の枠（id が null なら新規）。件名・本文は「いまの送信画面」か「開いているお知らせ」から写す
-  const [tplSave, setTplSave] = useState<null | { id: string | null; name: string; categoryId: string; scope: BoardTemplateScope; subject: string; body: string }>(null);
+  const [tplSave, setTplSave] = useState<null | { id: string | null; name: string; categoryId: string; scope: BoardTemplateScope; subject: string; body: string; survey?: SurveyDef | null }>(null);
   const [tplSaving, setTplSaving] = useState(false);
   const [tplSaveError, setTplSaveError] = useState('');
   const [showAllRecipients, setShowAllRecipients] = useState(false);
@@ -726,6 +743,7 @@ const BoardPage: React.FC = () => {
   const [unconfirmedMsgId,     setUnconfirmedMsgId]     = useState<string | null>(null);
   const [answerInputId,        setAnswerInputId]        = useState<string | null>(null);
   const [answerText,           setAnswerText]           = useState('');
+  const [answerSendError,      setAnswerSendError]      = useState<string | null>(null);
   const [newTitle,             setNewTitle]             = useState('');
   const [newAnswerPrompt,      setNewAnswerPrompt]      = useState('');
   const [newAnswerLocation,    setNewAnswerLocation]    = useState('');
@@ -897,7 +915,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes, excludeRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, status, send_hold, send_batch, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, status, send_hold, send_batch, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       reuseBoardStatic('profiles', user.id, () => supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name')),
       reuseBoardStatic('readDetail', user.id, () => supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1)),
@@ -1004,7 +1022,7 @@ const BoardPage: React.FC = () => {
       const [msgsRes, readsRes] = await Promise.all([
         supabase
           .from('board_messages')
-          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
+          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
           .in('id', [...msgIds])
           .order('created_at', { ascending: false }),
         supabase
@@ -1134,7 +1152,7 @@ const BoardPage: React.FC = () => {
       const channelQuery = cids.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
             .in('channel_id', cids)
             .or(orCond)
             .order('created_at', { ascending: asc })
@@ -1145,7 +1163,7 @@ const BoardPage: React.FC = () => {
       const inboxQuery = inboxIds.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
             .in('id', inboxIds)
             .or(orCond)
             .order('created_at', { ascending: asc })
@@ -1159,7 +1177,7 @@ const BoardPage: React.FC = () => {
       //    お気に入りは「受信トレイのお知らせ」か「チャンネルの投稿」なので、上の2つで引ける。
       const outboxQuery = supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
         .eq('user_id', user.id)
         .is('channel_id', null)
         .is('parent_id', null)
@@ -1173,7 +1191,7 @@ const BoardPage: React.FC = () => {
       //    （送信トレイは parent_id が無いものだけを読むため）。ユーザー指摘で気づいた。
       const replyQuery = supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
         .eq('user_id', user.id)
         .is('channel_id', null)
         .not('parent_id', 'is', null)
@@ -1283,7 +1301,7 @@ const BoardPage: React.FC = () => {
     const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }, { data: replyData, error: replyErr }] = await Promise.all([
       supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, cc_user_ids')
         .in('id', msgIds)
         .is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -1340,6 +1358,10 @@ const BoardPage: React.FC = () => {
       });
       setConfirmations(prev => ({ ...prev, ...confMap }));
       confForCopy = confMap;
+      // 「◯人/◯人」の分子（2026-10-29）。宛先の人はほかの人の回答の行を読めないので、数だけを DB から
+      const cc = await loadConfirmCounts(confirmMsgIds);
+      if (!cc.error) setConfirmCounts(prev => ({ ...prev, ...cc.counts }));
+      else console.error("回答の数の読み込みに失敗:", cc.error);
     }
     const inboxCopy = makeBoardCopy(inboxList, readForCopy, confForCopy, allProfilesRef.current);
     if (inboxCopy) void saveCopy(user.id, 'board_inbox', inboxCopy);
@@ -1370,7 +1392,7 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setArchivedMessages([]); setArchivedFailed(false); return; }
     const { data: msgData, error: msgErr } = await supabase
       .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, cc_user_ids')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });
@@ -1416,7 +1438,7 @@ const BoardPage: React.FC = () => {
     // 🚨 outbox_hidden（DB の列）はもう読まない（2026-09-26）。アーカイブは board_outbox_hidden（お知らせ × 人）で、
     //    「自分が片付けたか」を自分の行の有無で決める。送った本人と写しで見る代表者は別々に片付けられる。
     //    以前は1件に1つの印だったので、管理者が写しのお知らせを片付けると送った本人の送信トレイからも消えていた
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids, recipient_presets, recipient_extra_ids, send_hold, send_batch';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, cc_user_ids, recipient_presets, recipient_extra_ids, send_hold, send_batch';
     const [{ data, error: ownErr }, { data: ccData, error: ccErr }, { data: hiddenData, error: hiddenErr }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -1687,18 +1709,19 @@ const BoardPage: React.FC = () => {
   useEffect(() => {
     const hasContent = composeSubject || composeBody || composeRecipientIds.length > 0 ||
       composeDeadlineType || composeDeadline || composeScheduledAt ||
-      composeAnswerPrompt || composeAnswerLocation || composeAnswerLink;
+      composeAnswerPrompt || composeAnswerLocation || composeAnswerLink || composeSurvey;
     if (hasContent) {
       saveDraft(DRAFT_KEYS.boardCompose, {
         subject: composeSubject, body: composeBody, recipientIds: composeRecipientIds,
         deadlineType: composeDeadlineType, deadline: composeDeadline, scheduledAt: composeScheduledAt,
         answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
         presetKeys: composePresetKeys,
+        survey: composeSurvey, surveyVisibility: composeSurveyVisibility,
       });
     } else {
       clearDraft(DRAFT_KEYS.boardCompose);
     }
-  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink, composePresetKeys]);
+  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink, composePresetKeys, composeSurvey, composeSurveyVisibility]);
 
   // 既読状況ポップアップを開いたとき、受信者が未取得なら取得する
   useEffect(() => {
@@ -1997,6 +2020,8 @@ const BoardPage: React.FC = () => {
   //    途中のまま送ると、予約したつもりのお知らせがすぐ届いてしまう（lib/dateTimeValue.ts）
   const newScheduleProblem = dateTimeProblem(newScheduledAt, SCHEDULE_RULE);
   const composeScheduleProblem = dateTimeProblem(composeScheduledAt, SCHEDULE_RULE);
+  // アンケートの質問に問題があるか（送るボタンを止める・文は作成画面の枠に出す）
+  const composeSurveyBad = composeDeadlineType === 'answer' && !!composeSurvey && !!surveyDraftProblem(composeSurvey);
 
   /** 大きな作成の画面を閉じたとき、何が入っているかの小さな札（例：件名あり・期限 11/2・予約 11/1 9:00） */
   const channelOptSummary = (() => {
@@ -2313,6 +2338,7 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
+    setComposeSurvey(null); setComposeSurveyVisibility('sender'); setComposeSurveyOpen(false);
     setComposeUrgent(false); // 🚨 緊急チェックは必ずリセット（下書きにも含めない）
     setComposeAllowReply(false); // 🚨 返信のチェックも同じ（前の連絡の設定を引き継がせない）
     clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・クリアで下書きを消す
@@ -2368,9 +2394,15 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(msg.deadline_type || '');
     setComposeDeadline('');                // 期限は過ぎているので引き継がない
     setComposeScheduledAt('');
-    setComposeAnswerPrompt(msg.answer_prompt || '');
-    setComposeAnswerLocation(msg.answer_location || '');
-    setComposeAnswerLink(msg.answer_link || '');
+    {
+      // アンケートは質問も引き継ぐ（id は新しく・2026-10-29）。🚨 DB が入れた古い画面向けの説明文は引き継がない
+      const sv = parseSurvey(msg.survey);
+      setComposeSurvey(sv ? cloneSurveyFresh(sv) : null);
+      setComposeSurveyVisibility(sv ? ((msg.survey_visibility as SurveyVisibility) || 'sender') : 'sender');
+      setComposeAnswerPrompt(sv ? '' : (msg.answer_prompt || ''));
+      setComposeAnswerLocation(sv ? '' : (msg.answer_location || ''));
+      setComposeAnswerLink(sv ? '' : (msg.answer_link || ''));
+    }
     setComposeAllowReply(false);           // 🚨 返信の受け付けは引き継がない（緊急と同じ扱い）
     setComposeUrgent(false);               // 🚨 緊急は引き継がない（誤爆防止）
     setComposeIncludeCC(true);             // CCは初期値に戻す（ユーザー確定）
@@ -2395,6 +2427,8 @@ const BoardPage: React.FC = () => {
    *  🚨 copyToCompose と違って clearDraft を呼ばない（呼ぶと宛先・期限まで消える）。下書きは state が変われば effect が勝手に保存する */
   const applyTemplate = (t: BoardTemplate) => {
     setComposeSubject(t.subject); setComposeBody(t.body);
+    // 質問の入ったテンプレート（2026-10-29）：種別を「回答」にして質問を入れる（id は新しく）
+    { const sv = parseSurvey(t.survey); if (sv) { setComposeDeadlineType('answer'); setComposeSurvey(cloneSurveyFresh(sv)); } }
     setComposeOptions(true);   // 件名は折りたたみの中。入れたのに見えない、を避ける（copyToCompose と同じ）
     setTplNotice(t.name); setTplPendingUse(null); setTplOpen(false);
   };
@@ -2403,17 +2437,17 @@ const BoardPage: React.FC = () => {
     if (needsReplaceConfirm(composeSubject, composeBody)) setTplPendingUse(t); else applyTemplate(t);
   };
   /** 保存・修正の枠を開く。新規は名前の初期値＝件名・保存先＝自分だけ */
-  const openTemplateSave = (src: { subject: string; body: string }, existing?: BoardTemplate) => {
+  const openTemplateSave = (src: { subject: string; body: string; survey?: SurveyDef | null }, existing?: BoardTemplate) => {
     setTplSaveError(''); setTplSuccess(null);
-    if (existing) setTplSave({ id: existing.id, name: existing.name, categoryId: existing.category_id ?? '', scope: existing.scope, subject: existing.subject, body: existing.body });
-    else setTplSave({ id: null, name: src.subject.trim(), categoryId: '', scope: 'personal', subject: src.subject, body: src.body });
+    if (existing) setTplSave({ id: existing.id, name: existing.name, categoryId: existing.category_id ?? '', scope: existing.scope, subject: existing.subject, body: existing.body, survey: parseSurvey(existing.survey) });
+    else setTplSave({ id: null, name: src.subject.trim(), categoryId: '', scope: 'personal', subject: src.subject, body: src.body, survey: src.survey ?? null });
   };
   const saveTemplateNow = async () => {
     if (!tplSave || tplSaving) return;
     const v = validateTemplateInput(tplSave);
     if (v) { setTplSaveError(v); return; }
     setTplSaving(true); setTplSaveError('');
-    const input = { scope: tplSave.scope, name: tplSave.name, category_id: tplSave.categoryId || null, subject: tplSave.subject, body: tplSave.body };
+    const input = { scope: tplSave.scope, name: tplSave.name, category_id: tplSave.categoryId || null, subject: tplSave.subject, body: tplSave.body, survey: tplSave.survey ? cleanSurvey(tplSave.survey) : null };
     const r = tplSave.id ? await updateTemplate(tplSave.id, input) : await insertTemplate(input);
     setTplSaving(false);
     if (!r.ok) { setTplSaveError(r.message); return; }
@@ -2468,6 +2502,15 @@ const BoardPage: React.FC = () => {
     if (composeAnswerPrompt.trim())    msgData.answer_prompt   = composeAnswerPrompt.trim();
     if (composeAnswerLocation.trim())  msgData.answer_location = composeAnswerLocation.trim();
     if (composeAnswerLink.trim())      msgData.answer_link     = composeAnswerLink.trim();
+    // アンケート（2026-10-29）。🚨 確かめ・id 振り・古い画面向けの説明文は DB のトリガー（board_messages_survey_guard）
+    const surveyOn = composeDeadlineType === 'answer' && !!composeSurvey;
+    if (surveyOn && composeSurvey) {
+      const p = surveyDraftProblem(composeSurvey);
+      if (p) { setSendError(p.message); setSending(false); return; }
+      delete msgData.answer_prompt; delete msgData.answer_location; delete msgData.answer_link;
+      msgData.survey = cleanSurvey(composeSurvey);
+      msgData.survey_visibility = composeSurveyVisibility;
+    }
     // 🚨 期限（reply_until）は渡さない。DB のトリガーが board_reply_days() 日後を入れる（30日を2か所に持たない）
     if (composeAllowReply)             msgData.allow_reply     = true;
     if (composeUrgent)                 msgData.push_urgent     = true;
@@ -2490,6 +2533,7 @@ const BoardPage: React.FC = () => {
       subject: composeSubject, body: composeBody, deadlineType: composeDeadlineType, deadline: composeDeadline,
       answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
       allowReply: composeAllowReply, includeCC: composeIncludeCC,
+      survey: surveyOn ? composeSurvey : null, surveyVisibility: composeSurveyVisibility,
     };
     const id = noticePostIdRef.current ?? newPostId();
     noticePostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
@@ -2742,6 +2786,7 @@ const BoardPage: React.FC = () => {
       setComposeDeadlineType(r.deadlineType); setComposeDeadline(r.deadline);
       setComposeAnswerPrompt(r.answerPrompt); setComposeAnswerLocation(r.answerLocation); setComposeAnswerLink(r.answerLink);
       setComposeAllowReply(r.allowReply); setComposeIncludeCC(r.includeCC);
+      setComposeSurvey(parseSurvey(r.survey)); setComposeSurveyVisibility((r.surveyVisibility as SurveyVisibility) || 'sender');
       setComposeScheduledAt(''); setComposeUrgent(false);
       setComposeOptions(true); setComposeDraftId(null);
       setView('compose'); setShowSidebar(false);
@@ -2801,10 +2846,11 @@ const BoardPage: React.FC = () => {
         answerLocation: msg.answer_location ?? '', answerLink: msg.answer_link ?? '' };
     }
     if (msg.parent_id) return null;
+    const sv = parseSurvey(msg.survey);
     return { kind: 'notice', recipientIds: inboxRecipients[msg.id] || [], presetKeys: [], subject: msg.subject ?? '', body: msg.body,
-      deadlineType: msg.deadline_type ?? '', deadline: msg.deadline ?? '', answerPrompt: msg.answer_prompt ?? '',
-      answerLocation: msg.answer_location ?? '', answerLink: msg.answer_link ?? '', allowReply: !!msg.allow_reply,
-      includeCC: (msg.cc_user_ids?.length ?? 0) > 0 };
+      deadlineType: msg.deadline_type ?? '', deadline: msg.deadline ?? '', answerPrompt: sv ? '' : (msg.answer_prompt ?? ''),
+      answerLocation: sv ? '' : (msg.answer_location ?? ''), answerLink: sv ? '' : (msg.answer_link ?? ''), allowReply: !!msg.allow_reply,
+      includeCC: (msg.cc_user_ids?.length ?? 0) > 0, survey: sv, surveyVisibility: msg.survey_visibility ?? 'sender' };
   };
 
   /** 送った本人の「送信待ち」の印（2026-10-26）。帯が出ている間は帯の［取り消す］だけ（ボタンを2つにしない） */
@@ -2916,7 +2962,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexShrink: 0 }}>
                     <div style={{ width: 3, height: 22, background: accentColor, borderRadius: 2, marginRight: 8, flexShrink: 0 }} />
-                    <span style={{ fontSize: 17, fontWeight: 700, color: textColor }}>{typeText === '確認' ? typeText : `${typeText}確認`}</span>
+                    <span style={{ fontSize: 17, fontWeight: 700, color: textColor }}>{surveyTitleOf(msg) ?? (typeText === '確認' ? typeText : `${typeText}確認`)}</span>
                   </div>
                   {msg.deadline && (
                     isConfirmedByMe && isOverdue ? (
@@ -2938,7 +2984,7 @@ const BoardPage: React.FC = () => {
           )}
           {/* Body / Edit field */}
           {/* 回答タイプの質問内容・場所 */}
-          {msg.deadline_type && !msg.parent_id && (msg.answer_prompt || msg.answer_location || msg.answer_link) && (
+          {msg.deadline_type && !msg.parent_id && !parseSurvey(msg.survey) && (msg.answer_prompt || msg.answer_location || msg.answer_link) && (
             <div style={{ margin: '6px 0 4px', padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, borderLeft: `3px solid ${isDark ? '#3b82f6' : '#3b82f6'}` }}>
               {msg.answer_prompt && (
                 <div style={{ display: 'flex', gap: 8, fontSize: 13, color: textColor, marginBottom: msg.answer_location || msg.answer_link ? 4 : 0 }}>
@@ -2961,7 +3007,7 @@ const BoardPage: React.FC = () => {
             </div>
           )}
           {/* 回答一覧（回答タイプで送信済みのもの）：受信者は自分の回答のみ、送信者(送信トレイ)は全員分 */}
-          {msg.deadline_type && !msg.parent_id && (() => {
+          {msg.deadline_type && !msg.parent_id && !parseSurvey(msg.survey) && (() => {
             const allAnswers = (confirmations[msg.id] || []).filter(c => c.comment);
             const answers = isOutboxView ? allAnswers : allAnswers.filter(c => c.user_id === user?.id);
             if (answers.length === 0) return null;
@@ -3002,7 +3048,37 @@ const BoardPage: React.FC = () => {
           )}
 
           {/* 確認ボタン（deadline_type / requires_confirmation ありの親投稿） */}
-          {(msg.deadline_type || msg.requires_confirmation) && !msg.parent_id && (() => {
+          {/* アンケート（2026-10-29）：［○ 回答報告］・自由記述の欄の代わりに質問票と回答の一覧 */}
+          {!msg.parent_id && !msg.channel_id && parseSurvey(msg.survey) && (() => {
+            const sv = parseSurvey(msg.survey) as SurveyDef;
+            const amRecipient = !!user && (inboxRecipients[msg.id] || []).includes(user.id);
+            const done = confirmCounts[msg.id] ?? (confirmations[msg.id] || []).length;
+            const total = (inboxRecipients[msg.id] || []).length;
+            const delivered = msg.status !== 'scheduled';
+            return (
+              <div style={{ marginTop: 10 }}>
+                {total > 0 && <div style={{ fontSize: 12, color: subColor, textAlign: 'right', marginBottom: 6 }}>回答 {done}人/{total}人</div>}
+                {!delivered && <div style={{ fontSize: 12, color: subColor }}>届いてから回答できます</div>}
+                {delivered && amRecipient && !isOutboxView && user && (
+                  <SurveyAnswerForm messageId={msg.id} survey={sv} deadline={msg.deadline} visibility={(msg.survey_visibility as SurveyVisibility) || 'sender'}
+                    userId={user.id} isDark={isDark} profiles={allProfiles}
+                    onAnswered={() => {
+                      const now = new Date().toISOString();
+                      setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: null, confirmed_at: now }] }));
+                      setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                      setConfirmCounts(prev => ({ ...prev, [msg.id]: (prev[msg.id] ?? 0) + 1 }));
+                    }} />
+                )}
+                {delivered && (isOutboxView || !amRecipient) && canSeeConfirmStatus(msg) && (
+                  <SurveyResultsPanel messageId={msg.id} subject={msg.subject || msg.title || 'お知らせ'} survey={sv} isDark={isDark}
+                    profiles={allProfiles} isSender={msg.user_id === user?.id}
+                    onSurveyChanged={() => { void loadOutbox(); void loadInbox(); }}
+                    onCopy={msg.user_id === user?.id ? () => requestCopyToCompose(msg) : undefined} />
+                )}
+              </div>
+            );
+          })()}
+          {(msg.deadline_type || msg.requires_confirmation) && !msg.parent_id && !parseSurvey(msg.survey) && (() => {
             const confirmedObjs = confirmations[msg.id] || [];
             const confirmedIds = confirmedObjs.map(c => c.user_id);
             const alreadyConfirmed = confirmedIds.includes(user?.id ?? '');
@@ -3033,7 +3109,7 @@ const BoardPage: React.FC = () => {
                     </span>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 12, color: subColor }}>{confirmedIds.length}人/{channelMemberIds.length}人</span>
+                    <span style={{ fontSize: 12, color: subColor }}>{confirmCounts[msg.id] ?? confirmedIds.length}人/{channelMemberIds.length}人</span>
                     {isAdmin && unconfirmedIds.length > 0 && (
                       <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
                         style={{ padding: '4px 12px', background: 'none', color: '#f59e0b', border: '1.5px solid #f59e0b', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
@@ -3061,15 +3137,18 @@ const BoardPage: React.FC = () => {
                         if (!user) return;
                         if (isAnswerRequired && !answerText.trim()) return;
                         const now = new Date().toISOString();
-                        await supabase.from('board_confirmations').upsert(
+                        const { error: upErr } = await supabase.from('board_confirmations').upsert(
                           { message_id: msg.id, user_id: user.id, comment: answerText.trim() || null },
                           { onConflict: 'message_id,user_id' }
                         );
+                        // 🚨 失敗を黙らせない（2026-10-29 まで2回目は 42501 で失敗していたのに ✓ と出ていた）
+                        if (upErr) { setAnswerSendError(sendFailureText(upErr) ?? `送れませんでした：${upErr.message}`); return; }
+                        setAnswerSendError(null);
                         setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: answerText.trim() || null, confirmed_at: now }] }));
                         setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
                         setAnswerInputId(null);
                         setAnswerText('');
-                      }} style={{ padding: '6px 10px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: isAnswerRequired && !answerText.trim() ? 0.5 : 1 }}>
+                      }} style={{ padding: '6px 10px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: isAnswerRequired && !answerText.trim() ? 0.5 : 1 }}>
                         {isAnswerRequired ? '回答して完了' : '完了'}
                       </button>
                       <button type="button" onClick={() => { setAnswerInputId(null); setAnswerText(''); }}
@@ -3077,6 +3156,7 @@ const BoardPage: React.FC = () => {
                         キャンセル
                       </button>
                     </div>
+                    {answerSendError && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>{answerSendError}</div>}
                   </div>
                 )}
               </div>
@@ -3925,7 +4005,7 @@ const BoardPage: React.FC = () => {
             {/* 受け取ったお知らせの件名・本文をテンプレートに（2026-09-26 ユーザー確定：受信したものからも登録できる） */}
             {canSendNotice && !previewRole && editingNoticeId !== inboxDetail.id && (
               <div style={{ marginTop: 8 }}>
-                <button type="button" onClick={() => openTemplateSave({ subject: inboxDetail.subject || inboxDetail.title || '', body: inboxDetail.body })}
+                <button type="button" onClick={() => openTemplateSave({ subject: inboxDetail.subject || inboxDetail.title || '', body: inboxDetail.body, survey: parseSurvey(inboxDetail.survey) })}
                   style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                   📋 テンプレートに保存
                 </button>
@@ -4190,7 +4270,7 @@ const BoardPage: React.FC = () => {
                     {dtConfig && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                         <div style={{ width: 3, height: 16, background: accentColor, borderRadius: 2, flexShrink: 0 }} />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: textColor }}>{typeText === '確認' ? typeText : `${typeText}確認`}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: textColor }}>{surveyTitleOf(msg) ?? (typeText === '確認' ? typeText : `${typeText}確認`)}</span>
                         {msg.deadline && (
                           confirmed ? (
                             <span style={{ fontSize: 10, color: subColor }}>{msg.deadline}まで</span>
@@ -4387,7 +4467,35 @@ const BoardPage: React.FC = () => {
                 ))}
               </div>
               {/* 内容・保存先・URL（種別選択時のみ） */}
-              {composeDeadlineType && (() => {
+              {/* アンケート（2026-10-29）：種別「回答」で、作れる人には［自由に書いてもらう］［質問に答えてもらう］の2択。質問のときは内容・保存先・URL を出さない */}
+              {composeDeadlineType === 'answer' && (canBoardSurvey || composeSurvey) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b82f6' : '#bfdbfe'}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: isDark ? '#93c5fd' : '#3b82f6' }}>回答のしかた</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    {([[false, '自由に書いてもらう'], [true, '質問に答えてもらう']] as const).map(([on, label]) => (
+                      <button key={label} type="button" disabled={on && !canBoardSurvey}
+                        onClick={() => { if (on) { if (!composeSurvey) setComposeSurvey({ v: 1, questions: [emptyQuestion('single')] }); setComposeSurveyOpen(true); } else { setComposeSurvey(null); } }}
+                        style={{ padding: '8px 4px', minHeight: 40, borderRadius: 8, border: `2px solid ${!!composeSurvey === on ? '#1976d2' : border}`, background: !!composeSurvey === on ? '#1976d2' : 'transparent', color: !!composeSurvey === on ? '#fff' : textColor, cursor: 'pointer', fontSize: 13, fontWeight: !!composeSurvey === on ? 'bold' : 'normal' }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {composeSurvey && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {composeSurvey.questions.map((q, i) => (
+                        <div key={q.id} style={{ fontSize: 12, color: textColor }}>{i + 1}. {q.label.trim() || <span style={{ color: '#dc3545' }}>（質問の文がありません）</span>}<span style={{ color: subColor }}>（{SURVEY_KIND_LABEL[q.kind]}{q.required ? '・必須' : ''}）</span></div>
+                      ))}
+                      <div style={{ fontSize: 12, color: subColor }}>回答の見せ方：{SURVEY_VISIBILITY_LABEL[composeSurveyVisibility]}</div>
+                      {surveyDraftProblem(composeSurvey) && <div style={{ fontSize: 12, color: '#dc3545' }}>{surveyDraftProblem(composeSurvey)?.message}</div>}
+                      <button type="button" onClick={() => setComposeSurveyOpen(true)}
+                        style={{ alignSelf: 'flex-start', padding: '8px 14px', minHeight: 36, borderRadius: 8, border: 'none', background: isDark ? '#1e3a5f' : '#e7f1ff', color: isDark ? '#9ec5fe' : '#0a58ca', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                        ⤢ 質問を作る・直す
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {composeDeadlineType && !(composeDeadlineType === 'answer' && composeSurvey) && (() => {
                 const dt = DEADLINE_TYPES.find(d => d.value === composeDeadlineType);
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b82f6' : '#bfdbfe'}` }}>
@@ -4488,7 +4596,7 @@ const BoardPage: React.FC = () => {
           rows={isMobile ? 4 : 6} isMobile={isMobile} isDark={isDark}
           maxHeight={Math.round(window.innerHeight * (isMobile ? 0.3 : 0.6))}
           title={composeSubject.trim() || 'お知らせの本文'}
-          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}}
+          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem && !composeSurveyBad) setShowComposeSendConfirm(true); }}}
           style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           {/* テンプレート（2026-09-26 ユーザー確定：送信ボタンの隣）。以前ここにあった「Ctrl+Enter でも送信できます」の文字は
@@ -4500,7 +4608,7 @@ const BoardPage: React.FC = () => {
             </button>
             {/* 🚨 役職プレビュー中は出さない（保存は本物のアカウントの個人テンプレになるため） */}
             {!previewRole && (
-              <button type="button" onClick={() => openTemplateSave({ subject: composeSubject, body: composeBody })}
+              <button type="button" onClick={() => openTemplateSave({ subject: composeSubject, body: composeBody, survey: composeDeadlineType === 'answer' ? composeSurvey : null })}
                 disabled={!composeSubject.trim() && !composeBody.trim()}
                 title={(!composeSubject.trim() && !composeBody.trim()) ? '件名か本文を入れると保存できます' : ''}
                 style={{ padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: (!composeSubject.trim() && !composeBody.trim()) ? 0.5 : 1 }}>
@@ -4508,9 +4616,9 @@ const BoardPage: React.FC = () => {
               </button>
             )}
           </div>
-          <button data-net="write" type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}
-            disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || sending}
-            style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+          <button data-net="write" type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem && !composeSurveyBad) setShowComposeSendConfirm(true); }}
+            disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || composeSurveyBad || sending}
+            style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || composeSurveyBad || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
             {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
           </button>
         </div>
@@ -4658,7 +4766,7 @@ const BoardPage: React.FC = () => {
                 )}
                 {/* このお知らせの件名・本文をテンプレートに（2026-09-26 ユーザー確定：送ったものからも登録できる） */}
                 {canSendNotice && !previewRole && (
-                  <button type="button" onClick={() => openTemplateSave({ subject: outboxDetail.subject || outboxDetail.title || '', body: outboxDetail.body })}
+                  <button type="button" onClick={() => openTemplateSave({ subject: outboxDetail.subject || outboxDetail.title || '', body: outboxDetail.body, survey: parseSurvey(outboxDetail.survey) })}
                     style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                     📋 テンプレートに保存
                   </button>
@@ -4873,7 +4981,7 @@ const BoardPage: React.FC = () => {
                         {dtConfig && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                             <div style={{ width: 3, height: 16, background: accentColor, borderRadius: 2, flexShrink: 0 }} />
-                            <span style={{ fontSize: 12, fontWeight: 700, color: textColor }}>{typeText === '確認' ? typeText : `${typeText}確認`}</span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: textColor }}>{surveyTitleOf(msg) ?? (typeText === '確認' ? typeText : `${typeText}確認`)}</span>
                             {msg.deadline && (
                               allConfirmed ? (
                                 <span style={{ fontSize: 10, color: subColor }}>{msg.deadline}まで</span>
@@ -6021,6 +6129,9 @@ const BoardPage: React.FC = () => {
               <textarea value={tplSave.body} onChange={e => setTplSave(s => s && ({ ...s, body: e.target.value }))} rows={5}
                 style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
             </div>
+            {tplSave.survey && (
+              <div style={{ marginBottom: 8, fontSize: 12, color: subColor }}>📋 アンケートの質問（{tplSave.survey.questions.length}問）も一緒に保存します。使うと種別が「回答」になり、質問が入ります。</div>
+            )}
             {/* 保存先。🚨 権限が無い人には「全体」を出さない（押せないボタンは出さない方針・2026-09-25） */}
             {tplCanPickScope ? (
               <div style={{ marginBottom: 8 }}>
@@ -6058,6 +6169,24 @@ const BoardPage: React.FC = () => {
         </div>
       )}
 
+      {/* アンケートの質問を作る大きな画面（2026-10-29）。🚨 中身はその場で composeSurvey に入る（下書きにも残る）。閉じても消えない */}
+      {composeSurveyOpen && composeSurvey && (
+        <div onKeyDown={e => { if (e.key === 'Escape') setComposeSurveyOpen(false); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5002, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8 }}>
+          <div role="dialog" aria-label="アンケートの質問を作る" style={{ background: cardBg, borderRadius: 14, width: '100%', maxWidth: 600, maxHeight: '94vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}`, fontSize: 15, fontWeight: 'bold', color: textColor }}>📋 アンケートの質問を作る</div>
+            <div style={{ padding: '12px 16px', overflowY: 'auto', flex: 1 }}>
+              <SurveyEditor value={composeSurvey} onChange={setComposeSurvey} isDark={isDark}
+                visibility={composeSurveyVisibility} onVisibility={setComposeSurveyVisibility}
+                problemIndex={surveyDraftProblem(composeSurvey)?.index ?? null} />
+            </div>
+            <div style={{ padding: '10px 16px', borderTop: `1px solid ${border}` }}>
+              {surveyDraftProblem(composeSurvey) && <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 6 }}>{surveyDraftProblem(composeSurvey)?.message}</div>}
+              <button type="button" onClick={() => setComposeSurveyOpen(false)} style={{ ...primaryBtn(), width: '100%' }}>閉じる（入力した内容は残ります）</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* お知らせ送信確認モーダル */}
       {showComposeSendConfirm && (() => {
         const dtConfig = DEADLINE_TYPES.find(d => d.value === composeDeadlineType);
@@ -6115,7 +6244,7 @@ const BoardPage: React.FC = () => {
                 {/* 種別・期限バッジ */}
                 {dtConfig && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: composeSubject ? 6 : 8, paddingBottom: composeSubject ? 6 : 8, borderBottom: composeSubject ? 'none' : `1px solid ${border}` }}>
-                    {(() => { const t = dtConfig.label.replace(/^\S+\s/, ''); return <span style={{ fontSize: 17, fontWeight: 700, color: textColor }}>{t === '確認' ? t : `${t}確認`}</span>; })()}
+                    {(() => { const t = dtConfig.label.replace(/^\S+\s/, ''); return <span style={{ fontSize: 17, fontWeight: 700, color: textColor }}>{composeDeadlineType === 'answer' && composeSurvey ? surveyBadgeText(composeSurvey) : (t === '確認' ? t : `${t}確認`)}</span>; })()}
                     {composeDeadline && (
                       <div style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${accentColor}` }}>
                         <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: accentColor, padding: '2px 8px' }}>{isOverdue ? '期限切れ' : isToday ? '本日締切' : '期限'}</span>
@@ -6140,6 +6269,18 @@ const BoardPage: React.FC = () => {
                 <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 160, overflowY: 'auto', textAlign: 'left' }}>
                   {composeBody}
                 </div>
+                {/* アンケートの質問（受け取る人の見え方・2026-10-29） */}
+                {composeDeadlineType === 'answer' && composeSurvey && (
+                  <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, textAlign: 'left' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: textColor, marginBottom: 4 }}>{surveyBadgeText(composeSurvey)}・回答の見せ方：{SURVEY_VISIBILITY_LABEL[composeSurveyVisibility]}</div>
+                    {composeSurvey.questions.map((q, i) => (
+                      <div key={q.id} style={{ fontSize: 13, color: textColor, marginTop: 4 }}>
+                        {i + 1}. {q.label}{q.required && <span style={{ color: '#dc3545', fontSize: 11, marginLeft: 4 }}>必須</span>}
+                        <div style={{ fontSize: 12, color: subColor }}>{SURVEY_KIND_LABEL[q.kind]}{q.options ? `：${q.options.map(o => o.label).join('／')}${q.allow_other ? '／その他' : ''}` : ''}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* 送信予約 */}
                 {composeScheduledAt && <ScheduledChip at={composeScheduledAt} />}
               </div>

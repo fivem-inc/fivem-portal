@@ -13,7 +13,7 @@ import type { BoardTemplate, BoardTemplateCategory, BoardTemplateScope } from '.
 /** 一度に読む上限。🚨 達したら truncated=true を返し、画面で断る（黙って切らない） */
 export const TEMPLATE_LOAD_LIMIT = 1000;
 
-const TPL_SEL = 'id, scope, owner_id, name, category_id, subject, body, created_at, updated_at, updated_by';
+const TPL_SEL = 'id, scope, owner_id, name, category_id, subject, body, survey, created_at, updated_at, updated_by';
 
 /** テンプレ（自分に見える全部）と分類（隠したものも・名前の解決に要る）をまとめて読む */
 export async function loadTemplates(): Promise<{
@@ -50,12 +50,14 @@ export interface TemplateInput {
   category_id: string | null;
   subject: string;
   body: string;
+  /** アンケートの質問（2026-10-29）。無ければ null */
+  survey?: unknown;
 }
 
 /** 新しく登録。成功なら作った行を返す（トリガーが入れた owner_id・updated_* 込み） */
 export async function insertTemplate(v: TemplateInput): Promise<{ ok: true; template: BoardTemplate } | { ok: false; message: string }> {
   const { data, error } = await supabase.from('board_notice_templates')
-    .insert({ scope: v.scope, name: v.name.trim(), category_id: v.category_id, subject: v.subject.trim(), body: v.body.trim() })
+    .insert({ scope: v.scope, name: v.name.trim(), category_id: v.category_id, subject: v.subject.trim(), body: v.body.trim(), survey: v.survey ?? null })
     .select(TPL_SEL).single();
   if (error || !data) return { ok: false, message: '保存できませんでした：' + friendly(error?.message ?? '保存した行を読み戻せませんでした', error?.code) };
   return { ok: true, template: data as BoardTemplate };
@@ -64,7 +66,7 @@ export async function insertTemplate(v: TemplateInput): Promise<{ ok: true; temp
 /** 直す（名前・分類・件名・本文・保存先）。0件＝権限が無いか消されている */
 export async function updateTemplate(id: string, v: TemplateInput): Promise<{ ok: true; template: BoardTemplate } | { ok: false; message: string }> {
   const r = await supabase.from('board_notice_templates')
-    .update({ scope: v.scope, name: v.name.trim(), category_id: v.category_id, subject: v.subject.trim(), body: v.body.trim() })
+    .update({ scope: v.scope, name: v.name.trim(), category_id: v.category_id, subject: v.subject.trim(), body: v.body.trim(), survey: v.survey ?? null })
     .eq('id', id).select(TPL_SEL);
   if (r.error) return { ok: false, message: '保存できませんでした：' + friendly(r.error.message, r.error.code) };
   const fail = describeUpdate({ data: (r.data ?? []) as { id: string }[], error: null, status: r.status }, '保存', 'missing');

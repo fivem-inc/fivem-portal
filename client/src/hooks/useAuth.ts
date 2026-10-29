@@ -98,6 +98,8 @@ interface UseAuthReturn {
   canApplicationRequest: boolean;
   /** 休暇の種類のご案内（申請の依頼で、有休を時間外調整休に変更できることを案内する・2026-10-27 段2a）。DB の enforce_appreq_leave_replace も同じ権限を見る */
   canLeaveTypeChange: boolean;
+  /** 連絡板のアンケートを作れるか（2026-10-29・最初はマネージャー・社長・管理者だけ）。DB の board_messages_survey_guard も同じ権限を見る */
+  canBoardSurvey: boolean;
   canPartLeaveFormSend: boolean;
   canLeaveApprovals: boolean;
   /** 勤怠カレンダーへの登録・取消（2026-09-09 追加）。DB側の RLS も同じトグルを見る */
@@ -542,6 +544,7 @@ export const useAuth = (): UseAuthReturn => {
   const canLeaveShiftAdjust = realIsAdmin && !previewRole ? true : (effectivePerms.leave_shift_adjust ?? false);
   const canApplicationRequest = realIsAdmin && !previewRole ? true : (effectivePerms.application_request ?? false);
   const canLeaveTypeChange = realIsAdmin && !previewRole ? true : (effectivePerms.leave_type_change ?? false);
+  const canBoardSurvey = realIsAdmin && !previewRole ? true : (effectivePerms.board_survey ?? false);
   const canPartLeaveFormSend = realIsAdmin && !previewRole ? true : (effectivePerms.part_leave_form_send ?? false);
   // 勤怠カレンダーへの登録・取消（2026-09-09）。🚨 役職名では判定しない。
   //    以前は承認者（APPROVER_ROLES）で出していたが、DBのRLSはリーダー以上で弾いており
@@ -642,6 +645,7 @@ export const useAuth = (): UseAuthReturn => {
     canLeaveShiftAdjust,
     canApplicationRequest,
     canLeaveTypeChange,
+    canBoardSurvey,
     canPartLeaveFormSend,
     leaveRequestEnabled,
     // 役職プレビュー中は他の権限と同じく実権限を伏せる（プレビューで実際の見え方を確認するため）
