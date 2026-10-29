@@ -66,14 +66,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   //    「直前に適用した人」を覚えておき、**同じ人なら確認をやり直さない**。
   //    🚨 undefined は「まだ一度も適用していない」。null（ログアウト）と区別する必要がある
   const appliedUserId = useRef<string | null | undefined>(undefined);
+  // 🚨 同じ人の2回目は、1回目の確認が終わるのを待ってから返す（2026-10-29）。
+  //    前はすぐ返していたので、SIGNED_IN が getSession より先に来ると、getSession の道が在籍の確認の途中で
+  //    setLoading(false) を出し、user がまだ空のまま約0.5秒ログイン画面へ移ってから戻っていた
+  const appliedPromise = useRef<Promise<void> | null>(null);
 
   // is_active=false（退職済み・承認待ち）・プロフィール削除済みのユーザーは、
   // ログイン状態として扱う前に弾く
-  const applySessionUser = async (sessionUser: AuthUser | null) => {
-    // 🚨 同じ人で2回目以降は何もしない（起動時に3回走っていたのを1回にする）。
+  const applySessionUser = (sessionUser: AuthUser | null): Promise<void> => {
+    // 🚨 同じ人で2回目以降は確認をやり直さない（起動時に3回走っていたのを1回にする）。
     //    トークンが差し替わっても中身の人は同じなので、在籍の確認をやり直す意味がない
-    if (appliedUserId.current === (sessionUser?.id ?? null)) return;
+    if (appliedUserId.current === (sessionUser?.id ?? null)) return appliedPromise.current ?? Promise.resolve();
     appliedUserId.current = sessionUser?.id ?? null;
+    const p = applySessionUserNow(sessionUser);
+    appliedPromise.current = p;
+    return p;
+  };
+  const applySessionUserNow = async (sessionUser: AuthUser | null) => {
     // 端末の控え（電波が弱いとき 段6・2026-10-23）：ログインが無くなったら全部消す・ログインした人が決まったら、ほかの人の控えは消す。
     // 🚨 ログアウトのボタン以外（退職の猶予切れ・無効化・ほかのタブ・強制ログアウトの SIGNED_OUT）でも必ずここを通る。待たない
     if (!sessionUser) void clearOfflineCopies(); else void keepOnlyCopiesOf(sessionUser.id);
