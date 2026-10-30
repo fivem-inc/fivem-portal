@@ -31,8 +31,9 @@ import {
   advanceRequestMaxDate, jpDateLabel, payPeriodEnd,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
-import { SHEET_LEAVE_SELECT, type SheetLeave } from '../lib/payrollSheet';
-import { mergeLeaveUnits, groupUnitsByDay, renderDayGroup } from '../components/DayFrameList';
+import { SHEET_LEAVE_SELECT, leaveTypeText, type SheetLeave } from '../lib/payrollSheet';
+import { mergeLeaveUnits, groupUnitsByDay, renderDayGroup, type DayUnit } from '../components/DayFrameList';
+import { statusLabel } from '../lib/applicationStatus';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import PendingSubmitLine from '../components/PendingSubmitLine';
@@ -4275,6 +4276,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const ownRestGroups = groupUnitsByDay(mergeLeaveUnits(ownRestRows, r => r.work_date, r => r.id, showOwnLeaves ? ownLeaves : [], user.id,
     d => (!ownLeaveFrom || d >= ownLeaveFrom) && (!ownLeaveTo || d <= ownLeaveTo), ownHistoryFilter.sortAsc));
   const groupPeriod = (g: (typeof ownRestGroups)[number]) => g.units.find(u => u.rep)?.rep?.pay_period_start ?? calcPayPeriodStartJst(g.date);
+  // ［📋 表で見る］（2026-10-30）。🚨 Hook なので、下の早い return（?proposal=）より前に置く
+  const ownView = useOtTableMode('fivem_ot_view_own');
   // 残業に紐づく最新の修正依頼（📩依頼中／✓対応済みバッジ用）
   // 🚨 ここは status で絞らないこと。依頼は申請の状態が変わっても残るため、絞ると
   //    「依頼を出したあとに上長が差し戻す」だけでバッジが消え、本人は取り下げも出し直しもできなくなる
@@ -5724,8 +5727,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           }}>
                           {ownHistoryFilter.showCancelled ? '✓ 取消済みも表示中' : '取消済みを表示'}
                         </button>
+                        <span style={{ marginLeft: 'auto' }}><OtTableToggle on={ownView.mode === 'table'} onToggle={() => ownView.setMode(ownView.mode === 'table' ? 'card' : 'table')} borderColor={borderColor} subText={subText} /></span>
                         <button onClick={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
-                          style={{ marginLeft: 'auto', padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+                          style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
                           {ownHistoryFilter.sortAsc ? '↑ 昇順' : '↓ 降順'}
                         </button>
                       </div>
@@ -5809,15 +5813,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           数字は合計時間数カードと同じ ownCardRows・同じ computeBalance から作る（食い違わせない）。
                           🚨 絞り込み中でも見出しの数字は「その期の全部」を出す。絞った分だけを足すと
                              「合計が合わない」と読まれるため。 */}
-                      {ownRestGroups.map((g, i) => {
-                        // 休暇の行と、会社の予定の日の枠（2026-10-26）。期の見出しは今までどおり期が変わったところに挟む
-                        const period = groupPeriod(g);
-                        const node = renderDayGroup(g, pageCalendarKinds[g.date], renderOwnCard, isDark, () => navigate('/leave?tab=history'));
-                        const isNewPeriod = !!period && (i === 0 || groupPeriod(ownRestGroups[i - 1]) !== period);
-                        if (!isNewPeriod) return node;
-                        const bal = balanceOfPeriod(period);
-                        return (
-                          <React.Fragment key={`p-${period}-${g.date}-${g.units[0].key}`}>
+                      {(() => {
+                        // 期ごとの見出し（期が変わったところに挟む・カードと表で同じもの）
+                        const periodHeader = (g: (typeof ownRestGroups)[number], i: number) => {
+                          const period = groupPeriod(g);
+                          const isNewPeriod = !!period && (i === 0 || groupPeriod(ownRestGroups[i - 1]) !== period);
+                          if (!isNewPeriod) return null;
+                          const bal = balanceOfPeriod(period);
+                          return (
                             <div style={{
                               display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6,
                               margin: '16px 0 8px', padding: '6px 10px', borderRadius: 8,
@@ -5830,10 +5833,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 <OvertimeBalanceInline b={bal} isDark={isDark} totalLabel="合計 " />
                               </span>
                             </div>
-                            {node}
+                          );
+                        };
+                        // ［📋 表で見る］（2026-10-30）。表のときは日のまとまりを表に、カードのときは今までどおり（表から来た日は光らせる）
+                        if (ownView.showTable) {
+                          return <OtHistoryTable groups={ownRestGroups} isDark={isDark} text={text} subText={subText} borderColor={borderColor} onPick={ownView.pickDay} between={periodHeader} />;
+                        }
+                        return ownRestGroups.map((g, i) => (
+                          // 休暇の行と、会社の予定の日の枠（2026-10-26）
+                          <React.Fragment key={`p-${g.date}-${g.units[0].key}`}>
+                            {periodHeader(g, i)}
+                            <OtDayWrap date={g.date} jumpDay={ownView.jumpDay} onBack={ownView.backToTable} isDark={isDark}>
+                              {renderDayGroup(g, pageCalendarKinds[g.date], renderOwnCard, isDark, () => navigate('/leave?tab=history'))}
+                            </OtDayWrap>
                           </React.Fragment>
-                        );
-                      })}
+                        ));
+                      })()}
                     </>
                   );
                   })()}
@@ -6187,6 +6202,8 @@ const MemberDetailView: React.FC<{
   const cardBg = isDark ? '#343a40' : '#fff';
 
   const [rows, setRows] = useState<OvertimeReport[]>([]);
+  // ［📋 表で見る］（2026-10-30）。上長の画面はご本人の画面と別に覚える
+  const otView = useOtTableMode('fivem_ot_view_member');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);   // ［再読み込み］（2026-10-20）
@@ -6366,20 +6383,164 @@ const MemberDetailView: React.FC<{
       ) : (
         <>
           {/* 並び順（自分の履歴のボタンと同じ見た目・同じ言葉） */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
+            <OtTableToggle on={otView.mode === 'table'} onToggle={() => otView.setMode(otView.mode === 'table' ? 'card' : 'table')} borderColor={borderColor} subText={subText} />
             <button type="button" onClick={toggleDetailSort}
               style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
               {detailSortAsc ? '↑ 昇順' : '↓ 降順'}
             </button>
           </div>
-          {dayGroups.map(g => renderDayGroup(g, dayKinds[g.date], r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText}
-            extra={<PartialShiftToggle report={r} slot={slotMap[`${r.applicant_id}|${r.work_date}`]} canChange={isAdmin || canShiftHere}
-              isDark={isDark} onChanged={() => setSlotReload(n => n + 1)} />} />, isDark))}
+          {otView.showTable ? (
+            <OtHistoryTable groups={dayGroups} isDark={isDark} text={text} subText={subText} borderColor={borderColor} onPick={otView.pickDay} />
+          ) : dayGroups.map(g => (
+            <OtDayWrap key={`w-${g.date}-${g.units[0].key}`} date={g.date} jumpDay={otView.jumpDay} onBack={otView.backToTable} isDark={isDark}>
+              {renderDayGroup(g, dayKinds[g.date], r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText}
+                extra={<PartialShiftToggle report={r} slot={slotMap[`${r.applicant_id}|${r.work_date}`]} canChange={isAdmin || canShiftHere}
+                  isDark={isDark} onChanged={() => setSlotReload(n => n + 1)} />} />, isDark)}
+            </OtDayWrap>
+          ))}
         </>
       )}
       </>
       )}
     </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────
+// 残業の履歴の［📋 表で見る］（2026-10-30 ユーザー確定）。ご本人の［履歴・実績報告］と、上長の部門集計の人の画面の2か所が使う。
+// ・列は 日付｜内容（種別と時刻）｜時間数｜状況。休暇の行も入れる（薄いピンク・時間数は —）
+// ・確定（受理済み）でない行は灰色・時間数をかっこに入れる（管理画面の［表で見る］と同じ決まり）
+// ・行を押すとカードの表示に移ってその日を光らせ、カードの上に［📋 表に戻る］。スマホの戻る操作でも表に戻る（URL の otday・履歴に1つ積む）
+// ・表かカードかは端末ごとに覚える（ご本人の画面と上長の画面は別々に）
+// ────────────────────────────────────────────────────────────────
+const OT_DOW = ['日', '月', '火', '水', '木', '金', '土'];
+const otMdDow = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return `${m}/${dd}（${OT_DOW[new Date(y, m - 1, dd).getDay()]}）`; };
+
+function useOtTableMode(storageKey: string) {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [mode, setModeState] = useState<'card' | 'table'>(() => {
+    try { return localStorage.getItem(storageKey) === 'table' ? 'table' : 'card'; } catch { return 'card'; }
+  });
+  const setMode = (m: 'card' | 'table') => {
+    setModeState(m);
+    try { localStorage.setItem(storageKey, m); } catch { /* 端末に覚えられなくても動く */ }
+  };
+  const jumpDay = searchParams.get('otday');
+  const lastPicked = useRef<string | null>(null);
+  /** 表の行を押した：カードへ（履歴に1つ積む＝スマホの戻る操作で表に戻れる） */
+  const pickDay = (d: string) => {
+    lastPicked.current = d;
+    const p = new URLSearchParams(location.search);
+    p.set('otday', d);
+    navigate({ search: p.toString() }, { state: { otJump: true } });
+  };
+  /** ［📋 表に戻る］：積んだ1つを戻す（積んでいなければ otday を外すだけ） */
+  const backToTable = () => {
+    if ((location.state as { otJump?: boolean } | null)?.otJump) { navigate(-1); return; }
+    const p = new URLSearchParams(location.search);
+    p.delete('otday');
+    navigate({ search: p.toString() }, { replace: true });
+  };
+  const showTable = mode === 'table' && !jumpDay;
+  // 表に戻ったら、押した行まで動かす／カードに移ったら、その日まで動かす
+  useEffect(() => {
+    if (showTable && lastPicked.current) {
+      const d = lastPicked.current;
+      setTimeout(() => document.getElementById(`ot-row-${d}`)?.scrollIntoView({ block: 'center' }), 50);
+    }
+  }, [showTable]);
+  useEffect(() => {
+    if (jumpDay) setTimeout(() => document.getElementById(`ot-day-${jumpDay}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
+  }, [jumpDay]);
+  return { mode, setMode, showTable, jumpDay, pickDay, backToTable };
+}
+
+/** ［📋 表で見る］のボタン（押すと表とカードが入れ替わる。表のときは青） */
+const OtTableToggle: React.FC<{ on: boolean; onToggle: () => void; borderColor: string; subText: string }> = ({ on, onToggle, borderColor, subText }) => (
+  <button type="button" onClick={onToggle}
+    style={{ padding: '5px 10px', borderRadius: 8, border: `1.5px solid ${on ? '#1976d2' : borderColor}`, background: on ? '#1976d2' : 'transparent', color: on ? '#fff' : subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+    📋 表で見る
+  </button>
+);
+
+/** 表から来たときに、光らせた日のカードの上に出す［📋 表に戻る］ */
+const OtBackToTable: React.FC<{ onBack: () => void; isDark: boolean }> = ({ onBack, isDark }) => (
+  <button type="button" onClick={onBack}
+    style={{ display: 'inline-flex', alignItems: 'center', minHeight: 40, padding: '0 14px', marginBottom: 6, borderRadius: 20, border: `1.5px solid ${isDark ? '#90caf9' : '#1976d2'}`, background: isDark ? '#1b2a3a' : '#e3f2fd', color: isDark ? '#90caf9' : '#1565c0', cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+    📋 表に戻る
+  </button>
+);
+
+/** カードの表示で、日のまとまりを包む（表から来た日を光らせ、上に［表に戻る］） */
+const OtDayWrap: React.FC<{ date: string; jumpDay: string | null; onBack: () => void; isDark: boolean; children: React.ReactNode }> = ({ date, jumpDay, onBack, isDark, children }) => {
+  const hit = jumpDay === date;
+  return (
+    <div id={`ot-day-${date}`} style={hit ? { background: isDark ? '#4a4423' : '#fff9c4', borderRadius: 10, padding: 6, margin: '0 -6px 6px', scrollMarginTop: 120 } : { scrollMarginTop: 120 }}>
+      {hit && <OtBackToTable onBack={onBack} isDark={isDark} />}
+      {children}
+    </div>
+  );
+};
+
+const OtHistoryTable: React.FC<{
+  groups: { date: string; units: DayUnit<OvertimeReport>[] }[];
+  isDark: boolean; text: string; subText: string; borderColor: string;
+  onPick: (date: string) => void;
+  /** 日のまとまりの前に挟む行（ご本人の履歴の期ごとの見出し） */
+  between?: (g: { date: string; units: DayUnit<OvertimeReport>[] }, i: number) => React.ReactNode;
+}> = ({ groups, isDark, text, subText, borderColor, onPick, between }) => {
+  const th: React.CSSProperties = { padding: '6px 4px', fontSize: 12, fontWeight: 'bold', color: subText, background: isDark ? '#343a40' : '#f1f3f5' };
+  const td: React.CSSProperties = { padding: '7px 4px', verticalAlign: 'top', fontSize: 13 };
+  // 行が無いときは見出しだけの表を出さない（「条件に一致する履歴はありません」が上に出ている）
+  if (groups.length === 0) return null;
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', color: text, textAlign: 'left', marginBottom: 12 }}>
+      <thead>
+        <tr><th style={{ ...th, textAlign: 'left' }}>日付</th><th style={{ ...th, textAlign: 'left' }}>内容</th><th style={{ ...th, textAlign: 'right' }}>時間数</th><th style={{ ...th, textAlign: 'center' }}>状況</th></tr>
+      </thead>
+      <tbody>
+        {groups.map((g, i) => (
+          <React.Fragment key={`t-${g.date}-${g.units[0].key}`}>
+            {between && (() => { const node = between(g, i); return node ? <tr><td colSpan={4} style={{ padding: 0 }}>{node}</td></tr> : null; })()}
+            {g.units.map((u, j) => {
+              const first = j === 0;
+              const rowStyle: React.CSSProperties = { borderTop: `1px solid ${borderColor}`, cursor: 'pointer' };
+              if (u.leave) {
+                const l = u.leave;
+                return (
+                  <tr key={u.key} id={first ? `ot-row-${g.date}` : undefined} onClick={() => onPick(g.date)} style={{ ...rowStyle, background: isDark ? '#3a2a33' : '#fdf2f6' }}>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{first ? otMdDow(g.date) : ''}</td>
+                    <td style={td}>休暇：{leaveTypeText(l)}</td>
+                    <td style={{ ...td, textAlign: 'right', color: subText }}>—</td>
+                    <td style={{ ...td, textAlign: 'center', fontSize: 11.5, color: subText }}>{l.status === 'approved' ? '受理済み' : statusLabel('leave', l.status)}</td>
+                  </tr>
+                );
+              }
+              const r = u.rep!;
+              const act = (r.segments ?? []).filter(x => x.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
+              const pln = (r.segments ?? []).filter(x => x.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
+              const segs = act.length > 0 ? act : pln;
+              const types = (r.application_types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, r)).join('・') || '—';
+              const when = isFullDayReport(r.application_types) ? '終日' : (segs.length > 0 ? segmentsLabel(segs) : '');
+              const settled = r.status === 'confirmed';
+              const diff = formatSignedMin(r.diff_minutes ?? 0);
+              const st = STATUS_INFO[r.status as OvertimeStatus];
+              return (
+                <tr key={u.key} id={first ? `ot-row-${g.date}` : undefined} onClick={() => onPick(g.date)} style={{ ...rowStyle, color: settled ? text : subText }}>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{first ? otMdDow(g.date) : ''}</td>
+                  <td style={td}>{types}{when && <><br /><span style={{ fontSize: 12, color: subText }}>{when}</span></>}</td>
+                  <td style={{ ...td, textAlign: 'right', fontWeight: settled ? 600 : 400, whiteSpace: 'nowrap' }}>{settled ? diff : `（${diff}）`}</td>
+                  <td style={{ ...td, textAlign: 'center' }}>{st && <span style={{ ...badgeStyle(st.color, st.darkBg, isDark), fontSize: 11, whiteSpace: 'normal', wordBreak: 'keep-all', display: 'inline-block', lineHeight: 1.35 }}>{st.label}</span>}</td>
+                </tr>
+              );
+            })}
+          </React.Fragment>
+        ))}
+      </tbody>
+    </table>
   );
 };
 
