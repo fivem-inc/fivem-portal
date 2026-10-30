@@ -33,7 +33,6 @@ import {
 } from '../lib/breakCalc';
 import { SHEET_LEAVE_SELECT, leaveTypeText, type SheetLeave } from '../lib/payrollSheet';
 import { mergeLeaveUnits, groupUnitsByDay, renderDayGroup, type DayUnit } from '../components/DayFrameList';
-import { statusLabel } from '../lib/applicationStatus';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import PendingSubmitLine from '../components/PendingSubmitLine';
@@ -44,7 +43,7 @@ import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, type TripPendingDay } from '../lib/tripPending';
 import { loadMyOpenClockInquiries, type MyOpenClockInquiry } from '../lib/clockInquiry';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, mayConfirmAsPlanned, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
-import { STATUS_INFO } from '../lib/overtimeStatus';
+import { STATUS_INFO, STATUS_MARK, STATUS_MARK_LEGEND } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import OvertimeBox from '../components/OvertimeBox';
 import OvertimeNotes from '../components/OvertimeNotes';
@@ -6415,7 +6414,6 @@ const MemberDetailView: React.FC<{
 // ・表かカードかは端末ごとに覚える（ご本人の画面と上長の画面は別々に）
 // ────────────────────────────────────────────────────────────────
 const OT_DOW = ['日', '月', '火', '水', '木', '金', '土'];
-const otMdDow = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return `${m}/${dd}（${OT_DOW[new Date(y, m - 1, dd).getDay()]}）`; };
 
 function useOtTableMode(storageKey: string) {
   const [searchParams] = useSearchParams();
@@ -6485,6 +6483,14 @@ const OtDayWrap: React.FC<{ date: string; jumpDay: string | null; onBack: () => 
   );
 };
 
+// 表の日付は短く（「11/6金」・2026-10-31 ユーザー確定：1行に収めて行数を増やす）
+const otMdDowShort = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return `${m}/${dd}${OT_DOW[new Date(y, m - 1, dd).getDay()]}`; };
+// 休暇の状態の1文字（残業と同じ字・色にそろえる）
+const leaveMarkStatus = (st: string): OvertimeStatus =>
+  st === 'approved' ? 'confirmed' : st === 'rejected' ? 'returned' : st === 'cancelled' ? 'cancelled' : 'requested';
+// 内容の欄：スマホの縦は1行で「…」（行を押せばカードで全部見える）・横向き（600px 以上）は折り返して全部出す
+const OT_TABLE_CSS = '.ot-tbl td.ot-c{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media (min-width:600px){.ot-tbl td.ot-c{white-space:normal}}';
+
 const OtHistoryTable: React.FC<{
   groups: { date: string; units: DayUnit<OvertimeReport>[] }[];
   isDark: boolean; text: string; subText: string; borderColor: string;
@@ -6492,55 +6498,81 @@ const OtHistoryTable: React.FC<{
   /** 日のまとまりの前に挟む行（ご本人の履歴の期ごとの見出し） */
   between?: (g: { date: string; units: DayUnit<OvertimeReport>[] }, i: number) => React.ReactNode;
 }> = ({ groups, isDark, text, subText, borderColor, onPick, between }) => {
-  const th: React.CSSProperties = { padding: '6px 4px', fontSize: 12, fontWeight: 'bold', color: subText, background: isDark ? '#343a40' : '#f1f3f5' };
-  const td: React.CSSProperties = { padding: '7px 4px', verticalAlign: 'top', fontSize: 13 };
+  const th: React.CSSProperties = { padding: '5px 4px', fontSize: 11.5, fontWeight: 'bold', color: subText, background: isDark ? '#343a40' : '#f1f3f5' };
+  const td: React.CSSProperties = { padding: '6px 4px', verticalAlign: 'middle', fontSize: 12.5, lineHeight: 1.4 };
   // 行が無いときは見出しだけの表を出さない（「条件に一致する履歴はありません」が上に出ている）
   if (groups.length === 0) return null;
+  const mark = (st: OvertimeStatus) => {
+    const info = STATUS_INFO[st];
+    const ch = STATUS_MARK[st];
+    if (!info || !ch) return null;
+    return (
+      <span title={info.label} aria-label={info.label}
+        style={{ ...badgeStyle(info.color, info.darkBg, isDark), display: 'inline-block', width: 20, height: 20, lineHeight: '18px', padding: 0, borderRadius: '50%', textAlign: 'center', boxSizing: 'border-box' }}>{ch}</span>
+    );
+  };
+  // 表の上の読み方：この表に出てくる字だけ
+  const used = new Set<OvertimeStatus>();
+  for (const g of groups) for (const u of g.units) used.add(u.leave ? leaveMarkStatus(u.leave.status) : (u.rep!.status as OvertimeStatus));
+  const legend = (['request_confirmed', 'confirmed', 'requested', 'returned', 'cancelled'] as OvertimeStatus[])
+    .filter(st => used.has(st) || (st === 'requested' && used.has('reported')));
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', color: text, textAlign: 'left', marginBottom: 12 }}>
-      <thead>
-        <tr><th style={{ ...th, textAlign: 'left' }}>日付</th><th style={{ ...th, textAlign: 'left' }}>内容</th><th style={{ ...th, textAlign: 'right' }}>時間数</th><th style={{ ...th, textAlign: 'center' }}>状況</th></tr>
-      </thead>
-      <tbody>
-        {groups.map((g, i) => (
-          <React.Fragment key={`t-${g.date}-${g.units[0].key}`}>
-            {between && (() => { const node = between(g, i); return node ? <tr><td colSpan={4} style={{ padding: 0 }}>{node}</td></tr> : null; })()}
-            {g.units.map((u, j) => {
-              const first = j === 0;
-              const rowStyle: React.CSSProperties = { borderTop: `1px solid ${borderColor}`, cursor: 'pointer' };
-              if (u.leave) {
-                const l = u.leave;
+    <>
+      <style>{OT_TABLE_CSS}</style>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', fontSize: 11.5, color: subText, margin: '0 0 6px', alignItems: 'center' }}>
+        {legend.map(st => <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>{mark(st)}{STATUS_MARK_LEGEND[STATUS_MARK[st]]}</span>)}
+        <span>行を押すと詳しく見られます</span>
+      </div>
+      <table className="ot-tbl" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', color: text, textAlign: 'left', marginBottom: 12 }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, width: 52, textAlign: 'left' }}>日付</th>
+            <th style={{ ...th, textAlign: 'left' }}>内容・時刻</th>
+            <th style={{ ...th, width: 54, textAlign: 'right' }}>時間</th>
+            <th style={{ ...th, width: 26, textAlign: 'center' }}>状</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g, i) => (
+            <React.Fragment key={`t-${g.date}-${g.units[0].key}`}>
+              {between && (() => { const node = between(g, i); return node ? <tr><td colSpan={4} style={{ padding: 0 }}>{node}</td></tr> : null; })()}
+              {g.units.map((u, j) => {
+                const first = j === 0;
+                const rowStyle: React.CSSProperties = { borderTop: `1px solid ${borderColor}`, cursor: 'pointer' };
+                const dateCell = <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12 }}>{first ? otMdDowShort(g.date) : ''}</td>;
+                if (u.leave) {
+                  const l = u.leave;
+                  return (
+                    <tr key={u.key} id={first ? `ot-row-${g.date}` : undefined} onClick={() => onPick(g.date)} style={{ ...rowStyle, background: isDark ? '#3a2a33' : '#fdf2f6' }}>
+                      {dateCell}
+                      <td className="ot-c" style={td}>休暇：{leaveTypeText(l)}</td>
+                      <td style={{ ...td, textAlign: 'right', color: subText }}>—</td>
+                      <td style={{ ...td, textAlign: 'center' }}>{mark(leaveMarkStatus(l.status))}</td>
+                    </tr>
+                  );
+                }
+                const r = u.rep!;
+                const act = (r.segments ?? []).filter(x => x.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
+                const pln = (r.segments ?? []).filter(x => x.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
+                const segs = act.length > 0 ? act : pln;
+                const types = (r.application_types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, r)).join('・') || '—';
+                const when = isFullDayReport(r.application_types) ? '終日' : (segs.length > 0 ? segmentsLabel(segs) : '');
+                const settled = r.status === 'confirmed';
+                const diff = formatSignedMin(r.diff_minutes ?? 0);
                 return (
-                  <tr key={u.key} id={first ? `ot-row-${g.date}` : undefined} onClick={() => onPick(g.date)} style={{ ...rowStyle, background: isDark ? '#3a2a33' : '#fdf2f6' }}>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{first ? otMdDow(g.date) : ''}</td>
-                    <td style={td}>休暇：{leaveTypeText(l)}</td>
-                    <td style={{ ...td, textAlign: 'right', color: subText }}>—</td>
-                    <td style={{ ...td, textAlign: 'center', fontSize: 11.5, color: subText }}>{l.status === 'approved' ? '受理済み' : statusLabel('leave', l.status)}</td>
+                  <tr key={u.key} id={first ? `ot-row-${g.date}` : undefined} onClick={() => onPick(g.date)} style={{ ...rowStyle, color: settled ? text : subText }}>
+                    {dateCell}
+                    <td className="ot-c" style={td}>{types}{when && <span style={{ fontSize: 11.5, color: subText }}> {when}</span>}</td>
+                    <td style={{ ...td, textAlign: 'right', fontWeight: settled ? 600 : 400, whiteSpace: 'nowrap', fontSize: 12 }}>{settled ? diff : `(${diff})`}</td>
+                    <td style={{ ...td, textAlign: 'center' }}>{mark(r.status as OvertimeStatus)}</td>
                   </tr>
                 );
-              }
-              const r = u.rep!;
-              const act = (r.segments ?? []).filter(x => x.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
-              const pln = (r.segments ?? []).filter(x => x.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
-              const segs = act.length > 0 ? act : pln;
-              const types = (r.application_types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, r)).join('・') || '—';
-              const when = isFullDayReport(r.application_types) ? '終日' : (segs.length > 0 ? segmentsLabel(segs) : '');
-              const settled = r.status === 'confirmed';
-              const diff = formatSignedMin(r.diff_minutes ?? 0);
-              const st = STATUS_INFO[r.status as OvertimeStatus];
-              return (
-                <tr key={u.key} id={first ? `ot-row-${g.date}` : undefined} onClick={() => onPick(g.date)} style={{ ...rowStyle, color: settled ? text : subText }}>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{first ? otMdDow(g.date) : ''}</td>
-                  <td style={td}>{types}{when && <><br /><span style={{ fontSize: 12, color: subText }}>{when}</span></>}</td>
-                  <td style={{ ...td, textAlign: 'right', fontWeight: settled ? 600 : 400, whiteSpace: 'nowrap' }}>{settled ? diff : `（${diff}）`}</td>
-                  <td style={{ ...td, textAlign: 'center' }}>{st && <span style={{ ...badgeStyle(st.color, st.darkBg, isDark), fontSize: 11, whiteSpace: 'normal', wordBreak: 'keep-all', display: 'inline-block', lineHeight: 1.35 }}>{st.label}</span>}</td>
-                </tr>
-              );
-            })}
-          </React.Fragment>
-        ))}
-      </tbody>
-    </table>
+              })}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 };
 
