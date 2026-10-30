@@ -38,6 +38,9 @@ import { NOTICE_LOAD_FAILED_TEXT, BOARD_LOAD_FAILED_TEXT, isNetworkFailure, time
 import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import { getAppSetting } from '../lib/appSettings';
 import { writtenSince } from '../lib/writeWatch';
+import TapButton from '../components/TapButton';
+// お知らせへの返信・回答が送れなかったとき（2026-10-30 ユーザー確定）。通信のせいのときは lib/netFailure の文
+const replyNotSentText = (label = '送信する') => `まだ送信されていません。入力した文は残っています。もう一度［${label}］を押してください。`;
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
 const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
 
@@ -744,6 +747,8 @@ const BoardPage: React.FC = () => {
   const [answerInputId,        setAnswerInputId]        = useState<string | null>(null);
   const [answerText,           setAnswerText]           = useState('');
   const [answerSendError,      setAnswerSendError]      = useState<string | null>(null);
+  const [answerSending,        setAnswerSending]        = useState(false);
+  const answerSendingRef = useRef(false);
   const [newTitle,             setNewTitle]             = useState('');
   const [newAnswerPrompt,      setNewAnswerPrompt]      = useState('');
   const [newAnswerLocation,    setNewAnswerLocation]    = useState('');
@@ -1901,24 +1906,34 @@ const BoardPage: React.FC = () => {
   };
 
   const replyPostIdRef = useRef<string | null>(null);
+  // 🚨 同じ瞬間の2回目を止めるのは ref（state は描画のあとでしか変わらない）
+  const replySendingRef = useRef(false);
   const sendNoticeReply = async (notice: BoardMessage, partnerId: string, body: string) => {
-    if (!user || !body.trim() || !partnerId) return;
+    if (replySendingRef.current) return;
+    // 🚨 押しても黙って何も起きない形にしない（2026-10-30・iPhone で押しても何も起きず送れなかった）。送らない理由は必ず文で出す
+    if (!user || !partnerId) { setReplyErr(replyNotSentText()); return; }
+    if (!body.trim()) { setReplyErr('返信の文を入力してください'); return; }
+    replySendingRef.current = true;
     setReplySending(true); setReplyErr('');
-    // 🚨 本体と相手（宛先の行）は DB の board_post が1つの取引で作る（2026-10-26）。
-    //    ベル（board:dm_message:reply・押すと元のお知らせが開く）は10秒たって届けるときに DB が作る
-    const id = replyPostIdRef.current ?? newPostId();
-    replyPostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
-    const r = await postBoard({ id, msg: { parent_id: notice.id, body: body.trim() }, recipients: [partnerId], hold: true });
-    if (!r.ok) {
-      setReplyErr(sendFailureText(r.error) ?? `送れませんでした：${(r.error as { message?: string })?.message ?? '原因が分かりませんでした'}`);
+    try {
+      // 🚨 本体と相手（宛先の行）は DB の board_post が1つの取引で作る（2026-10-26）。
+      //    ベル（board:dm_message:reply・押すと元のお知らせが開く）は10秒たって届けるときに DB が作る
+      const id = replyPostIdRef.current ?? newPostId();
+      replyPostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
+      const r = await postBoard({ id, msg: { parent_id: notice.id, body: body.trim() }, recipients: [partnerId], hold: true, timeoutMs: 20000 });
+      if (!r.ok) {
+        console.error('[返信] 送れませんでした:', r.error);
+        setReplyErr(sendFailureText(r.error) ?? replyNotSentText());
+        return;
+      }
+      replyPostIdRef.current = null;
+      if (r.state === 'held') startUndo({ id }, { kind: 'noticeReply', noticeId: notice.id, partnerId, body: body.trim() });
+      setReplyDraft(null);
+      await loadNoticeReplies(notice.id);
+    } finally {
+      replySendingRef.current = false;
       setReplySending(false);
-      return;
     }
-    replyPostIdRef.current = null;
-    if (r.state === 'held') startUndo({ id }, { kind: 'noticeReply', noticeId: notice.id, partnerId, body: body.trim() });
-    setReplyDraft(null);
-    await loadNoticeReplies(notice.id);
-    setReplySending(false);
   };
 
   /** 終了する・再開する。🚨 どちらも件数を見る（0件＝できていない。黙って成功にしない） */
@@ -2660,35 +2675,37 @@ const BoardPage: React.FC = () => {
         {isOpen && (draftFor(g.partnerId) === null ? (
           <button type="button"
             onClick={() => { setReplyErr(''); setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: '' }); }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: cardBg, border: `1.5px solid #2563eb`, borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#2563eb' }}>
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 44, padding: '0 16px', background: cardBg, border: `1.5px solid #2563eb`, borderRadius: 22, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#2563eb' }}>
             ↩ {iAmSender ? `${nameOf(g.partnerId)}さんに返信する` : '送信者に返信する'}
           </button>
         ) : (
-          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-            {/* 返信（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］。部品は components/ExpandableTextarea） */}
+          <div style={{ marginTop: 4 }}>
+            {/* 返信（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］。部品は components/ExpandableTextarea）。
+                2026-10-30：欄は横幅いっぱい・その下に［やめる］［送信する］（高さ44px）。iPhone で押しても送れなかった・上の［テンプレートに保存］が開いた件 */}
             <ExpandableTextarea
               value={draftFor(g.partnerId) || ''}
-              onChange={v => setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: v })}
-              placeholder="返信を入力..."
+              onChange={v => { setReplyErr(''); setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: v }); }}
+              placeholder={`${nameOf(g.partnerId)}さんへの返信を入力`}
               rows={2} autoFocus isMobile={isMobile} isDark={isDark}
               maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.4)}
               title={`${nameOf(g.partnerId)}さんへの返信`}
-              wrapStyle={{ flex: 1, minWidth: 0 }}
+              wrapStyle={{ width: '100%' }}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
             />
-            {/* 🚨 onMouseDown の preventDefault：押したとき先に欄から抜けない（キーボードを閉じない）。iPhone ではキーボードが先に閉じて
-                画面がずれ、押した所が上の［テンプレートに保存］になっていた（2026-10-28 実機の動画）。送ったあとは欄が消えるのでキーボードも閉じる */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <button data-net="write" type="button" disabled={replySending || !(draftFor(g.partnerId) || '').trim()}
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => void sendNoticeReply(notice, g.partnerId, draftFor(g.partnerId) || '')}
-                style={{ padding: '6px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: replySending || !(draftFor(g.partnerId) || '').trim() ? 0.5 : 1 }}>
-                {replySending ? '送信中...' : '送信'}
-              </button>
-              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setReplyDraft(null); setReplyErr(''); }}
-                style={{ padding: '6px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12 }}>
+            {replyErr && (
+              <div role="alert" style={{ marginTop: 8, fontSize: 13, color: '#dc2626' }}>{replyErr}</div>
+            )}
+            {/* 🚨 押したときに入力欄から抜けない・指を離した瞬間に送る・あとから来る click は止める（components/TapButton） */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <TapButton onTap={() => { if (replySending) return; setReplyDraft(null); setReplyErr(''); }}
+                style={{ ...backBtn(isDark), flex: 1, minHeight: 44, padding: '0 8px' }}>
                 やめる
-              </button>
+              </TapButton>
+              <TapButton netWrite ariaDisabled={replySending}
+                onTap={() => void sendNoticeReply(notice, g.partnerId, draftFor(g.partnerId) || '')}
+                style={{ ...primaryBtn(), flex: 2, minHeight: 44, padding: '0 8px', opacity: replySending ? 0.6 : 1 }}>
+                {replySending ? '送信しています…' : '送信する'}
+              </TapButton>
             </div>
           </div>
         ))}
@@ -2767,7 +2784,8 @@ const BoardPage: React.FC = () => {
           </div>
         )}
 
-        {replyErr && (
+        {/* 書いている間は、送るボタンのすぐ上に出している */}
+        {replyErr && replyDraft?.msgId !== notice.id && (
           <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{replyErr}</div>
         )}
       </div>
@@ -3120,43 +3138,54 @@ const BoardPage: React.FC = () => {
                 </div>
                 {/* 入力欄（全種別・回答のみ必須） */}
                 {answerInputId === msg.id && !alreadyConfirmed && (
-                  <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-                    {/* 回答・コメント（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］） */}
+                  <div style={{ marginTop: 8 }}>
+                    {/* 回答・コメント（2026-10-14：打つと広がる・パソコンは右下を引っ張る・スマホは［⤢］）。
+                        2026-10-30：返信の欄と同じ形（欄は横幅いっぱい・その下に［キャンセル］［回答して完了］・指を離した瞬間に送る components/TapButton） */}
                     <ExpandableTextarea
                       value={answerText}
-                      onChange={setAnswerText}
+                      onChange={v => { setAnswerSendError(null); setAnswerText(v); }}
                       placeholder={isAnswerRequired ? '回答内容を入力（必須）...' : 'コメントを入力（任意）...'}
                       rows={2} autoFocus isMobile={isMobile} isDark={isDark}
                       maxHeight={isMobile ? 140 : Math.round(window.innerHeight * 0.4)}
                       title={isAnswerRequired ? '回答' : 'コメント'}
-                      wrapStyle={{ flex: 1, minWidth: 0 }}
+                      wrapStyle={{ width: '100%' }}
                       style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${isAnswerRequired && !answerText.trim() ? '#ef4444' : border}`, background: inputBg, color: textColor, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.4 }}
                     />
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <button data-net="write" type="button" disabled={isAnswerRequired && !answerText.trim()} onClick={async () => {
-                        if (!user) return;
-                        if (isAnswerRequired && !answerText.trim()) return;
-                        const now = new Date().toISOString();
-                        const { error: upErr } = await supabase.from('board_confirmations').upsert(
-                          { message_id: msg.id, user_id: user.id, comment: answerText.trim() || null },
-                          { onConflict: 'message_id,user_id' }
-                        );
-                        // 🚨 失敗を黙らせない（2026-10-29 まで2回目は 42501 で失敗していたのに ✓ と出ていた）
-                        if (upErr) { setAnswerSendError(sendFailureText(upErr) ?? `送れませんでした：${upErr.message}`); return; }
-                        setAnswerSendError(null);
-                        setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: answerText.trim() || null, confirmed_at: now }] }));
-                        setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
-                        setAnswerInputId(null);
-                        setAnswerText('');
-                      }} style={{ padding: '6px 10px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: isAnswerRequired && !answerText.trim() ? 0.5 : 1 }}>
-                        {isAnswerRequired ? '回答して完了' : '完了'}
-                      </button>
-                      <button type="button" onClick={() => { setAnswerInputId(null); setAnswerText(''); }}
-                        style={{ padding: '6px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                    {answerSendError && <div role="alert" style={{ fontSize: 13, color: '#dc2626', marginTop: 8 }}>{answerSendError}</div>}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <TapButton onTap={() => { if (answerSending) return; setAnswerInputId(null); setAnswerText(''); setAnswerSendError(null); }}
+                        style={{ ...backBtn(isDark), flex: 1, minHeight: 44, padding: '0 8px' }}>
                         キャンセル
-                      </button>
+                      </TapButton>
+                      <TapButton netWrite ariaDisabled={answerSending} onTap={async () => {
+                        const label = isAnswerRequired ? '回答して完了' : '完了';
+                        if (answerSendingRef.current) return;
+                        if (!user) { setAnswerSendError(replyNotSentText(label)); return; }
+                        // 🚨 押しても黙って何も起きない形にしない（2026-10-30）
+                        if (isAnswerRequired && !answerText.trim()) { setAnswerSendError('回答の文を入力してください'); return; }
+                        answerSendingRef.current = true;
+                        setAnswerSending(true);
+                        try {
+                          const now = new Date().toISOString();
+                          const { error: upErr } = await supabase.from('board_confirmations').upsert(
+                            { message_id: msg.id, user_id: user.id, comment: answerText.trim() || null },
+                            { onConflict: 'message_id,user_id' }
+                          ).abortSignal(timeoutSignal(20000));
+                          // 🚨 失敗を黙らせない（2026-10-29 まで2回目は 42501 で失敗していたのに ✓ と出ていた）
+                          if (upErr) { console.error('[回答] 送れませんでした:', upErr); setAnswerSendError(sendFailureText(upErr) ?? replyNotSentText(label)); return; }
+                          setAnswerSendError(null);
+                          setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: answerText.trim() || null, confirmed_at: now }] }));
+                          setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                          setAnswerInputId(null);
+                          setAnswerText('');
+                        } finally {
+                          answerSendingRef.current = false;
+                          setAnswerSending(false);
+                        }
+                      }} style={{ ...primaryBtn(), flex: 2, minHeight: 44, padding: '0 8px', opacity: answerSending ? 0.6 : 1 }}>
+                        {answerSending ? '送信しています…' : (isAnswerRequired ? '回答して完了' : '完了')}
+                      </TapButton>
                     </div>
-                    {answerSendError && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>{answerSendError}</div>}
                   </div>
                 )}
               </div>
@@ -4003,7 +4032,8 @@ const BoardPage: React.FC = () => {
               </div>
             ) : renderMsg(inboxDetail, false, false, inboxDetailArchiveBtn)}
             {/* 受け取ったお知らせの件名・本文をテンプレートに（2026-09-26 ユーザー確定：受信したものからも登録できる） */}
-            {canSendNotice && !previewRole && editingNoticeId !== inboxDetail.id && (
+            {/* 🚨 返信・回答を書いている間は出さない（2026-10-30：iPhone で画面がずれ、返信の［送信］のつもりがこのボタンに当たって窓が開いた） */}
+            {canSendNotice && !previewRole && editingNoticeId !== inboxDetail.id && replyDraft?.msgId !== inboxDetail.id && answerInputId !== inboxDetail.id && (
               <div style={{ marginTop: 8 }}>
                 <button type="button" onClick={() => openTemplateSave({ subject: inboxDetail.subject || inboxDetail.title || '', body: inboxDetail.body, survey: parseSurvey(inboxDetail.survey) })}
                   style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
@@ -4765,7 +4795,7 @@ const BoardPage: React.FC = () => {
                   </button>
                 )}
                 {/* このお知らせの件名・本文をテンプレートに（2026-09-26 ユーザー確定：送ったものからも登録できる） */}
-                {canSendNotice && !previewRole && (
+                {canSendNotice && !previewRole && replyDraft?.msgId !== outboxDetail.id && (
                   <button type="button" onClick={() => openTemplateSave({ subject: outboxDetail.subject || outboxDetail.title || '', body: outboxDetail.body, survey: parseSurvey(outboxDetail.survey) })}
                     style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                     📋 テンプレートに保存

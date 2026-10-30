@@ -6,11 +6,11 @@
 // 🚨 届ける・ベルを作るのは DB だけ（board_deliver）。画面でベル・メールを作らない（作ると取り消しても届く・2通になる）
 import { supabase } from './supabaseClient';
 import { newClientKey } from './safetyStorage';
-import { isNetworkFailure } from './netFailure';
+import { isNetworkFailure, timeoutSignal } from './netFailure';
 
 export const UNDO_MS = 10_000;
 /** 出てから0.5秒は［取り消す］に反応しない（［送信］を押した指のぶれで取り消さない） */
-const IGNORE_MS = 500;
+const IGNORE_MS = 600;
 
 export const UNDO_TEXT = {
   sent: '送信しました',
@@ -41,10 +41,13 @@ export { newClientKey as newPostId };
 /** 送る（本体・宛先・写しを1つの取引で）。同じ id で呼び直しても2件にならない */
 export async function postBoard(args: {
   id: string; msg: Record<string, unknown>; recipients?: string[] | null; hold: boolean; batch?: string | null;
+  /** 渡すと、その時間で打ち切る（「送信しています…」のまま止まらないように・2026-10-30）。同じ id で押し直しても2件にならない */
+  timeoutMs?: number;
 }): Promise<PostResult> {
-  const { data, error } = await supabase.rpc('board_post', {
+  const q = supabase.rpc('board_post', {
     p_id: args.id, p_msg: args.msg, p_recipients: args.recipients ?? null, p_hold: args.hold, p_batch: args.batch ?? null,
   });
+  const { data, error } = await (args.timeoutMs ? q.abortSignal(timeoutSignal(args.timeoutMs)) : q);
   if (error || !data) return { ok: false, error: error ?? new Error('応答がありませんでした') };
   const d = data as { state: PostState; scheduled_at: string | null };
   return { ok: true, state: d.state, scheduledAt: d.scheduled_at };

@@ -1,5 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+
+const IS_IOS = typeof navigator !== 'undefined'
+  && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
 /**
  * 連絡板の本文の入力欄（2026-10-14 ユーザー確定）。お知らせ送信・グループ・DM の3か所が同じこれを使う。
@@ -70,27 +73,28 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
   }, [location.key]);
 
   // 打つたびに、中身に合わせて伸ばす（上限まで）。空になったら最初の高さに戻す
-  useLayoutEffect(() => {
+  // 🚨 一度 auto に縮めて計り直さない（2026-10-30）。縮めた瞬間に外側のスクロールする箱の位置が上限に切り詰められ、
+  //    iPhone（Safari は位置を自動で戻さない）では中身が下へずれたままになる。［送信］のあった所に上の［テンプレートに保存］が来て窓が開いた／
+  //    何も無い所に当たって送れなかった（手元で再現：1文字ごとに 45px ずれた）。はみ出したときだけ伸ばす。window.scrollTo もしない
+  // 🚨 変換中（未確定の文字）は計り直さない。確定したとき（compositionend）に1回だけ計る
+  const composingRef = useRef(false);
+  const fit = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    if (!value) { el.style.height = ''; return; }
-    const prev = el.offsetHeight;
-    // 🚨 高さを一度 auto に縮めると、欄の中と画面の位置が一番上に戻る（iPhone で打っている所が見えなくなり、
-    //    画面もずれた・2026-10-28 実機の動画）。計り直したあと、元の位置に戻す
-    const innerTop = el.scrollTop;
-    const pageY = window.scrollY;
-    el.style.height = 'auto';
-    const need = Math.min(el.scrollHeight + 2, limit);
-    // 🚨 縮めないのは「打つたび」だけ。上限より大きくはしない（窓を小さくした・上限が下がったときも上限に収める）
-    el.style.height = `${Math.min(Math.max(need, prev), limit)}px`;
-    el.scrollTop = innerTop;
-    if (window.scrollY !== pageY) window.scrollTo(window.scrollX, pageY);
-  }, [value, limit]);
+    if (!el.value) { el.style.height = ''; return; }
+    if (el.offsetHeight > limit) { el.style.height = `${limit}px`; return; }
+    if (el.scrollHeight > el.clientHeight) el.style.height = `${Math.min(el.scrollHeight + 2, limit)}px`;
+  }, [limit]);
+  useLayoutEffect(() => {
+    if (composingRef.current && value) return;
+    fit();
+  }, [value, fit]);
 
   useEffect(() => {
     if (!autoFocus || !ref.current) return;
     ref.current.focus();
-    ref.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // 🚨 iPhone では画面を滑らせない（動いている最中に押すと、押した所と届く先がずれる）
+    if (!IS_IOS) ref.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     // 開いたときの1回だけ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -106,6 +110,8 @@ const ExpandableTextarea: React.FC<Props> = ({ value, onChange, placeholder, onK
       <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', ...wrapStyle }}>
         <textarea ref={ref} value={value} rows={rows} placeholder={placeholder}
           onChange={e => onChange(e.target.value)} onKeyDown={onKeyDown}
+          onCompositionStart={() => { composingRef.current = true; }}
+          onCompositionEnd={() => { composingRef.current = false; fit(); }}
           style={{ ...style, ...(isMobile ? { fontSize: 16 } : null), flex: 1, minWidth: 0, resize: 'vertical', overflowY: 'auto', maxHeight: limit }} />
         {(isMobile || onExpand) && (
           <button type="button" onClick={() => (onExpand ? onExpand() : setFull(true))} aria-label="大きく書く" title="大きく書く"
