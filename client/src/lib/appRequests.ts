@@ -87,7 +87,7 @@ export async function dismissAppRequest(r: ReceivedAppRequest, note: string): Pr
   const { data, error } = await supabase.from('application_requests')
     .update({ status: 'dismissed', recipient_note: note, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', r.id).eq('status', 'open').select('id');
-  if (error) return '保存できませんでした：' + error.message;
+  if (error) return '保存できませんでした：' + error.message.replace(/^APPREQ\|/, '');
   if (!data || data.length === 0) return '保存できませんでした（すでに処理された可能性があります）';
   const dates = (r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowOf(d)}）`).join('・');
   // 休暇の種類のご案内（2026-10-27 段2a）：中立な文（ご本人が断ったことを前に出さない・法律の専門家のレビュー）

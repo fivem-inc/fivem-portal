@@ -2161,7 +2161,8 @@ const AppRequestBanner: React.FC<{ userId: string }> = ({ userId }) => {
     : 0;
   return (
     <div
-      onClick={() => navigate(`/overtime?tab=history&focus=${head.id}`)}
+      // 2026-10-30 段2-0：休暇の依頼は休暇のページへ（前は種類にかかわらず残業のページへ移っていた）
+      onClick={() => navigate(head.kind === 'leave' ? `/leave?focus=${head.id}` : `/overtime?tab=history&focus=${head.id}`)}
       style={{ margin: '0 0 16px 0', padding: '12px 16px', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 15, fontWeight: 'bold',
         background: isOverdue ? '#f8d7da' : '#fff3cd',
         border: `2px solid ${isOverdue ? '#dc3545' : '#f59e0b'}`,

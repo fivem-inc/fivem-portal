@@ -70,7 +70,7 @@ const AppRequestBox: React.FC<Props> = ({ userId, profileName, isDark, partNote,
     const { data, error } = await supabase.from('application_requests')
       .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
       .eq('id', id).eq('status', 'open').select('id');
-    if (error) return '取り下げられませんでした：' + error.message;
+    if (error) return '取り下げられませんでした：' + error.message.replace(/^APPREQ\|/, '');
     if (!data || data.length === 0) { void fetchMyRequests(); return '取り下げられませんでした（すでに申請された可能性があります）'; }
     setMyRequests(prev => prev.map(r => (r.id === id ? { ...r, status: 'withdrawn' } : r)));
     notifyAppRequestChanged();
