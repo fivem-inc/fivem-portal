@@ -133,7 +133,74 @@ serve(async (req) => {
     sent++;
   }
 
-  return new Response(JSON.stringify({ ok: true, users: sent, tomorrow, yesterday }), {
+  // ── 連絡板のアンケートの「ご提案」（2026-10-30 段2-2・ユーザー確定）────────────
+  // ・ご本人：返事がまだ（status='awaiting'）のご提案の期限の前日・翌日の朝にベル（上の依頼と同じ考え方）
+  // ・担当者：期限の翌日にベル「◯◯さんから、ご提案（件名）の返事がまだありません」
+  // 🚨 ベルだけ（この2つの event_key は push-dispatch の EVENT_MAP に入れていない＝スマホには出ない）
+  // 🚨 承諾のあとは申請の依頼（上）になるので、ここでは数えない。期限を入れていないご提案も対象外
+  const OFFER_DUE = "application_request:offer_due";
+  const OFFER_NOREPLY = "application_request:offer_noreply";
+  const { data: offerRows, error: offerErr } = await supabase
+    .from("board_survey_requests")
+    .select("id, message_id, recipient_id, requester_id, due_date")
+    .eq("status", "awaiting")
+    .in("due_date", [tomorrow, yesterday]);
+  let offerUsers = 0;
+  let noReply = 0;
+  if (offerErr) {
+    // 読めなかったら、ご提案の分は何もしない（消してから作り直すので、先へ進むと消しただけになる）
+    console.error("[remind-application-request] ご提案を読めませんでした", offerErr.message);
+  } else {
+    type Offer = { id: string; message_id: string; recipient_id: string; requester_id: string; due_date: string };
+    const offers = (offerRows ?? []) as Offer[];
+    const msgIds = [...new Set(offers.map(o => o.message_id))];
+    const userIds = [...new Set(offers.map(o => o.recipient_id))];
+    const subjectOf = new Map<string, string>();
+    if (msgIds.length > 0) {
+      const { data: msgs } = await supabase.from("board_messages").select("id, subject, title").in("id", msgIds);
+      for (const m of (msgs ?? []) as { id: string; subject: string | null; title: string | null }[]) {
+        subjectOf.set(m.id, ((m.subject || m.title || "アンケート").trim()).slice(0, 40));
+      }
+    }
+    const nameOf = new Map<string, string>();
+    if (userIds.length > 0) {
+      const { data: profs } = await supabase.from("profiles").select("id, name").in("id", userIds);
+      for (const p of (profs ?? []) as { id: string; name: string | null }[]) nameOf.set(p.id, p.name ?? "");
+    }
+    await supabase.from("notifications").delete().in("event_key", [OFFER_DUE, OFFER_NOREPLY]).eq("dismissed", false);
+
+    const offersByUser = new Map<string, Offer[]>();
+    for (const o of offers) {
+      const arr = offersByUser.get(o.recipient_id) ?? [];
+      arr.push(o);
+      offersByUser.set(o.recipient_id, arr);
+    }
+    for (const [uid, list] of offersByUser) {
+      const over = list.filter(o => o.due_date === yesterday);
+      const soon = list.filter(o => o.due_date === tomorrow);
+      const message = over.length > 0 && soon.length > 0
+        ? `📩 返事がまだのご提案が${list.length}件あります（期限を過ぎたもの ${over.length}件）`
+        : over.length > 0
+          ? `📩 返事の期限を過ぎたご提案が${over.length}件あります`
+          : `📩 明日が返事の期限のご提案が${soon.length}件あります`;
+      const subMessage = list.map(o => `${subjectOf.get(o.message_id) ?? "アンケート"}（期限 ${mdLabel(o.due_date)}）`).join(" ／ ");
+      await supabase.from("notifications").insert({
+        user_id: uid, message, sub_message: subMessage,
+        source_type: "application_request", event_key: OFFER_DUE, reference_id: list.length === 1 ? list[0].id : todayJst,
+      });
+      offerUsers++;
+    }
+    for (const o of offers.filter(x => x.due_date === yesterday)) {
+      await supabase.from("notifications").insert({
+        user_id: o.requester_id,
+        message: `📩 ${nameOf.get(o.recipient_id) ?? ""}さんから、ご提案（${subjectOf.get(o.message_id) ?? "アンケート"}）の返事がまだありません（期限 ${mdLabel(o.due_date)}）`,
+        source_type: "application_request", event_key: OFFER_NOREPLY, reference_id: o.id,
+      });
+      noReply++;
+    }
+  }
+
+  return new Response(JSON.stringify({ ok: true, users: sent, offerUsers, noReply, tomorrow, yesterday }), {
     status: 200, headers: { "Content-Type": "application/json" },
   });
 });
