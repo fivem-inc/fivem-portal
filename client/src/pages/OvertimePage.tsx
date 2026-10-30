@@ -7,7 +7,9 @@ import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import AppRequestCard from '../components/AppRequestCard';
 import LeaveKindGuideCard from '../components/LeaveKindGuideCard';
 import ApplicationRequestSheet from '../components/ApplicationRequestSheet';
-import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT } from '../lib/appRequests';
+import { loadReceivedAppRequests, isFullDayOtContent, countMyOpenAskItems, APP_REQUEST_CHANGED_EVENT, notifyAppRequestChanged } from '../lib/appRequests';
+import type { MyOffer } from '../lib/boardOfferApi';
+import OfferCard from '../components/OfferCard';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
 import { HISTORY_LOAD_FAILED_TEXT, isNetworkFailure, SEND_DELIVERED_TEXT, SEND_DELIVERED_SUB, SEND_SLOW_TEXT, TRIP_PENDING_LOAD_FAILED_TEXT, timeoutSignal } from '../lib/netFailure';
@@ -3999,13 +4001,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   type MyAppRequest = ReceivedAppRequest;
   const [appRequests, setAppRequests] = useState<MyAppRequest[]>([]);
   const [appReqErr, setAppReqErr] = useState('');
+  // 連絡板のアンケートの「ご提案」（2026-10-30 段2-3）。返事がまだのものだけ（依頼と同じ1本で読む）
+  const [appOffers, setAppOffers] = useState<MyOffer[]>([]);
   const fetchAppRequests = useCallback(async () => {
     // 🚨 読めなかったときは空で上書きしない（依頼が無いと嘘をつくため）。中身は lib/appRequests
     const r = await loadReceivedAppRequests(user.id);
-    if (r.error) { setAppReqErr(r.error); return; }
+    if (r.error) { setAppReqErr(r.error); return null; }
     setAppReqErr('');
     setAppRequests(r.rows);
+    setAppOffers(r.offers);
+    return r.rows;
   }, [user.id]);
+  /** ご提案を承諾したら、作った依頼で申請の画面を開く（今の［この内容で申請する］と同じ道） */
+  const onOfferAccepted = async (appRequestId: string | null) => {
+    const rows = await fetchAppRequests();
+    notifyAppRequestChanged();
+    const created = rows?.find(x => x.id === appRequestId);
+    if (created) startFromRequest(created);
+  };
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
   // ─── 経理からの打刻の確認（2026-10-15 ユーザー確定）。答えていない確認をページの上に出す ───
   // 🚨 ベルとプッシュだけだと、閉じたあとに見つけられない（申請の依頼で9日間気づかれなかったのと同じ）。
@@ -5738,9 +5751,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       {appReqErr && (
                         <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{appReqErr}</div>
                       )}
-                      {appRequests.length > 0 && (
+                      {(appRequests.length > 0 || appOffers.length > 0) && (
                         <div style={{ marginBottom: 14 }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 申請の依頼が届いています</div>
+                          <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 申請の依頼{appOffers.length > 0 ? '・ご提案' : ''}が届いています</div>
+                          {appOffers.map(o => (
+                            <OfferCard key={o.offer_id} o={o} isDark={isDark}
+                              focused={highlightReqId === o.offer_id}
+                              focusRef={el => { if (el && highlightReqId === o.offer_id) focusReqRef.current = el; }}
+                              onAccepted={id => void onOfferAccepted(id)}
+                              onConsulted={x => { setAppOffers(prev => prev.filter(q => q.offer_id !== x.offer_id)); notifyAppRequestChanged(); }}
+                            />
+                          ))}
                           {appRequests.map(r => r.replaces_leave_id ? (
                             // 休暇の種類のご案内（2026-10-27 段2a）。文言はユーザー確定・components/LeaveKindGuideCard
                             <LeaveKindGuideCard key={r.id} r={r} userId={user.id} isDark={isDark}

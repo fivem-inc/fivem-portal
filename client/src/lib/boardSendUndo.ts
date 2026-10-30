@@ -27,7 +27,7 @@ export type BoardRestore =
       deadlineType: string; deadline: string; answerPrompt: string; answerLocation: string; answerLink: string;
       allowReply: boolean; includeCC: boolean;
       /** アンケートの質問（2026-10-29）。null＝ふつうの「回答」 */
-      survey?: unknown; surveyVisibility?: string }
+      survey?: unknown; surveyVisibility?: string; surveyOnegai?: boolean }
   | { kind: 'channel'; channelId: string; parentId: string | null; body: string;
       title: string; deadline: string; deadlineType: string; answerPrompt: string; answerLocation: string; answerLink: string }
   | { kind: 'noticeReply'; noticeId: string; partnerId: string; body: string }

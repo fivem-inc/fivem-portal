@@ -1351,6 +1351,10 @@ const classifyNotif = (n: NotifLike) => {
   const isAppRequestLeave      = n.source_type === 'application_request:received:leave'; // 本人：休暇の申請依頼（2026-09-26・休暇ページに着く）
   const isAppRequestDismissed  = n.source_type === 'application_request:dismissed';  // 上長：相手が「対応しない」と回答した（結果のみ）
   const isAppRequestDue        = n.source_type === 'application_request:due';        // 本人：申請の期限が近い／過ぎた（要対応）
+  // 連絡板のアンケートの「ご提案」（2026-10-30 段2-3）。DB の関数が入れるベルは source_type が application_request なので event_key で見る
+  const offerKey               = n.event_key ?? '';
+  const isOffer                = offerKey === 'application_request:offer' || offerKey === 'application_request:offer:leave' || offerKey === 'application_request:offer_due'; // 本人：ご提案が届いた／返事の期限
+  const isOfferReply           = offerKey === 'application_request:offer_reply' || offerKey === 'application_request:offer_noreply';                                        // 担当者：承諾・相談・返事がまだ
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
@@ -1490,6 +1494,16 @@ const classifyNotif = (n: NotifLike) => {
     // 申請の依頼 → 履歴タブの該当カードまで移動して光らせる（2026-09-10 実機指摘）。
     // 🚨 focus を付けないと「残業ページに着いただけで、何をすればよいか分からない」。
     //    reference_id は application_requests.id（依頼ID）。
+    // ご提案（本人あて）→ 残業／休暇のページのご提案のカードを光らせる。🚨 期限の催促は複数のとき reference_id が日付なので focus を付けない
+    if (isOffer) {
+      const isOfferId = !!n.reference_id && !/^\d{4}-\d{2}-\d{2}$/.test(n.reference_id);
+      const base = offerKey === 'application_request:offer:leave' ? '/leave' : '/overtime?tab=history';
+      return { path: isOfferId ? `${base}${base.includes('?') ? '&' : '?'}focus=${n.reference_id}` : base, closeOnTap: false };
+    }
+    // ご提案への返事（担当者あて）→ 送信トレイ（回答の一覧はお知らせの中）
+    if (isOfferReply) {
+      return { path: '/board?bv=outbox', closeOnTap: true };
+    }
     if (isAppRequest) {
       return { path: n.reference_id ? `/overtime?tab=history&focus=${n.reference_id}` : '/overtime?tab=history', closeOnTap: false };
     }
@@ -2122,18 +2136,20 @@ const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean 
 //    canOvertime で塞ぐと「依頼は届くのに答えられない」になる。
 // 🚨 読めなかったときは0で上書きしない（依頼が無いと嘘をつくため）。
 const APP_REQUEST_KIND_LABEL: Record<string, string> = { overtime: '残業・時間管理', leave: '休暇' };
-interface MyOpenRequest { id: string; kind: string; target_dates: string[] | null; due_date: string | null }
+interface MyOpenRequest { id: string; kind: string; target_dates: string[] | null; due_date: string | null; offer?: boolean }
 const useAppRequestCount = (userId: string | undefined) => {
   const [rows, setRows] = useStickyState<MyOpenRequest[]>('appreq:' + userId, []);
   const fetchReq = useCallback(async () => {
     if (!userId) { setRows([]); return; }
-    const { data, error } = await supabase.from('application_requests')
-      .select('id, kind, target_dates, due_date')
-      .eq('recipient_id', userId)
-      .eq('status', 'open')
-      .order('due_date', { ascending: true });
+    // 2026-10-30 段2-3：依頼と、連絡板のアンケートの「ご提案」（返事待ち）を DB の my_open_app_requests 1本で（「内容を相談したい」は数えない・ユーザー確定）
+    const { data, error } = await supabase.rpc('my_open_app_requests');
     if (error) return;
-    setRows((data ?? []) as MyOpenRequest[]);
+    const d = (data ?? {}) as { requests?: MyOpenRequest[]; offers?: (Omit<MyOpenRequest, 'id'> & { offer_id: string })[] };
+    const merged: MyOpenRequest[] = [
+      ...(d.offers ?? []).map(o => ({ id: o.offer_id, kind: o.kind, target_dates: o.target_dates, due_date: o.due_date, offer: true })),
+      ...(d.requests ?? []).map(r => ({ id: r.id, kind: r.kind, target_dates: r.target_dates, due_date: r.due_date })),
+    ].sort((a, b) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999'));
+    setRows(merged);
   }, [userId, setRows]);
   // 30 秒ごとをやめ、依頼が届いたとき・残業／休暇のページを出入りしたときだけ数え直す（2026-09-27・段2）
   // 🚨 key（2026-10-18）：同じ人・同じ条件なら、ページを移っても10分は読み直さない（自分が書き込んだらすぐ読む・hooks/useRefreshOn）
@@ -2170,7 +2186,7 @@ const AppRequestBanner: React.FC<{ userId: string }> = ({ userId }) => {
     >
       <span style={{ fontSize: 22 }}>📩</span>
       <span>
-        申請の依頼が {rows.length}件 届いています
+        申請の依頼{rows.some(r => r.offer) ? '・ご提案' : ''}が {rows.length}件 届いています
         <span style={{ fontWeight: 'normal', fontSize: 13 }}>
           （{kindLabel}{dateLabel && `・${dateLabel}`}
           {isOverdue ? `・期限を ${overdueDays}日 過ぎています` : head.due_date ? `・期限 ${head.due_date.slice(5).replace('-', '/')}` : ''}）

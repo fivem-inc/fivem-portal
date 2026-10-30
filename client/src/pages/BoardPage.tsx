@@ -39,6 +39,8 @@ import { saveCopy, loadCopy } from '../lib/offlineCopy';
 import { getAppSetting } from '../lib/appSettings';
 import { writtenSince } from '../lib/writeWatch';
 import TapButton from '../components/TapButton';
+import NoticeDeleteActions from '../components/board/NoticeDeleteActions';
+import { releaseOffers } from '../lib/boardOfferApi';
 // お知らせへの返信・回答が送れなかったとき（2026-10-30 ユーザー確定）。通信のせいのときは lib/netFailure の文
 const replyNotSentText = (label = '送信する') => `まだ送信されていません。入力した文は残っています。もう一度［${label}］を押してください。`;
 // 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
@@ -110,6 +112,8 @@ interface BoardMessage {
   // アンケート（2026-10-29・lib/boardSurvey の parseSurvey で読む）。お知らせの「回答」だけ
   survey?: unknown;
   survey_visibility?: string | null;
+  /** ご提案（申請につなぐ）を使うアンケートか（2026-10-30 段2-3） */
+  survey_onegai?: boolean | null;
   // 返信を受け付けるお知らせ（2026-09-21）。判定は lib/boardReply.ts の1か所
   allow_reply?: boolean | null;
   reply_until?: string | null;
@@ -286,7 +290,11 @@ const DEADLINE_TYPES = [
 //    ここで0件を失敗にすると、正しい削除が止まる。error だけを見る。
 // 🚨 1件ずつ削除する所と、アーカイブでまとめて削除する所の**2か所が同じこれを呼ぶ**。
 //    書き写すと、片方だけ直す事故になる。
-const deleteNoticeRows = async (msgId: string): Promise<string | null> => {
+const deleteNoticeRows = async (msgId: string, keepOfferRequests = true): Promise<string | null> => {
+  // 🚨 2026-10-30 段2-3：ご提案（申請につなぐ）の片付けを**いちばん先に**（DB の網 trg_board_message_offers_delete は本体の削除を止めるので、
+  //    先にほかの行を消すと中途半端に残る）。ご提案の無いお知らせでも呼んでよい（何もしない）。まとめての削除は「依頼は残す」
+  const relFail = await releaseOffers(msgId, keepOfferRequests);
+  if (relFail) return relFail;
   // 🚨 この3つの表には **id 列が無い**（鍵は message_id と user_id の組・2026-09-10 に本番で実測）。
   //    件数を見るための select に 'id' を書くと、列が無いというエラーになって
   //    「いつも失敗する削除」になる。必ず message_id を数えること。
@@ -508,7 +516,7 @@ const boardSetting = (key: string) =>
   getAppSetting(key).then(r => ({ data: r.ok && r.found ? { value: r.value } : null }));
 
 const BoardPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, employmentType, roles, canBoardTemplateGlobal, canBoardSurvey } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, employmentType, roles, canBoardTemplateGlobal, canBoardSurvey, canApplicationRequest } = useAuth();
   const { previewRole } = useContext(AuthContext);
   const isDark = useDarkMode();
   const navigate = useNavigate();
@@ -654,7 +662,7 @@ const BoardPage: React.FC = () => {
     subject: string; body: string; recipientIds: string[]; deadlineType: string;
     deadline: string; scheduledAt: string; answerPrompt: string; answerLocation: string; answerLink: string;
     presetKeys?: string[];
-    survey?: SurveyDef | null; surveyVisibility?: SurveyVisibility;
+    survey?: SurveyDef | null; surveyVisibility?: SurveyVisibility; surveyOnegai?: boolean;
   }
   const [cd] = useState(() => loadDraft<ComposeDraft>(DRAFT_KEYS.boardCompose));
   // 宛先で押した一括ボタン（送信時に「選び方」として保存し、「コピーして作成」で当て直す）。
@@ -668,6 +676,8 @@ const BoardPage: React.FC = () => {
   // アンケート（2026-10-29）。種別「回答」で［質問に答えてもらう］を選んだときだけ。null＝今までの「自由に書いてもらう」
   const [composeSurvey,        setComposeSurvey]        = useState<SurveyDef | null>(() => parseSurvey(cd?.survey));
   const [composeSurveyVisibility, setComposeSurveyVisibility] = useState<SurveyVisibility>(cd?.surveyVisibility ?? 'sender');
+  // ご提案（申請につなぐ）を使うか（2026-10-30 段2-3）。申請の依頼の権限がある人だけが選べる
+  const [composeSurveyOnegai, setComposeSurveyOnegai] = useState<boolean>(cd?.surveyOnegai ?? false);
   const [composeSurveyOpen,    setComposeSurveyOpen]    = useState(false);   // 質問を作る大きな画面
   // 回答の数（「◯人/◯人」の分子）。宛先の人はほかの人の回答の行を読めない（2026-10-29）ので、数は board_confirm_counts から
   const [confirmCounts,        setConfirmCounts]        = useState<Record<string, number>>({});
@@ -920,7 +930,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes, excludeRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, status, send_hold, send_batch, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, status, send_hold, send_batch, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       reuseBoardStatic('profiles', user.id, () => supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name')),
       reuseBoardStatic('readDetail', user.id, () => supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1)),
@@ -1027,7 +1037,7 @@ const BoardPage: React.FC = () => {
       const [msgsRes, readsRes] = await Promise.all([
         supabase
           .from('board_messages')
-          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
+          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai')
           .in('id', [...msgIds])
           .order('created_at', { ascending: false }),
         supabase
@@ -1157,7 +1167,7 @@ const BoardPage: React.FC = () => {
       const channelQuery = cids.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai')
             .in('channel_id', cids)
             .or(orCond)
             .order('created_at', { ascending: asc })
@@ -1168,7 +1178,7 @@ const BoardPage: React.FC = () => {
       const inboxQuery = inboxIds.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai')
             .in('id', inboxIds)
             .or(orCond)
             .order('created_at', { ascending: asc })
@@ -1182,7 +1192,7 @@ const BoardPage: React.FC = () => {
       //    お気に入りは「受信トレイのお知らせ」か「チャンネルの投稿」なので、上の2つで引ける。
       const outboxQuery = supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai')
         .eq('user_id', user.id)
         .is('channel_id', null)
         .is('parent_id', null)
@@ -1196,7 +1206,7 @@ const BoardPage: React.FC = () => {
       //    （送信トレイは parent_id が無いものだけを読むため）。ユーザー指摘で気づいた。
       const replyQuery = supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai')
         .eq('user_id', user.id)
         .is('channel_id', null)
         .not('parent_id', 'is', null)
@@ -1306,7 +1316,7 @@ const BoardPage: React.FC = () => {
     const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }, { data: replyData, error: replyErr }] = await Promise.all([
       supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, cc_user_ids')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai, cc_user_ids')
         .in('id', msgIds)
         .is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -1397,7 +1407,7 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setArchivedMessages([]); setArchivedFailed(false); return; }
     const { data: msgData, error: msgErr } = await supabase
       .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, cc_user_ids')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai, cc_user_ids')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });
@@ -1443,7 +1453,7 @@ const BoardPage: React.FC = () => {
     // 🚨 outbox_hidden（DB の列）はもう読まない（2026-09-26）。アーカイブは board_outbox_hidden（お知らせ × 人）で、
     //    「自分が片付けたか」を自分の行の有無で決める。送った本人と写しで見る代表者は別々に片付けられる。
     //    以前は1件に1つの印だったので、管理者が写しのお知らせを片付けると送った本人の送信トレイからも消えていた
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, cc_user_ids, recipient_presets, recipient_extra_ids, send_hold, send_batch';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, survey, survey_visibility, survey_onegai, cc_user_ids, recipient_presets, recipient_extra_ids, send_hold, send_batch';
     const [{ data, error: ownErr }, { data: ccData, error: ccErr }, { data: hiddenData, error: hiddenErr }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -1721,12 +1731,12 @@ const BoardPage: React.FC = () => {
         deadlineType: composeDeadlineType, deadline: composeDeadline, scheduledAt: composeScheduledAt,
         answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
         presetKeys: composePresetKeys,
-        survey: composeSurvey, surveyVisibility: composeSurveyVisibility,
+        survey: composeSurvey, surveyVisibility: composeSurveyVisibility, surveyOnegai: composeSurveyOnegai,
       });
     } else {
       clearDraft(DRAFT_KEYS.boardCompose);
     }
-  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink, composePresetKeys, composeSurvey, composeSurveyVisibility]);
+  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink, composePresetKeys, composeSurvey, composeSurveyVisibility, composeSurveyOnegai]);
 
   // 既読状況ポップアップを開いたとき、受信者が未取得なら取得する
   useEffect(() => {
@@ -2155,9 +2165,9 @@ const BoardPage: React.FC = () => {
   };
 
   // お知らせの完全削除（送信者・管理者）
-  const deleteNotice = async (msgId: string) => {
+  const deleteNotice = async (msgId: string, keepOfferRequests = true) => {
     // 🚨 消していないのに一覧から消さない。順序と件数の見方は deleteNoticeRows に集約している
-    const fail = await deleteNoticeRows(msgId);
+    const fail = await deleteNoticeRows(msgId, keepOfferRequests);
     if (fail) { setSendError(fail); setDeleteConfirmId(null); return; }
     setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
     setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msgId));
@@ -2353,7 +2363,7 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
-    setComposeSurvey(null); setComposeSurveyVisibility('sender'); setComposeSurveyOpen(false);
+    setComposeSurvey(null); setComposeSurveyVisibility('sender'); setComposeSurveyOnegai(false); setComposeSurveyOpen(false);
     setComposeUrgent(false); // 🚨 緊急チェックは必ずリセット（下書きにも含めない）
     setComposeAllowReply(false); // 🚨 返信のチェックも同じ（前の連絡の設定を引き継がせない）
     clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・クリアで下書きを消す
@@ -2414,6 +2424,7 @@ const BoardPage: React.FC = () => {
       const sv = parseSurvey(msg.survey);
       setComposeSurvey(sv ? cloneSurveyFresh(sv) : null);
       setComposeSurveyVisibility(sv ? ((msg.survey_visibility as SurveyVisibility) || 'sender') : 'sender');
+      setComposeSurveyOnegai(sv ? !!msg.survey_onegai && canApplicationRequest : false);
       setComposeAnswerPrompt(sv ? '' : (msg.answer_prompt || ''));
       setComposeAnswerLocation(sv ? '' : (msg.answer_location || ''));
       setComposeAnswerLink(sv ? '' : (msg.answer_link || ''));
@@ -2525,6 +2536,8 @@ const BoardPage: React.FC = () => {
       delete msgData.answer_prompt; delete msgData.answer_location; delete msgData.answer_link;
       msgData.survey = cleanSurvey(composeSurvey);
       msgData.survey_visibility = composeSurveyVisibility;
+      // 🚨 申請の依頼の権限がある人だけ（DB も確かめる＝ご提案を送るとき）
+      msgData.survey_onegai = composeSurveyOnegai && canApplicationRequest;
     }
     // 🚨 期限（reply_until）は渡さない。DB のトリガーが board_reply_days() 日後を入れる（30日を2か所に持たない）
     if (composeAllowReply)             msgData.allow_reply     = true;
@@ -2548,7 +2561,7 @@ const BoardPage: React.FC = () => {
       subject: composeSubject, body: composeBody, deadlineType: composeDeadlineType, deadline: composeDeadline,
       answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
       allowReply: composeAllowReply, includeCC: composeIncludeCC,
-      survey: surveyOn ? composeSurvey : null, surveyVisibility: composeSurveyVisibility,
+      survey: surveyOn ? composeSurvey : null, surveyVisibility: composeSurveyVisibility, surveyOnegai: surveyOn && composeSurveyOnegai,
     };
     const id = noticePostIdRef.current ?? newPostId();
     noticePostIdRef.current = id;   // 通信が切れて押し直しても同じ番号＝2件にならない
@@ -2804,7 +2817,7 @@ const BoardPage: React.FC = () => {
       setComposeDeadlineType(r.deadlineType); setComposeDeadline(r.deadline);
       setComposeAnswerPrompt(r.answerPrompt); setComposeAnswerLocation(r.answerLocation); setComposeAnswerLink(r.answerLink);
       setComposeAllowReply(r.allowReply); setComposeIncludeCC(r.includeCC);
-      setComposeSurvey(parseSurvey(r.survey)); setComposeSurveyVisibility((r.surveyVisibility as SurveyVisibility) || 'sender');
+      setComposeSurvey(parseSurvey(r.survey)); setComposeSurveyVisibility((r.surveyVisibility as SurveyVisibility) || 'sender'); setComposeSurveyOnegai(!!r.surveyOnegai && canApplicationRequest);
       setComposeScheduledAt(''); setComposeUrgent(false);
       setComposeOptions(true); setComposeDraftId(null);
       setView('compose'); setShowSidebar(false);
@@ -2868,7 +2881,7 @@ const BoardPage: React.FC = () => {
     return { kind: 'notice', recipientIds: inboxRecipients[msg.id] || [], presetKeys: [], subject: msg.subject ?? '', body: msg.body,
       deadlineType: msg.deadline_type ?? '', deadline: msg.deadline ?? '', answerPrompt: sv ? '' : (msg.answer_prompt ?? ''),
       answerLocation: sv ? '' : (msg.answer_location ?? ''), answerLink: sv ? '' : (msg.answer_link ?? ''), allowReply: !!msg.allow_reply,
-      includeCC: (msg.cc_user_ids?.length ?? 0) > 0, survey: sv, surveyVisibility: msg.survey_visibility ?? 'sender' };
+      includeCC: (msg.cc_user_ids?.length ?? 0) > 0, survey: sv, surveyVisibility: msg.survey_visibility ?? 'sender', surveyOnegai: !!msg.survey_onegai };
   };
 
   /** 送った本人の「送信待ち」の印（2026-10-26）。帯が出ている間は帯の［取り消す］だけ（ボタンを2つにしない） */
@@ -3091,7 +3104,9 @@ const BoardPage: React.FC = () => {
                   <SurveyResultsPanel messageId={msg.id} subject={msg.subject || msg.title || 'お知らせ'} survey={sv} isDark={isDark}
                     profiles={allProfiles} isSender={msg.user_id === user?.id}
                     onSurveyChanged={() => { void loadOutbox(); void loadInbox(); }}
-                    onCopy={msg.user_id === user?.id ? () => requestCopyToCompose(msg) : undefined} />
+                    onCopy={msg.user_id === user?.id ? () => requestCopyToCompose(msg) : undefined}
+                    surveyOnegai={!!msg.survey_onegai}
+                    canOffer={isAdmin || (msg.user_id === user?.id && canApplicationRequest)} />
                 )}
               </div>
             );
@@ -4047,12 +4062,8 @@ const BoardPage: React.FC = () => {
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#dc2626', marginBottom: 8 }}>本当に削除しますか？</div>
                 <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>受信者全員の受信トレイからも削除されます。この操作は元に戻せません。</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" onClick={() => setDeleteConfirmId(null)}
-                    style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button data-net="write" type="button" onClick={() => deleteNotice(inboxDetail.id)}
-                    style={{ flex: 1, padding: '8px 0', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>削除する</button>
-                </div>
+                <NoticeDeleteActions messageId={inboxDetail.id} surveyOnegai={!!inboxDetail.survey_onegai} isDark={isDark} border={border} subColor={subColor}
+                  profiles={allProfiles} deleteLabel="削除する" onCancel={() => setDeleteConfirmId(null)} onDelete={keep => void deleteNotice(inboxDetail.id, keep)} />
               </div>
             )}
             {/* 送信者・管理者アクションボタン（受信トレイ詳細） */}
@@ -4769,12 +4780,8 @@ const BoardPage: React.FC = () => {
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#dc2626', marginBottom: 6 }}>受信者からも完全削除しますか？</div>
                 <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>受信者全員の受信トレイからも削除されます。この操作は元に戻せません。</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" onClick={() => setDeleteConfirmId(null)}
-                    style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button data-net="write" type="button" onClick={() => deleteNotice(outboxDetail.id)}
-                    style={{ flex: 1, padding: '8px 0', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>完全削除する</button>
-                </div>
+                <NoticeDeleteActions messageId={outboxDetail.id} surveyOnegai={!!outboxDetail.survey_onegai} isDark={isDark} border={border} subColor={subColor}
+                  profiles={allProfiles} deleteLabel="完全削除する" onCancel={() => setDeleteConfirmId(null)} onDelete={keep => void deleteNotice(outboxDetail.id, keep)} />
               </div>
             ) : editingNoticeId !== outboxDetail.id && (
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -6208,6 +6215,7 @@ const BoardPage: React.FC = () => {
             <div style={{ padding: '12px 16px', overflowY: 'auto', flex: 1 }}>
               <SurveyEditor value={composeSurvey} onChange={setComposeSurvey} isDark={isDark}
                 visibility={composeSurveyVisibility} onVisibility={setComposeSurveyVisibility}
+                onegai={composeSurveyOnegai} onOnegai={canApplicationRequest ? setComposeSurveyOnegai : undefined}
                 problemIndex={surveyDraftProblem(composeSurvey)?.index ?? null} />
             </div>
             <div style={{ padding: '10px 16px', borderTop: `1px solid ${border}` }}>

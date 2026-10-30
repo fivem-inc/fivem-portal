@@ -78,7 +78,9 @@ import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import AppRequestCard from './AppRequestCard';
-import { loadReceivedAppRequests } from '../lib/appRequests';
+import { loadReceivedAppRequests, notifyAppRequestChanged } from '../lib/appRequests';
+import type { MyOffer } from '../lib/boardOfferApi';
+import OfferCard from './OfferCard';
 import type { ReceivedAppRequest } from '../lib/appRequests';
 import { useLeavePendingCount } from '../hooks/useLeavePendingCount';
 import { todayJstStr, leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
@@ -625,11 +627,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [receivedReqs, setReceivedReqs] = useState<ReceivedAppRequest[]>([]);
   const [receivedReqErr, setReceivedReqErr] = useState('');
   const [reqReplaceFor, setReqReplaceFor] = useState<string | null>(null); // 書きかけがあるときの置き換え確認
+  // 連絡板のアンケートの「ご提案」（休暇・返事がまだのもの・2026-10-30 段2-3）
+  const [receivedOffers, setReceivedOffers] = useState<MyOffer[]>([]);
   const fetchReceivedReqs = useCallback(async () => {
     const r = await loadReceivedAppRequests(user.id, 'leave');
-    if (r.error) { setReceivedReqErr(r.error); return; }
+    if (r.error) { setReceivedReqErr(r.error); return null; }
     setReceivedReqErr('');
     setReceivedReqs(r.rows);
+    setReceivedOffers(r.offers);
+    return r.rows;
   }, [user.id]);
   useEffect(() => { fetchReceivedReqs(); }, [fetchReceivedReqs]);
   // ベル・スマホから ?focus=<依頼ID> で来たとき（履歴用のフックと2つ並ぶが、合致する行があるほうだけが動く）
@@ -1147,9 +1153,22 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           {receivedReqErr && (
             <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{receivedReqErr}</div>
           )}
-          {receivedReqs.length > 0 && (
+          {(receivedReqs.length > 0 || receivedOffers.length > 0) && (
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 休暇の申請依頼が届いています</div>
+              <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 休暇の申請依頼{receivedOffers.length > 0 ? '・ご提案' : ''}が届いています</div>
+              {receivedOffers.map(o => (
+                <OfferCard key={o.offer_id} o={o} isDark={isDark}
+                  focused={reqHighlightId === o.offer_id}
+                  focusRef={el => { if (el && reqHighlightId === o.offer_id) reqFocusRef.current = el; }}
+                  onAccepted={async id => {
+                    const rows = await fetchReceivedReqs();
+                    notifyAppRequestChanged();
+                    const created = rows?.find(x => x.id === id);
+                    if (created) startFromReceivedReq(created);
+                  }}
+                  onConsulted={x => { setReceivedOffers(prev => prev.filter(q => q.offer_id !== x.offer_id)); notifyAppRequestChanged(); }}
+                />
+              ))}
               {receivedReqs.map(r => (
                 <AppRequestCard key={r.id} r={r} isDark={isDark}
                   focused={reqHighlightId === r.id}

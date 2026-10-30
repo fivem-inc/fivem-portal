@@ -13,6 +13,8 @@ interface Props {
   profiles: { id: string; name: string | null }[];
   /** 人ごとのカードに出す行（送った人の画面が絞り込みに使う）。省略なら全員 */
   rows?: SurveyResultRow[];
+  /** 人ごとのカードの下に足すもの（ご提案の札とボタン・2026-10-30 段2-3） */
+  rowExtra?: (r: SurveyResultRow) => React.ReactNode;
 }
 
 const fmtWhen = (iso?: string) => {
@@ -21,7 +23,7 @@ const fmtWhen = (iso?: string) => {
   return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-const SurveyResultsView: React.FC<Props> = ({ survey, results, isDark, profiles, rows }) => {
+const SurveyResultsView: React.FC<Props> = ({ survey, results, isDark, profiles, rows, rowExtra }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const sub = isDark ? '#adb5bd' : '#6c757d';
   const border = isDark ? '#495057' : '#dee2e6';
@@ -75,6 +77,7 @@ const SurveyResultsView: React.FC<Props> = ({ survey, results, isDark, profiles,
               <span style={{ fontSize: 14, color: text, whiteSpace: 'pre-wrap' }}>{answerText(q, r.answers?.[q.id]) || '—'}</span>
             </div>
           ))}
+          {rowExtra?.(r)}
         </div>
       ))}
     </div>

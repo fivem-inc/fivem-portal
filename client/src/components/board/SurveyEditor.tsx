@@ -21,11 +21,14 @@ interface Props {
   onVisibility?: (v: SurveyVisibility) => void;
   /** 問題のある質問の番号（赤い枠） */
   problemIndex?: number | null;
+  /** 「ご提案（申請につなぐ）を使う」（2026-10-30 段2-3）。申請の依頼の権限がある人の作る画面だけで渡す */
+  onegai?: boolean;
+  onOnegai?: (v: boolean) => void;
 }
 
 const KINDS: SurveyKind[] = ['single', 'multi', 'text', 'date'];
 
-const SurveyEditor: React.FC<Props> = ({ value, onChange, isDark, visibility, onVisibility, problemIndex }) => {
+const SurveyEditor: React.FC<Props> = ({ value, onChange, isDark, visibility, onVisibility, problemIndex, onegai, onOnegai }) => {
   const [openId, setOpenId] = useState<string | null>(value.questions[0]?.id ?? null);
   const text = isDark ? '#f8f9fa' : '#212529';
   const sub = isDark ? '#adb5bd' : '#6c757d';
@@ -176,14 +179,32 @@ const SurveyEditor: React.FC<Props> = ({ value, onChange, isDark, visibility, on
         <div style={{ marginTop: 4 }}>
           <div style={{ fontSize: 13, color: sub, marginBottom: 4 }}>回答の見せ方</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {(Object.keys(SURVEY_VISIBILITY_LABEL) as SurveyVisibility[]).map(v => (
-              <button key={v} type="button" style={chip(visibility === v)} onClick={() => onVisibility(v)}>{SURVEY_VISIBILITY_LABEL[v]}</button>
-            ))}
+            {(Object.keys(SURVEY_VISIBILITY_LABEL) as SurveyVisibility[])
+              // 🚨 ご提案を使うアンケートでは「名前つき」を選べない（ご提案の状態が漏れないように・2026-10-29 ユーザー確定）
+              .filter(v => !(onegai && v === 'respondents_named'))
+              .map(v => (
+                <button key={v} type="button" style={chip(visibility === v)} onClick={() => onVisibility(v)}>{SURVEY_VISIBILITY_LABEL[v]}</button>
+              ))}
           </div>
           <div style={{ fontSize: 12, color: sub, marginTop: 4 }}>
             {visibility === 'sender' && '回答を見られるのは、送った人・写し（CC）の代表者・管理者だけです。'}
             {visibility === 'respondents_count' && '回答した人は、選択肢ごとの数だけ見られます（だれが何と答えたかは見えません）。'}
             {visibility === 'respondents_named' && '回答した人は、ほかの人の回答を名前つきで見られます。回答する画面にもそのことを出します。'}
+          </div>
+        </div>
+      )}
+
+      {onOnegai && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 13, color: sub, marginBottom: 4 }}>ご提案（申請につなぐ）</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <button type="button" style={chip(!onegai)} onClick={() => onOnegai(false)}>使わない</button>
+            <button type="button" style={chip(!!onegai)} onClick={() => { onOnegai(true); if (visibility === 'respondents_named') onVisibility?.('sender'); }}>使う</button>
+          </div>
+          <div style={{ fontSize: 12, color: sub, marginTop: 4 }}>
+            {onegai
+              ? '回答の一覧から、1人ずつ［この内容でご提案する］を送れます。ご本人が承諾すると、申請の依頼として届きます。'
+              : '回答を集めるだけにします。'}
           </div>
         </div>
       )}

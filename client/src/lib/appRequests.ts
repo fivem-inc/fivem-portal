@@ -10,6 +10,7 @@ import { supabase } from './supabaseClient';
 import { isNetworkFailure } from './netFailure';
 import { insertNotification } from './notifications';
 import type { SegmentLike } from './segmentsText';
+import type { MyOffer } from './boardOfferApi';
 
 export type AppRequestKind = 'overtime' | 'leave';
 
@@ -30,6 +31,10 @@ export interface ReceivedAppRequest {
   ot_content: AppRequestOtContent | null;
   /** 有休を時間外調整休に変更できることの案内（2026-10-27 段2a）のとき、その有休。カードは components/LeaveKindGuideCard */
   replaces_leave_id?: string | null;
+  /** 連絡板のアンケートの「ご提案」を承諾して作った依頼（2026-10-30 段2-3）。カードの見出し・［やはり相談したい］に使う */
+  survey_request_id?: string | null;
+  survey_subject?: string | null;
+  offer_round?: number | null;
 }
 
 /** 「対応しない」の理由の選択肢。
@@ -57,24 +62,16 @@ export const isFullDayOtContent = (c: string | null | undefined): c is 'chosei_o
   c === 'chosei_off' || c === 'furikae_off' || c === 'absence';
 
 /** 自分あての開いている依頼を読む（kind を渡せばその種類だけ）。読めなかったら error を返す（空で嘘をつかない） */
-export async function loadReceivedAppRequests(userId: string, kind?: AppRequestKind): Promise<{ rows: ReceivedAppRequest[]; error: string | null }> {
-  let q = supabase.from('application_requests')
-    .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments, ot_content, replaces_leave_id')
-    .eq('recipient_id', userId)
-    .eq('status', 'open')
-    .order('created_at', { ascending: true });
-  if (kind) q = q.eq('kind', kind);
-  const { data, error } = await q;
+// 🚨 2026-10-30 段2-3：DB の my_open_app_requests 1本に（依頼・ご提案・送った人の名前を1回で読む・ナビの数字と同じ）。
+//    「内容を相談したい」のご提案は入らない（ナビの数字にも入れない・ユーザー確定）
+export async function loadReceivedAppRequests(_userId: string, kind?: AppRequestKind): Promise<{ rows: ReceivedAppRequest[]; offers: MyOffer[]; error: string | null }> {
+  const { data, error } = await supabase.rpc('my_open_app_requests');
   // 通信のせいなら英語の文を出さない（2026-10-20・電波 段2）
-  if (error) return { rows: [], error: isNetworkFailure(error) ? '依頼を読み込めませんでした。通信環境の良い場所で、もう一度開いてください。' : '依頼を読み込めませんでした：' + error.message };
-  const rows = (data ?? []) as Omit<ReceivedAppRequest, 'requester_name'>[];
-  const ids = [...new Set(rows.map(r => r.requester_id))];
-  const nameOf = new Map<string, string>();
-  if (ids.length > 0) {
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
-    for (const p of (profs ?? []) as { id: string; name: string }[]) nameOf.set(p.id, p.name);
-  }
-  return { rows: rows.map(r => ({ ...r, requester_name: nameOf.get(r.requester_id) ?? null })), error: null };
+  if (error) return { rows: [], offers: [], error: isNetworkFailure(error) ? '依頼を読み込めませんでした。通信環境の良い場所で、もう一度開いてください。' : '依頼を読み込めませんでした：' + error.message };
+  const d = (data ?? {}) as { requests?: Omit<ReceivedAppRequest, 'status'>[]; offers?: MyOffer[] };
+  const rows = (d.requests ?? []).map(r => ({ ...r, status: 'open' }) as ReceivedAppRequest).filter(r => !kind || r.kind === kind);
+  const offers = (d.offers ?? []).filter(o => !kind || o.kind === kind);
+  return { rows, offers, error: null };
 }
 
 /**

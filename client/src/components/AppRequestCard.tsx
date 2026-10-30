@@ -14,6 +14,9 @@ import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { segmentsText } from '../lib/segmentsText';
 import { DISMISS_REASONS, DISMISS_OTHER, APP_REQUEST_KIND_LABEL, APP_REQUEST_OT_CONTENT_LABEL, dismissAppRequest, mdDow } from '../lib/appRequests';
 import type { ReceivedAppRequest } from '../lib/appRequests';
+import { consultOffer } from '../lib/boardOfferApi';
+import { backBtn, primaryBtn } from '../lib/buttonStyles';
+import TapButton from './TapButton';
 
 interface Props {
   r: ReceivedAppRequest;
@@ -43,6 +46,17 @@ const AppRequestCard: React.FC<Props> = ({ r, isDark, focused = false, focusRef,
   const textMain = isDark ? '#fff' : '#0d47a1';
 
   const reset = () => { setConfirming(false); setReason(null); setNote(''); setErr(''); };
+  // ご提案から作った依頼（2026-10-30 段2-3）
+  const fromOffer = !!r.survey_request_id;
+  const [unaccepting, setUnaccepting] = useState(false);
+  const doUnaccept = async () => {
+    if (!note.trim()) { setErr('相談したい内容を書いてください'); return; }
+    if (!r.survey_request_id || !r.offer_round) { setErr('画面を更新してから、もう一度お試しください'); return; }
+    const fail = await consultOffer(r.survey_request_id, r.offer_round, note.trim());
+    if (fail) { setErr(fail); return; }
+    setUnaccepting(false); setNote('');
+    onDismissed(r);
+  };
   const doDismiss = async () => {
     // 🚨 選んでいないまま消させない（上長に理由が伝わらない）
     if (!reason) { setErr('理由をお選びください'); return; }
@@ -56,7 +70,18 @@ const AppRequestCard: React.FC<Props> = ({ r, isDark, focused = false, focusRef,
 
   return (
     <div ref={el => focusRef?.(el)}
-      style={{ background: focused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#243447' : '#e8f4fd'), border: `1px solid ${focused ? '#f59e0b' : (isDark ? '#3d5166' : '#90caf9')}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, transition: 'background 0.6s' }}>
+      style={{ background: focused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#243447' : '#e8f4fd'), border: `1px solid ${focused ? '#f59e0b' : (isDark ? '#3d5166' : '#90caf9')}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, transition: 'background 0.6s', textAlign: fromOffer ? 'left' : undefined }}>
+      {fromOffer ? (
+        // 連絡板のアンケートの「ご提案」を承諾して作った依頼（2026-10-30 段2-3）
+        <>
+          <p style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 'bold', color: textMain }}>📩 申請についてのご提案（{r.requester_name ?? ''}さんから）</p>
+          <p style={{ margin: '0 0 6px', fontSize: 13.5, lineHeight: 1.8, color: textMain }}>
+            {r.survey_subject && <>{r.survey_subject}について<br /></>}
+            {(r.target_dates ?? []).map(mdDow).join('・')}の{r.kind === 'leave' ? '休暇' : (r.ot_content ? APP_REQUEST_OT_CONTENT_LABEL[r.ot_content] : '残業申請')}を承諾しました。
+          </p>
+          <p style={{ margin: '0 0 8px', fontSize: 13.5, fontWeight: 'bold', color: isDark ? '#ffcf8f' : '#b7770d' }}>まだ申請は済んでいません</p>
+        </>
+      ) : (
       <p style={{ margin: '0 0 6px', fontSize: 13, lineHeight: 1.8, color: textMain }}>
         {r.requester_name ?? ''}さんから、
         {/* 相談した日（任意。空なら出さない。created_at で代用しない＝話した日とずれるため） */}
@@ -65,9 +90,10 @@ const AppRequestCard: React.FC<Props> = ({ r, isDark, focused = false, focusRef,
         {APP_REQUEST_KIND_LABEL[r.kind] ?? r.kind}について申請のお願いが届いています。
         {r.due_date && <><br />{mdDow(r.due_date)}までに申請してください。</>}
       </p>
+      )}
       {/* 入る時間と校（シフト調整の決定で作った依頼だけに入る） */}
       {/* 上長が選んだ申請内容（2026-10-15） */}
-      {r.ot_content && (
+      {r.ot_content && !fromOffer && (
         <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: textMain }}>申請内容：{APP_REQUEST_OT_CONTENT_LABEL[r.ot_content]}</p>
       )}
       {(r.segments ?? []).length > 0 && (
@@ -108,6 +134,30 @@ const AppRequestCard: React.FC<Props> = ({ r, isDark, focused = false, focusRef,
         </div>
       ) : replacePanel ? (
         replacePanel
+      ) : fromOffer ? (
+        // 🚨 ご提案から作った依頼には［対応しない］を出さない（DB も止める）。申請の前なら［やはり相談したい］で承諾を取り消せる
+        <div>
+          <TapButton onTap={onStart} style={{ ...primaryBtn(), width: '100%', minHeight: 44 }}>この内容で申請する</TapButton>
+          <div style={{ borderTop: `1px solid ${borderColor}`, marginTop: 12, paddingTop: 6 }}>
+            {unaccepting ? (
+              <div>
+                <div style={{ fontSize: 13, color: textMain, margin: '4px 0 6px' }}>相談したい内容を書いてください（{r.requester_name ?? ''}さんに届きます。承諾は取り消されます）</div>
+                <textarea value={note} onChange={e => { setNote(e.target.value); setErr(''); }} rows={3} maxLength={200}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDark ? '#212529' : '#fff', color: isDark ? '#f8f9fa' : '#212529', fontSize: 16, fontFamily: 'inherit' }} />
+                {err && <div role="alert" style={{ fontSize: 13, color: '#dc3545', margin: '6px 0' }}>{err}</div>}
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <TapButton onTap={() => { setUnaccepting(false); setNote(''); setErr(''); }} style={{ ...backBtn(isDark), flex: 1, minHeight: 44, padding: '0 8px' }}>やめる</TapButton>
+                  <TapButton netWrite onTap={() => void doUnaccept()} style={{ ...primaryBtn(), flex: 2, minHeight: 44, padding: '0 8px' }}>相談を送る</TapButton>
+                </div>
+              </div>
+            ) : (
+              <TapButton onTap={() => { setUnaccepting(true); setErr(''); }}
+                style={{ width: '100%', minHeight: 44, background: 'transparent', border: 'none', color: isDark ? '#90caf9' : '#0d6efd', fontSize: 13, cursor: 'pointer' }}>
+                やはり相談したい（理由を入力）
+              </TapButton>
+            )}
+          </div>
+        </div>
       ) : (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" onClick={onStart}
