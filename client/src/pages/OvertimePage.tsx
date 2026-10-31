@@ -55,7 +55,7 @@ import { evalFurikaeChange, normalSegmentsOf, type FurikaeChangePlan } from '../
 import { isFurikaeReportRow, furikaeReportGate, furikaeOriginWindow, isFurikaeUnreported, furikaeSelfCancelLocked, furikaeLockedDayLabel, furikaePeriodNg, payPeriodRangeLabel } from '../lib/furikaeReport';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftSegsSorted, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
-import { computeBalance, diffColor } from '../lib/overtimeBalance';
+import { computeBalance, diffColor, type BalanceSummary } from '../lib/overtimeBalance';
 import { OvertimeBalanceMain, OvertimeBalanceInline } from '../components/OvertimeBalanceView';
 import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
@@ -3361,6 +3361,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   // 集計モード用
   const [summaryPeriod, setSummaryPeriod] = useState(() => calcPayPeriodStartJst(todayJstStr()));
+  // 部門集計で選べる期（新しい順・集計の期の選択欄と同じ）。個人の画面の全日の［◀］［▶］の端
+  const summaryPeriodRange = useMemo(() => recentPeriods(6), []);
   const [summaryRows, setSummaryRows] = useState<SummaryRow[]>([]);
   // 部門集計の「目安超え」（userId → その方の目安・分）。overtime_threshold_over_visible() が部門集計と同じ範囲だけ返す（自分は含まない）
   const [summaryOver, setSummaryOver] = useState<Map<string, number> | null>(null);
@@ -4277,6 +4279,44 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const groupPeriod = (g: (typeof ownRestGroups)[number]) => g.units.find(u => u.rep)?.rep?.pay_period_start ?? calcPayPeriodStartJst(g.date);
   // ［📋 表で見る］（2026-10-30）。🚨 Hook なので、下の早い return（?proposal=）より前に置く
   const ownView = useOtTableMode('fivem_ot_view_own');
+  // 全日（2026-10-31）：上の合計時間数カードと同じ期（ownCardPeriod）の日を全部。取消は出さない・絞り込みは使わない
+  const ownAllEnd = payPeriodEnd(ownCardPeriod);
+  const ownAllGroups = fillAllDays(groupUnitsByDay(mergeLeaveUnits(
+    ownHistoryAll.filter(r => r.pay_period_start === ownCardPeriod && r.status !== 'cancelled'), r => r.work_date, r => r.id,
+    ownLeaves, user.id, d => d >= ownCardPeriod && d <= ownAllEnd, ownHistoryFilter.sortAsc)), ownCardPeriod, ownAllEnd, ownHistoryFilter.sortAsc);
+  /** 申請の無い日に添える言葉：会社の予定（会社休など）か、いつものシフトが無い日は「休み」 */
+  const ownDayNote = (d: string) => {
+    const k = pageCalendarKinds[d] ?? null;
+    if (k) return CALENDAR_CELL_STYLE[k].short;
+    return patterns.length > 0 && !resolveNormalShift(patterns, d, null).start_time ? '休み' : '';
+  };
+  // 全日の「申請する ›」：その日の残業申請の画面を開く。🚨 いまの下書きを黙って消さない（出張・申請の依頼と同じ流儀）
+  const [dayReplaceFor, setDayReplaceFor] = useState<string | null>(null);
+  const startFromDay = (d: string, force = false) => {
+    const cur = loadDraft<FormDraft>(DRAFT_KEYS.overtime);
+    const same = cur?.date === d;
+    const hasDraft = !!cur && !same && (!!cur.date || (cur.segments ?? []).some(x => x.start || x.end) || !!cur.reason);
+    if (hasDraft && !force) { setDayReplaceFor(d); return; }
+    setDayReplaceFor(null);
+    if (!same) {
+      saveDraft(DRAFT_KEYS.overtime, {
+        mode: d >= todayJstStr() ? 'advance' : 'posthoc', date: d,
+        segments: [{ start: '', end: '' }],
+        breakManual: false, breakManualMin: '',
+        reason: '', location: '', locationCustom: '', reviewerId: '',
+        normOverride: false, normStart: '', normEnd: '',
+      } satisfies FormDraft);
+    }
+    sessionStorage.setItem(SCROLL_ONCE_KEY, '1');
+    setEditTarget(null);
+    setTab('form');
+    setFormKey(k => k + 1);
+  };
+  /** 全日に切り替えるときは、絞り込み（状態・種類）を外す（行を押して開くカードが隠れないように） */
+  const setOwnAllDays = (v: boolean) => {
+    if (v) setOwnHistoryFilter(f => ({ ...f, status: 'all', types: [] }));
+    ownView.setAllDays(v);
+  };
   // 残業に紐づく最新の修正依頼（📩依頼中／✓対応済みバッジ用）
   // 🚨 ここは status で絞らないこと。依頼は申請の状態が変わっても残るため、絞ると
   //    「依頼を出したあとに上長が差し戻す」だけでバッジが消え、本人は取り下げも出し直しもできなくなる
@@ -5032,6 +5072,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     proposerId={user.id}
                     proposerName={profileName ?? ''}
                     onBack={clearSelectedStaff}
+                    onChangePeriod={setSummaryPeriod}
+                    periodMin={summaryPeriodRange[summaryPeriodRange.length - 1]}
+                    periodMax={summaryPeriodRange[0]}
                   />
                 ) : (
                   <SummaryView
@@ -5696,7 +5739,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   };
                   return (
                     <>
-                      {/* 状態フィルタ・並び替え・取消済み表示 */}
+                      {/* 表示の切り替え（カード／表・申請／全日・並び順）2026-10-31 */}
+                      <OtViewSwitch mode={ownView.mode} onMode={ownView.setMode} allDays={ownView.allDays} onAllDays={setOwnAllDays}
+                        sortAsc={ownHistoryFilter.sortAsc} onSort={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
+                        isDark={isDark} borderColor={borderColor} subText={subText} />
+                      {/* 状態フィルタ・取消済み表示（全日のときは使わない＝期の日を全部出すため） */}
+                      {!ownView.showAll && <>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
                         {([
                           { key: 'all', label: 'すべて' },
@@ -5726,11 +5774,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           }}>
                           {ownHistoryFilter.showCancelled ? '✓ 取消済みも表示中' : '取消済みを表示'}
                         </button>
-                        <span style={{ marginLeft: 'auto' }}><OtTableToggle on={ownView.mode === 'table'} onToggle={() => ownView.setMode(ownView.mode === 'table' ? 'card' : 'table')} borderColor={borderColor} subText={subText} /></span>
-                        <button onClick={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
-                          style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-                          {ownHistoryFilter.sortAsc ? '↑ 昇順' : '↓ 降順'}
-                        </button>
                       </div>
                       {/* 種類の絞り込み（2026-09-18 ユーザー指示）。色付きボタン14個が並んで見にくいため、選択欄で1つ選ぶ形にした。
                           🚨 状態は types（配列）のまま持つ（端末に保存済みの値と互換）。選択欄では0件か1件だけにする */}
@@ -5745,7 +5788,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           ))}
                         </select>
                       </div>
-                      {ownHistory.length === 0 && ownRestGroups.length === 0 && !loadError && (
+                      </>}
+                      {!ownView.showAll && ownHistory.length === 0 && ownRestGroups.length === 0 && !loadError && (
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
                       )}
                       {/* 📩 自分あての申請の依頼（2026-09-09）。
@@ -5800,7 +5844,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       {ownActionRows.length > 0 && (
                         <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffcf8f' : '#b7770d', margin: '4px 0 8px' }}>⚠️ あなたの対応待ち（{ownActionRows.length}）</div>
                       )}
-                      {ownActionRows.map(renderOwnCard)}
+                      {ownActionRows.map(r => ownView.jumpDay === r.work_date ? (
+                        <OtDayWrap key={`aw-${r.id}`} date={r.work_date} jumpDay={ownView.jumpDay} onBack={ownView.backToTable} isDark={isDark}>{renderOwnCard(r)}</OtDayWrap>
+                      ) : renderOwnCard(r))}
                       {ownActionRows.length > 0 && ownRestGroups.length > 0 && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 8px' }}>
                           <div style={{ flex: 1, height: 1, background: borderColor }} />
@@ -5834,6 +5880,31 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             </div>
                           );
                         };
+                        // 全日（2026-10-31）：上の帯で期を切り替え・申請の無い日は「申請する ›」
+                        if (ownView.showAll) {
+                          const canPrev = ownCardPeriod > ownCardPrevLimit;
+                          const canNext = ownCardPeriod < ownCardNextLimit;
+                          return (
+                            <>
+                              <OtPeriodBar period={ownCardPeriod} b={ownCardBalance} loading={ownCardLoading} canPrev={canPrev} canNext={canNext}
+                                onShift={n => setOwnCardPeriod(p => shiftPayPeriod(p, n))}
+                                isDark={isDark} text={text} subText={subText} borderColor={borderColor} innerBg={innerBg} />
+                              {dayReplaceFor && (
+                                <div style={{ marginBottom: 8, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                                  <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。{tripDayLabel(dayReplaceFor)} の申請に置き換えますか？</p>
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button onClick={() => startFromDay(dayReplaceFor, true)}
+                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                                    <button onClick={() => setDayReplaceFor(null)}
+                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+                                  </div>
+                                </div>
+                              )}
+                              <OtHistoryTable groups={ownAllGroups} isDark={isDark} text={text} subText={subText} borderColor={borderColor}
+                                onPick={ownView.pickDay} onApply={d => startFromDay(d)} dayNote={ownDayNote} />
+                            </>
+                          );
+                        }
                         // ［📋 表で見る］（2026-10-30）。表のときは日のまとまりを表に、カードのときは今までどおり（表から来た日は光らせる）
                         if (ownView.showTable) {
                           return <OtHistoryTable groups={ownRestGroups} isDark={isDark} text={text} subText={subText} borderColor={borderColor} onPick={ownView.pickDay} between={periodHeader} />;
@@ -6193,7 +6264,14 @@ const MemberDetailView: React.FC<{
   proposerId: string;   // 閲覧者＝提案者の user.id
   proposerName: string; // 閲覧者の氏名（提案通知の差出人名）
   onBack: () => void;
-}> = ({ isDark, userId, name, period, viewerRank, isAdmin, proposerId, proposerName, onBack }) => {
+  /** 全日の帯の［◀］［▶］（部門集計の期を変える・2026-10-31）。選べる期の端 */
+  onChangePeriod?: (p: string) => void;
+  periodMin?: string;
+  periodMax?: string;
+}> = ({ isDark, userId, name: nameProp, period, viewerRank, isAdmin, proposerId, proposerName, onBack, onChangePeriod, periodMin, periodMax }) => {
+  // 期を変えると、その期に申請の無い方は一覧に名前が無い→前の名前を使い続ける
+  const [name, setName] = useState(nameProp);
+  useEffect(() => { if (nameProp) setName(nameProp); }, [nameProp]);
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
@@ -6377,19 +6455,23 @@ const MemberDetailView: React.FC<{
       {loadError && <LoadFailedNotice text={loadError} onRetry={() => setReloadKey(n => n + 1)} />}
       {loading ? (
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
-      ) : dayGroups.length === 0 ? (loadError ? null :
+      ) : dayGroups.length === 0 && !otView.showAll ? (loadError ? null :
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>この期間の申請・報告はありません</p>
       ) : (
         <>
-          {/* 並び順（自分の履歴のボタンと同じ見た目・同じ言葉） */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
-            <OtTableToggle on={otView.mode === 'table'} onToggle={() => otView.setMode(otView.mode === 'table' ? 'card' : 'table')} borderColor={borderColor} subText={subText} />
-            <button type="button" onClick={toggleDetailSort}
-              style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-              {detailSortAsc ? '↑ 昇順' : '↓ 降順'}
-            </button>
-          </div>
-          {otView.showTable ? (
+          {/* 表示の切り替え（ご本人の履歴と同じ部品・2026-10-31） */}
+          <OtViewSwitch mode={otView.mode} onMode={otView.setMode} allDays={otView.allDays} onAllDays={otView.setAllDays}
+            sortAsc={detailSortAsc} onSort={toggleDetailSort} isDark={isDark} borderColor={borderColor} subText={subText} />
+          {otView.showAll ? (
+            <>
+              <OtPeriodBar period={period} b={b} canPrev={!!periodMin && period > periodMin} canNext={!!periodMax && period < periodMax}
+                onShift={onChangePeriod ? n => onChangePeriod(shiftPayPeriod(period, n)) : undefined}
+                isDark={isDark} text={text} subText={subText} borderColor={borderColor} innerBg={innerBg} />
+              {/* 上長の画面：申請の無い日は見るだけ（ほかの方の申請は出せない） */}
+              <OtHistoryTable groups={fillAllDays(dayGroups, period, periodEnd, detailSortAsc)} isDark={isDark} text={text} subText={subText} borderColor={borderColor}
+                onPick={otView.pickDay} dayNote={d => (dayKinds[d] ? CALENDAR_CELL_STYLE[dayKinds[d]!].short : '')} />
+            </>
+          ) : otView.showTable ? (
             <OtHistoryTable groups={dayGroups} isDark={isDark} text={text} subText={subText} borderColor={borderColor} onPick={otView.pickDay} />
           ) : dayGroups.map(g => (
             <OtDayWrap key={`w-${g.date}-${g.units[0].key}`} date={g.date} jumpDay={otView.jumpDay} onBack={otView.backToTable} isDark={isDark}>
@@ -6426,6 +6508,14 @@ function useOtTableMode(storageKey: string) {
     setModeState(m);
     try { localStorage.setItem(storageKey, m); } catch { /* 端末に覚えられなくても動く */ }
   };
+  // 全日（表のときだけ・2026-10-31）。端末に覚える
+  const [allDays, setAllDaysState] = useState<boolean>(() => {
+    try { return localStorage.getItem(`${storageKey}_all`) === '1'; } catch { return false; }
+  });
+  const setAllDays = (v: boolean) => {
+    setAllDaysState(v);
+    try { localStorage.setItem(`${storageKey}_all`, v ? '1' : '0'); } catch { /* 端末に覚えられなくても動く */ }
+  };
   const jumpDay = searchParams.get('otday');
   const lastPicked = useRef<string | null>(null);
   /** 表の行を押した：カードへ（履歴に1つ積む＝スマホの戻る操作で表に戻れる） */
@@ -6453,16 +6543,95 @@ function useOtTableMode(storageKey: string) {
   useEffect(() => {
     if (jumpDay) setTimeout(() => document.getElementById(`ot-day-${jumpDay}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
   }, [jumpDay]);
-  return { mode, setMode, showTable, jumpDay, pickDay, backToTable };
+  const showAll = showTable && allDays;
+  return { mode, setMode, showTable, showAll, allDays, setAllDays, jumpDay, pickDay, backToTable };
 }
 
-/** ［📋 表で見る］のボタン（押すと表とカードが入れ替わる。表のときは青） */
-const OtTableToggle: React.FC<{ on: boolean; onToggle: () => void; borderColor: string; subText: string }> = ({ on, onToggle, borderColor, subText }) => (
-  <button type="button" onClick={onToggle}
-    style={{ padding: '5px 10px', borderRadius: 8, border: `1.5px solid ${on ? '#1976d2' : borderColor}`, background: on ? '#1976d2' : 'transparent', color: on ? '#fff' : subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-    📋 表で見る
-  </button>
-);
+/** 表示の切り替え（2026-10-31 ユーザー確定）：［カード｜表］・表のときだけ［申請｜全日］・［↕ 降順］を1行に。
+ *  選んでいる側を青にする（同じボタンを押して戻る形は、戻り方が分かりにくいため） */
+const OtViewSwitch: React.FC<{
+  mode: 'card' | 'table'; onMode: (m: 'card' | 'table') => void;
+  allDays: boolean; onAllDays: (v: boolean) => void;
+  sortAsc: boolean; onSort: () => void;
+  isDark: boolean; borderColor: string; subText: string;
+}> = ({ mode, onMode, allDays, onAllDays, sortAsc, onSort, isDark, borderColor, subText }) => {
+  const blue = isDark ? '#90caf9' : '#1976d2';
+  const seg = (items: { key: string; label: string; on: boolean; onClick: () => void }[]) => (
+    <span style={{ display: 'inline-flex', border: `1.5px solid ${blue}`, borderRadius: 8, overflow: 'hidden' }}>
+      {items.map(it => (
+        <button key={it.key} type="button" aria-pressed={it.on} onClick={it.onClick}
+          style={{ padding: '5px 10px', border: 'none', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+            background: it.on ? '#1976d2' : 'transparent', color: it.on ? '#fff' : blue, fontWeight: it.on ? 'bold' : 'normal' }}>{it.label}</button>
+      ))}
+    </span>
+  );
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+      {seg([
+        { key: 'card', label: 'カード', on: mode === 'card', onClick: () => onMode('card') },
+        { key: 'table', label: '表', on: mode === 'table', onClick: () => onMode('table') },
+      ])}
+      {mode === 'table' && seg([
+        { key: 'some', label: '申請', on: !allDays, onClick: () => onAllDays(false) },
+        { key: 'all', label: '全日', on: allDays, onClick: () => onAllDays(true) },
+      ])}
+      <button type="button" onClick={onSort}
+        style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+        ↕ {sortAsc ? '昇順' : '降順'}
+      </button>
+    </div>
+  );
+};
+
+/** 全日のときの上の帯：期間の名前と［◀］［▶］・その期のまとめの時間（Excel の表と同じ考え方） */
+const OtPeriodBar: React.FC<{
+  period: string; b: BalanceSummary; loading?: boolean;
+  canPrev: boolean; canNext: boolean; onShift?: (n: 1 | -1) => void;
+  isDark: boolean; text: string; subText: string; borderColor: string; innerBg: string;
+}> = ({ period, b, loading, canPrev, canNext, onShift, isDark, text, subText, borderColor, innerBg }) => {
+  const arrow = (enabled: boolean): React.CSSProperties => ({
+    minWidth: 36, minHeight: 32, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', fontSize: 13,
+    color: enabled ? text : (isDark ? '#495057' : '#ced4da'), cursor: enabled ? 'pointer' : 'default',
+  });
+  return (
+    <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <b style={{ fontSize: 12.5, color: text }}>{payMonthLabel(period)}（{payPeriodLabel(period)}）</b>
+        {onShift && (
+          <span style={{ display: 'inline-flex', gap: 4 }}>
+            <button type="button" aria-label="前の期間へ" disabled={!canPrev} onClick={() => onShift(-1)} style={arrow(canPrev)}>◀</button>
+            <button type="button" aria-label="次の期間へ" disabled={!canNext} onClick={() => onShift(1)} style={arrow(canNext)}>▶</button>
+          </span>
+        )}
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>読み込み中…</div>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', fontSize: 12, color: subText, marginTop: 6 }}>
+          <span><OvertimeBalanceInline b={b} isDark={isDark} totalLabel="確定 " /></span>
+          <span>残業 {formatSignedMin(b.plus)}</span>
+          <span>調整休 {formatSignedMin(b.choseiMinus)}</span>
+          <span>早退・調整 {formatSignedMin(b.otherMinus)}</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** 全日：期間の日を全部並べる（申請・休暇の無い日は units が空の行） */
+function fillAllDays<T>(groups: { date: string; units: DayUnit<T>[] }[], from: string, to: string, asc: boolean): { date: string; units: DayUnit<T>[] }[] {
+  const by = new Map<string, { date: string; units: DayUnit<T>[] }[]>();
+  for (const g of groups) by.set(g.date, [...(by.get(g.date) ?? []), g]);
+  const days: string[] = [];
+  const cur = new Date(`${from}T00:00:00Z`);
+  for (let d = from; d <= to; ) {
+    days.push(d);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    d = cur.toISOString().slice(0, 10);
+  }
+  if (!asc) days.reverse();
+  return days.flatMap(d => by.get(d) ?? [{ date: d, units: [] }]);
+}
 
 /** 表から来たときに、光らせた日のカードの上に出す［📋 表に戻る］ */
 const OtBackToTable: React.FC<{ onBack: () => void; isDark: boolean }> = ({ onBack, isDark }) => (
@@ -6497,7 +6666,11 @@ const OtHistoryTable: React.FC<{
   onPick: (date: string) => void;
   /** 日のまとまりの前に挟む行（ご本人の履歴の期ごとの見出し） */
   between?: (g: { date: string; units: DayUnit<OvertimeReport>[] }, i: number) => React.ReactNode;
-}> = ({ groups, isDark, text, subText, borderColor, onPick, between }) => {
+  /** 全日：申請の無い日を押したとき（ご本人だけ・その日の残業申請の画面へ）。無ければ見るだけ */
+  onApply?: (date: string) => void;
+  /** 全日：申請の無い日に添える言葉（会社休・休み など） */
+  dayNote?: (date: string) => string;
+}> = ({ groups, isDark, text, subText, borderColor, onPick, between, onApply, dayNote }) => {
   const th: React.CSSProperties = { padding: '5px 4px', fontSize: 11.5, fontWeight: 'bold', color: subText, background: isDark ? '#343a40' : '#f1f3f5' };
   const td: React.CSSProperties = { padding: '6px 4px', verticalAlign: 'middle', fontSize: 12.5, lineHeight: 1.4 };
   // 行が無いときは見出しだけの表を出さない（「条件に一致する履歴はありません」が上に出ている）
@@ -6511,6 +6684,12 @@ const OtHistoryTable: React.FC<{
         style={{ ...badgeStyle(info.color, info.darkBg, isDark), display: 'inline-block', width: 20, height: 20, lineHeight: '18px', padding: 0, borderRadius: '50%', textAlign: 'center', boxSizing: 'border-box' }}>{ch}</span>
     );
   };
+  // 日曜は赤・土曜は青（日付の字だけ）
+  const dowColor = (d: string): string | undefined => {
+    const [y, m, dd] = d.split('-').map(Number);
+    const w = new Date(y, m - 1, dd).getDay();
+    return w === 0 ? (isDark ? '#ef9a9a' : '#c62828') : w === 6 ? (isDark ? '#90caf9' : '#1565c0') : undefined;
+  };
   // 表の上の読み方：この表に出てくる字だけ
   const used = new Set<OvertimeStatus>();
   for (const g of groups) for (const u of g.units) used.add(u.leave ? leaveMarkStatus(u.leave.status) : (u.rep!.status as OvertimeStatus));
@@ -6521,7 +6700,7 @@ const OtHistoryTable: React.FC<{
       <style>{OT_TABLE_CSS}</style>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', fontSize: 11.5, color: subText, margin: '0 0 6px', alignItems: 'center' }}>
         {legend.map(st => <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>{mark(st)}{STATUS_MARK_LEGEND[STATUS_MARK[st]]}</span>)}
-        <span>行を押すと詳しく見られます</span>
+        <span>{onApply ? '行を押すと詳しく見られます（申請の無い日は申請の画面へ）' : '行を押すと詳しく見られます'}</span>
       </div>
       <table className="ot-tbl" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', color: text, textAlign: 'left', marginBottom: 12 }}>
         <thead>
@@ -6534,12 +6713,27 @@ const OtHistoryTable: React.FC<{
         </thead>
         <tbody>
           {groups.map((g, i) => (
-            <React.Fragment key={`t-${g.date}-${g.units[0].key}`}>
+            <React.Fragment key={`t-${g.date}-${g.units[0]?.key ?? 'empty'}`}>
               {between && (() => { const node = between(g, i); return node ? <tr><td colSpan={4} style={{ padding: 0 }}>{node}</td></tr> : null; })()}
+              {g.units.length === 0 && (() => {
+                // 全日：申請・休暇の無い日
+                const note = dayNote?.(g.date) ?? '';
+                return (
+                  <tr id={`ot-row-${g.date}`} onClick={onApply ? () => onApply(g.date) : undefined}
+                    style={{ borderTop: `1px solid ${borderColor}`, cursor: onApply ? 'pointer' : 'default' }}>
+                    <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12, color: dowColor(g.date) ?? subText }}>{otMdDowShort(g.date)}</td>
+                    <td className="ot-c" style={{ ...td, color: subText }}>
+                      {note && <span style={{ marginRight: 6 }}>{note}</span>}
+                      {onApply ? <span style={{ color: isDark ? '#90caf9' : '#1976d2', fontSize: 12 }}>申請する ›</span> : (note ? '' : '—')}
+                    </td>
+                    <td style={td} /><td style={td} />
+                  </tr>
+                );
+              })()}
               {g.units.map((u, j) => {
                 const first = j === 0;
                 const rowStyle: React.CSSProperties = { borderTop: `1px solid ${borderColor}`, cursor: 'pointer' };
-                const dateCell = <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12 }}>{first ? otMdDowShort(g.date) : ''}</td>;
+                const dateCell = <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12, color: dowColor(g.date) }}>{first ? otMdDowShort(g.date) : ''}</td>;
                 if (u.leave) {
                   const l = u.leave;
                   return (
