@@ -4292,6 +4292,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   };
   // 全日の「申請する ›」：その日の残業申請の画面を開く。🚨 いまの下書きを黙って消さない（出張・申請の依頼と同じ流儀）
   const [dayReplaceFor, setDayReplaceFor] = useState<string | null>(null);
+  // 全日の表から申請の画面へ来た日（2026-11-02）。申請の画面の上に［📋 表に戻る］を出す・戻ったらその行まで動かす
+  const [tableReturnDay, setTableReturnDay] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab === 'form') return;
+    if (tableReturnDay && tab === 'history') {
+      const d = tableReturnDay;
+      setTimeout(() => document.getElementById(`ot-row-${d}`)?.scrollIntoView({ block: 'center' }), 120);
+    }
+    setTableReturnDay(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const startFromDay = (d: string, force = false) => {
     const cur = loadDraft<FormDraft>(DRAFT_KEYS.overtime);
     const same = cur?.date === d;
@@ -4308,9 +4319,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       } satisfies FormDraft);
     }
     sessionStorage.setItem(SCROLL_ONCE_KEY, '1');
+    // 🚨 スマホの「戻る」で表に戻れるように、今の場所を「履歴」にしてから「申請の画面」を1つ積む（2026-11-02）。
+    //    戻ると ?tab=history になり、上の useEffect（tabParam）が履歴へ切り替え、tableReturnDay の行まで動かす
+    const here = new URLSearchParams(location.search);
+    here.set('tab', 'history'); here.delete('otday');
+    navigate({ search: here.toString() }, { replace: true });
+    const next = new URLSearchParams(here); next.set('tab', 'form');
+    navigate({ search: next.toString() }, { state: { otFromTable: d } });
+    setTableReturnDay(d);
     setEditTarget(null);
     setTab('form');
     setFormKey(k => k + 1);
+  };
+  /** 申請の画面の［📋 表に戻る］：積んだ1つを戻す（積んでいなければ履歴へ切り替えるだけ） */
+  const backToTableFromForm = () => {
+    if ((location.state as { otFromTable?: string } | null)?.otFromTable) { navigate(-1); return; }
+    setTab('history');
   };
   /** 全日に切り替えるときは、絞り込み（状態・種類）を外す（行を押して開くカードが隠れないように） */
   const setOwnAllDays = (v: boolean) => {
@@ -4931,6 +4955,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               onSent={() => { fetchOwn(); fetchOwnCard(); fetchAppRequests(); }}
             />
           ) : tab === 'form' || tab === 'bulk' ? (<>
+            {/* 全日の表から来たときだけ（2026-11-02）。送ったあと・ほかの開き方では出さない */}
+            {tab === 'form' && tableReturnDay && <OtBackToTable onBack={backToTableFromForm} isDark={isDark} />}
             {replaceAsk && (
               <div style={{ marginBottom: 10, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
                 <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。有休からの変更の申請に置き換えますか？</p>
@@ -4991,6 +5017,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               canMemo={canMemoPerm}
               appliedDates={appliedDates}
               onSaved={(gcalWarn, note) => {
+                setTableReturnDay(null);
                 setSavedBanner(true); setSavedNote(note ?? '');
                 if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });
                 setEditTarget(null); setTab('history'); fetchOwn(); fetchOwnCard(); void fetchTripDays(); window.scrollTo({ top: 0 });
@@ -5889,19 +5916,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               <OtPeriodBar period={ownCardPeriod} b={ownCardBalance} loading={ownCardLoading} canPrev={canPrev} canNext={canNext}
                                 onShift={n => setOwnCardPeriod(p => shiftPayPeriod(p, n))}
                                 isDark={isDark} text={text} subText={subText} borderColor={borderColor} innerBg={innerBg} />
-                              {dayReplaceFor && (
-                                <div style={{ marginBottom: 8, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
-                                  <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。{tripDayLabel(dayReplaceFor)} の申請に置き換えますか？</p>
-                                  <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => startFromDay(dayReplaceFor, true)}
-                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
-                                    <button onClick={() => setDayReplaceFor(null)}
-                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
-                                  </div>
-                                </div>
-                              )}
                               <OtHistoryTable groups={ownAllGroups} isDark={isDark} text={text} subText={subText} borderColor={borderColor}
-                                onPick={ownView.pickDay} onApply={d => startFromDay(d)} dayNote={ownDayNote} />
+                                onPick={ownView.pickDay} onApply={d => startFromDay(d)} dayNote={ownDayNote}
+                                rowExtra={d => (d === dayReplaceFor ? (
+                                  <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                                    <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。{tripDayLabel(d)} の申請に置き換えますか？</p>
+                                    <div style={{ display: 'flex', gap: 6 }}>
+                                      <button onClick={() => startFromDay(d, true)}
+                                        style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                                      <button onClick={() => setDayReplaceFor(null)}
+                                        style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+                                    </div>
+                                  </div>
+                                ) : null)} />
                             </>
                           );
                         }
@@ -6672,7 +6699,9 @@ const OtHistoryTable: React.FC<{
   onApply?: (date: string) => void;
   /** 全日：申請の無い日に添える言葉（会社休・休み など） */
   dayNote?: (date: string) => string;
-}> = ({ groups, isDark, text, subText, borderColor, onPick, between, onApply, dayNote }) => {
+  /** その日の行のすぐ下に出すもの（確認は押した場所の近くに出す・2026-11-02） */
+  rowExtra?: (date: string) => React.ReactNode;
+}> = ({ groups, isDark, text, subText, borderColor, onPick, between, onApply, dayNote, rowExtra }) => {
   const th: React.CSSProperties = { padding: '5px 4px', fontSize: 11.5, fontWeight: 'bold', color: subText, background: isDark ? '#343a40' : '#f1f3f5' };
   const td: React.CSSProperties = { padding: '6px 4px', verticalAlign: 'middle', fontSize: 12.5, lineHeight: 1.4 };
   // 行が無いときは見出しだけの表を出さない（「条件に一致する履歴はありません」が上に出ている）
@@ -6764,6 +6793,7 @@ const OtHistoryTable: React.FC<{
                   </tr>
                 );
               })}
+              {rowExtra && (() => { const node = rowExtra(g.date); return node ? <tr><td colSpan={4} style={{ padding: '2px 0 8px' }}>{node}</td></tr> : null; })()}
             </React.Fragment>
           ))}
         </tbody>
