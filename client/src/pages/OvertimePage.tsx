@@ -6560,23 +6560,25 @@ const OtViewSwitch: React.FC<{
     <span style={{ display: 'inline-flex', border: `1.5px solid ${blue}`, borderRadius: 8, overflow: 'hidden' }}>
       {items.map(it => (
         <button key={it.key} type="button" aria-pressed={it.on} onClick={it.onClick}
-          style={{ padding: '5px 10px', border: 'none', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+          style={{ width: 52, minHeight: 34, padding: 0, border: 'none', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
             background: it.on ? '#1976d2' : 'transparent', color: it.on ? '#fff' : blue, fontWeight: it.on ? 'bold' : 'normal' }}>{it.label}</button>
       ))}
     </span>
   );
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-      {seg([
-        { key: 'card', label: 'カード', on: mode === 'card', onClick: () => onMode('card') },
-        { key: 'table', label: '表', on: mode === 'table', onClick: () => onMode('table') },
-      ])}
+      {/* 🚨 ［申請｜全日］は［カード｜表］の左に出す（右に寄せた並びなので、出ても［カード｜表］の位置が動かない・2026-11-02 ユーザー指示）。
+          ボタンはどれも同じ幅（押しやすさ・同日ユーザー指示） */}
       {mode === 'table' && seg([
         { key: 'some', label: '申請', on: !allDays, onClick: () => onAllDays(false) },
         { key: 'all', label: '全日', on: allDays, onClick: () => onAllDays(true) },
       ])}
+      {seg([
+        { key: 'card', label: 'カード', on: mode === 'card', onClick: () => onMode('card') },
+        { key: 'table', label: '表', on: mode === 'table', onClick: () => onMode('table') },
+      ])}
       <button type="button" onClick={onSort}
-        style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+        style={{ minHeight: 34, padding: '0 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
         ↕ {sortAsc ? '昇順' : '降順'}
       </button>
     </div>
