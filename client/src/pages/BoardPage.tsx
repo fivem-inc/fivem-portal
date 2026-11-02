@@ -540,6 +540,9 @@ const BoardPage: React.FC = () => {
   const [channels,    setChannels]    = useState<Channel[]>([]);
   const [members,     setMembers]     = useState<ChannelMember[]>([]);
   const [messages,    setMessages]    = useState<BoardMessage[]>([]);
+  // グループ・DM の自分の送信予約（2026-11-02 ユーザー確定）。送った本人だけが見る（グループの中の点線の枠・送信トレイの「予約済み」）
+  const [myScheduled, setMyScheduled] = useState<BoardMessage[]>([]);
+  const [schedCancelId, setSchedCancelId] = useState<string | null>(null);
   const [lastSeen,          setLastSeen]          = useState<Record<string, string>>({});
   const [prevChannelLastSeen, setPrevChannelLastSeen] = useState<string | null>(null);
   const [readCounts,  setReadCounts]  = useState<Record<string, number>>({});
@@ -960,6 +963,8 @@ const BoardPage: React.FC = () => {
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
     const now = new Date().toISOString();
     setMessages((msgRes.data || []).filter((m: any) => channelMsgVisible(m, user.id, now)).map((m: any) => ({ ...m, profile: null })));
+    setMyScheduled((msgRes.data || []).filter((m: any) => m.status === 'scheduled' && !m.send_hold && m.user_id === user.id && !m.parent_id)
+      .map((m: any) => ({ ...m, profile: null })));
 
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
     let copyConf: Record<string, { user_id: string; comment: string | null; confirmed_at?: string }[]> = {};
@@ -1777,11 +1782,57 @@ const BoardPage: React.FC = () => {
 
   // 🚨 自分が送ったメッセージは未読に数えない（2026-10-20・社長の実機）。上のナビの数字（DB の my_board_unread）は前から自分の分を外していて、
   //    この一覧の数字だけが自分の送信も数えて「2」などと出ていた
+  // 🚨 2026-11-02：コメントへの返信（parent_id あり）も数える。ナビの数字（DB の my_board_unread）も同じ決まりにした
   const channelUnread = (channelId: string) => {
     const seen = lastSeen[channelId];
-    const others = messages.filter(m => m.channel_id === channelId && !m.parent_id && m.user_id !== user?.id);
+    const others = messages.filter(m => m.channel_id === channelId && m.user_id !== user?.id);
     if (!seen) return others.length;
     return others.filter(m => new Date(m.created_at) > new Date(seen)).length;
+  };
+
+  /** 送信予約の枠（2026-11-02）。送った本人だけに見える。時刻を過ぎた分は出さない（届けたあと、次の読み込みで投稿として並ぶ） */
+  const visibleSchedules = (channelId?: string) => myScheduled
+    .filter(m => (!channelId || m.channel_id === channelId) && !!m.scheduled_at && new Date(m.scheduled_at).getTime() > Date.now())
+    .sort((a, b) => (a.scheduled_at ?? '').localeCompare(b.scheduled_at ?? ''));
+  /** 予約の札（2026-11-02 ユーザー確定）。青＝予約があるだけ。赤（未読・返事が要る）と分ける。ナビの数字には入れない */
+  const scheduleChip = (text: string) => (
+    <span style={{ background: isDark ? '#1e3a5f' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 10, fontSize: 10, padding: '1px 7px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>{text}</span>
+  );
+  const renderScheduledBox = (m: BoardMessage, withChannel: boolean) => {
+    const ch = channels.find(c => c.id === m.channel_id);
+    const chLabel = ch ? (ch.type === 'dm' ? `DM：${channelDisplayName(ch)}` : `# ${ch.name || 'グループ'}`) : '';
+    const asking = schedCancelId === m.id;
+    return (
+      <div key={`sch-${m.id}`} style={{ border: `1.5px dashed ${isDark ? '#60a5fa' : '#60a5fa'}`, background: isDark ? '#172554' : '#eff6ff', borderRadius: 10, padding: '8px 10px', margin: '8px 0', textAlign: 'left' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: isDark ? '#93c5fd' : '#1d4ed8', marginBottom: 3 }}>🕐 送信予約（あなただけに見えています）</div>
+        <div style={{ fontSize: 12, color: isDark ? '#bfdbfe' : '#1e3a8a', marginBottom: 5 }}>
+          {withChannel && chLabel && <span style={{ fontWeight: 700, marginRight: 6 }}>{chLabel}</span>}
+          {m.scheduled_at && fmtFull(m.scheduled_at)} に送ります
+        </div>
+        {m.title && <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 2 }}>{m.title}</div>}
+        <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', ...(withChannel ? { overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const } : {}) }}>{m.body}</div>
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+          {asking ? (
+            <>
+              <span style={{ fontSize: 12, color: textColor }}>この予約を取り消しますか？</span>
+              <button type="button" onClick={() => setSchedCancelId(null)}
+                style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: subColor, fontSize: 12, cursor: 'pointer' }}>やめる</button>
+              <button data-net="write" type="button" onClick={() => void cancelChannelSchedule(m.id)}
+                style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>取り消す</button>
+            </>
+          ) : (
+            <>
+              {withChannel && ch && (
+                <button type="button" onClick={() => { void selectChannel(ch.id); setView('channel'); setShowSidebar(false); }}
+                  style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: subColor, fontSize: 12, cursor: 'pointer' }}>グループを開く</button>
+              )}
+              <button data-net="write" type="button" onClick={() => setSchedCancelId(m.id)}
+                style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${border}`, background: isDark ? 'transparent' : '#fff', color: textColor, fontSize: 12, cursor: 'pointer' }}>予約を取り消す</button>
+            </>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const sortedChannels = useMemo(() =>
@@ -2104,6 +2155,16 @@ const BoardPage: React.FC = () => {
     channelPostIdRef.current = null;
 
     const nowIso = new Date().toISOString();
+    if (r.state === 'scheduled' && !parentId) {
+      setMyScheduled(prev => [...prev.filter(m => m.id !== id), {
+        id, channel_id: selectedChannelId, parent_id: null, user_id: user.id, body: body.trim(),
+        edited_at: null, created_at: nowIso,
+        deadline: (msgData.deadline as string) ?? null, deadline_type: (msgData.deadline_type as string) ?? null,
+        requires_confirmation: !!msgData.requires_confirmation, scheduled_at: (msgData.scheduled_at as string) ?? null, sent_at: null,
+        title: (msgData.title as string) ?? null, subject: null, status: 'scheduled', send_hold: false,
+        answer_prompt: null, answer_location: null, answer_link: null, broadcast_recipients: null, profile: { name: profileName || null },
+      }]);
+    }
     if (r.state !== 'scheduled') {
       const held = r.state === 'held';
       const msg: BoardMessage = {
@@ -2129,6 +2190,21 @@ const BoardPage: React.FC = () => {
     }
     if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); setNewUrgent(false); setShowOptionsExpanded(false); }
     setSending(false);
+  };
+
+  /** グループ・DM の送信予約を取り消す。🚨 まだ予約中の行だけ消す（届いたあとの投稿は消さない） */
+  const cancelChannelSchedule = async (id: string) => {
+    if (!user) return;
+    const { data, error } = await supabase.from('board_messages').delete()
+      .eq('id', id).eq('user_id', user.id).eq('status', 'scheduled').eq('send_hold', false).select('id');
+    setSchedCancelId(null);
+    if (error) { setSendError(sendFailureText(error) ?? `予約を取り消せませんでした：${error.message}`); return; }
+    if (!data || data.length === 0) {
+      setSendError('すでに送信されたため、予約を取り消せませんでした。');
+      void loadAll();
+      return;
+    }
+    setMyScheduled(prev => prev.filter(m => m.id !== id));
   };
 
   const deleteMessage = async (id: string) => {
@@ -3222,7 +3298,8 @@ const BoardPage: React.FC = () => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                       <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#90b4e8' : '#3b5bdb' }}>💬 {replierName}</span>
                       <span style={{ fontSize: 10, color: subColor }}>{fmtFull(latestReply.created_at)}</span>
-                      <span style={{ fontSize: 10, color: subColor, marginLeft: 'auto' }}>リプライ {replyCount}件{unreadReplies > 0 ? `（未読${unreadReplies}）` : ''}</span>
+                      {/* お知らせへの返信と同じ札（2026-11-02 ユーザー確定）。未読があれば青いベタ・読んだら薄い札 */}
+                      <span style={{ marginLeft: 'auto' }}><ReplyCountMark total={replyCount} unread={unreadReplies} isDark={isDark} /></span>
                     </div>
                     <div style={{ fontSize: 12, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                       {latestReply.body}
@@ -3810,6 +3887,7 @@ const BoardPage: React.FC = () => {
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 1 }}>
             <span style={{ fontSize: 12, color: subColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%', textAlign: 'left' }}>{last?.body || 'まだメッセージがありません'}</span>
+            {visibleSchedules(ch.id).length > 0 && scheduleChip('🕐 予約')}
             {unread > 0 && (
               <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', fontWeight: 'bold', flexShrink: 0 }}>{unread > 99 ? '99+' : unread}</span>
             )}
@@ -3838,6 +3916,8 @@ const BoardPage: React.FC = () => {
   //    ナビの数字は増えるのに連絡板のどこにも印が無い＝9/21 に避けた「開いても何も無い」に戻る。
   // 🚨 ナビの赤い数字（App.tsx）＝ここの受信トレイ＋送信トレイ＋チャンネル、になるように揃えている
   const outboxIdSet = new Set([...outboxMessages, ...outboxArchivedMessages].map(m => m.id));
+  // 送信予約の数（お知らせ＋グループ・DM）。送信トレイの行と［📅 予約済み］のタブに青い札で出す
+  const scheduledTotal = outboxMessages.filter(m => outboxTabOf(m) === 'scheduled').length + visibleSchedules().length;
   const replyUnreadOutbox = Object.entries(unreadReplyCounts)
     .filter(([pid]) => outboxIdSet.has(pid)).reduce((s, [, n]) => s + n, 0);
   const replyUnreadInbox = Object.entries(unreadReplyCounts)
@@ -3878,10 +3958,10 @@ const BoardPage: React.FC = () => {
         {safetyVisible && safetyPending > 0 && safetyRow}
         {/* ── 受信・送信・お気に入り ── */}
         {[
-          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxAttention, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
+          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxAttention, sched: 0, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
           // 🚨 送信トレイの数字は「送ったお知らせに届いた、まだ読んでいない返信」だけ（2026-09-24）。
           //    それまでは常に0だった（送信トレイに「自分がまだ触る必要があるもの」が無かったため）
-          { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: replyUnreadOutbox, onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
+          { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: replyUnreadOutbox, sched: scheduledTotal, onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
         ].map(item => {
           const isActive = view === item.key && !showSidebar;
           return (
@@ -3892,6 +3972,7 @@ const BoardPage: React.FC = () => {
             }}>
               <div style={{ width: 38, height: 38, borderRadius: 10, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>{item.icon}</div>
               <span style={{ flex: 1, fontSize: 14, fontWeight: isActive ? 700 : 500, color: textColor, textAlign: 'left' }}>{item.label}</span>
+              {item.sched > 0 && scheduleChip(`🕐 予約 ${item.sched}`)}
               {item.badge > 0 && (
                 <span
                   onClick={item.key === 'inbox' ? (e => { e.stopPropagation(); setView('inbox'); setInboxFilter('unread'); setShowSidebar(false); setInboxDetailId(null); }) : undefined}
@@ -4835,12 +4916,19 @@ const BoardPage: React.FC = () => {
         <>
           <div style={{ paddingTop: 56 + searchPad, flexShrink: 0 }}>
             <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
-              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', 'アーカイブ']] as const).map(([tab, label]) => (
+              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', 'アーカイブ']] as const).map(([tab, label]) => {
+                // 返信の未読がどのタブにあるか（2026-11-02 ユーザー確定）。送信トレイの数字（replyUnreadOutbox）の内訳
+                const tabReplyUnread = (tab === 'archive' ? outboxArchivedMessages : tab === 'sent' ? outboxMessages.filter(m => outboxTabOf(m) === 'sent') : [])
+                  .reduce((n, m) => n + (unreadReplyCounts[m.id] || 0), 0);
+                return (
                 <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
                   style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
                   {tab === 'archive' ? <><ArchiveIcon size={12} /> {label}</> : label}
+                  {inboxCountBadge(tabReplyUnread)}
+                  {tab === 'scheduled' && scheduledTotal > 0 && scheduleChip(String(scheduledTotal))}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
@@ -4965,6 +5053,13 @@ const BoardPage: React.FC = () => {
               </>
             ) : (
               <>
+                {outboxTab === 'scheduled' && visibleSchedules().length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: subColor, margin: '2px 0 4px' }}>グループ・DM の送信予約</div>
+                    {visibleSchedules().map(m => renderScheduledBox(m, true))}
+                    <div style={{ fontSize: 12, fontWeight: 700, color: subColor, margin: '10px 0 0' }}>お知らせの送信予約</div>
+                  </div>
+                )}
                 {outboxMessages.filter(m => outboxTabOf(m) === outboxTab).length === 0 ? (
                   outboxFailed ? null : <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
                     {outboxTab === 'sent' ? '送信済みのお知らせはありません' : outboxTab === 'scheduled' ? '予約済みのお知らせはありません' : '下書きはありません'}
@@ -5082,6 +5177,7 @@ const BoardPage: React.FC = () => {
             </React.Fragment>
           ));
         })()}
+        {visibleSchedules(selectedChannelId).map(m => renderScheduledBox(m, false))}
         <div ref={messagesEndRef} />
       </div>
 
