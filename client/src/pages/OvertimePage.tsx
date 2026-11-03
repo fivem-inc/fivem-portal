@@ -4958,7 +4958,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             />
           ) : tab === 'form' || tab === 'bulk' ? (<>
             {/* 全日の表から来たときだけ（2026-11-02）。送ったあと・ほかの開き方では出さない */}
-            {tab === 'form' && tableReturnDay && <OtBackToTable onBack={backToTableFromForm} isDark={isDark} />}
+            {tab === 'form' && tableReturnDay && <OtBackToTable onBack={backToTableFromForm} isDark={isDark} spacer />}
             {replaceAsk && (
               <div style={{ marginBottom: 10, padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
                 <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。有休からの変更の申請に置き換えますか？</p>
@@ -6570,8 +6570,18 @@ function useOtTableMode(storageKey: string, enabled = true) {
       setTimeout(() => document.getElementById(`ot-row-${d}`)?.scrollIntoView({ block: 'center' }), 50);
     }
   }, [showTable]);
+  // 🚨 scrollIntoView＋scrollMarginTop は iPhone で効かなかった（2026-11-03 実機）。
+  //    ナビ（2段のときも）・圏外の帯・［表に戻る］の帯の高さを読んで、その下に少し空けて止める
   useEffect(() => {
-    if (jumpDay) setTimeout(() => document.getElementById(`ot-day-${jumpDay}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
+    if (!jumpDay) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(`ot-day-${jumpDay}`);
+      if (!el) return;
+      const cs = getComputedStyle(document.documentElement);
+      const top = (parseInt(cs.getPropertyValue('--topbar-height'), 10) || 60) + (parseInt(cs.getPropertyValue('--offline-band-h'), 10) || 0);
+      window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - top - OT_BACK_BAR_H - 12), behavior: 'smooth' });
+    }, 80);
+    return () => clearTimeout(t);
   }, [jumpDay]);
   const showAll = showTable && allDays;
   return { mode: enabled ? mode : 'card' as const, setMode, showTable, showAll, allDays, setAllDays, jumpDay, pickDay, backToTable, enabled };
@@ -6667,13 +6677,24 @@ function fillAllDays<T>(groups: { date: string; units: DayUnit<T>[] }[], from: s
   return days.flatMap(d => by.get(d) ?? [{ date: d, units: [] }]);
 }
 
-/** 表から来たときに、光らせた日のカードの上に出す［📋 表に戻る］ */
-const OtBackToTable: React.FC<{ onBack: () => void; isDark: boolean }> = ({ onBack, isDark }) => (
-  <button type="button" onClick={onBack}
-    style={{ display: 'inline-flex', alignItems: 'center', minHeight: 40, padding: '0 14px', marginBottom: 6, borderRadius: 20, border: `1.5px solid ${isDark ? '#90caf9' : '#1976d2'}`, background: isDark ? '#1b2a3a' : '#e3f2fd', color: isDark ? '#90caf9' : '#1565c0', cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
-    📋 表に戻る
+/** 表から来たとき（カード・申請の画面）に出す［📋 表に戻る］。
+ *  🚨 ボタンだけをナビのすぐ下の左に固定（帯は付けない・2026-11-03 ユーザー確定：動かしても同じ場所）。
+ *     下には固定しない（連絡板の取り消しの帯・キーボードと重なる）。圏外の帯が出ていればその下（--offline-band-h） */
+const OT_BACK_BAR_H = 44;
+const OtBackToTable: React.FC<{ onBack: () => void; isDark: boolean; spacer?: boolean }> = ({ onBack, isDark, spacer }) => (<>
+  {/* 申請の画面：いちばん上まで戻したときに、帯が見出しにかぶらないように空けておく（カードの光った枠の中には空けない） */}
+  {spacer && <div aria-hidden style={{ height: 46 }} />}
+  {/* 見た目は高さ32の白い丸角＋影だけ（案A・Google マップなどの浮いたボタンの形）。押せる範囲は外側の透明な枠で44px */}
+  <button type="button" onClick={onBack} aria-label="表に戻る"
+    style={{ position: 'fixed', top: 'calc(var(--topbar-height, 60px) + var(--offline-band-h, 0px))', left: 6, zIndex: 250,
+      padding: 6, border: 'none', background: 'transparent', cursor: 'pointer' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', height: 32, padding: '0 12px', borderRadius: 16,
+      background: isDark ? '#2b3036' : '#ffffff', color: isDark ? '#90caf9' : '#1565c0', fontSize: 13, fontWeight: 'bold', whiteSpace: 'nowrap',
+      boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.6)' : '0 1px 4px rgba(0,0,0,0.22)' }}>
+      ‹ 表に戻る
+    </span>
   </button>
-);
+</>);
 
 /** カードの表示で、日のまとまりを包む（表から来た日を光らせ、上に［表に戻る］） */
 const OtDayWrap: React.FC<{ date: string; jumpDay: string | null; onBack: () => void; isDark: boolean; children: React.ReactNode }> = ({ date, jumpDay, onBack, isDark, children }) => {
