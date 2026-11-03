@@ -81,6 +81,7 @@ const FEATURES = [
   { key: 'overtime_memo', icon: '🕐', label: '残業のメモ', note: '申請の前に「日付・時刻・理由」を書いておける欄。書いた本人だけが見られます。OFFの役職にはボタンが出ません', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
   { key: 'shift_report_todo', icon: '📋', label: '勤務変更：カレンダーの予定の一覧', note: '勤務変更のページに「出していない勤務変更（カレンダーの予定から）」を出し、［出す］で入力済みのフォームを開きます。パートの方は自分の予定、マネージャー以上はパートの方を選んでその人の予定を見られます（代理で出すこともできます）。OFFの役職には出ません', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
   { key: 'overtime_grid', icon: '📋', label: '残業申請「表入力」', note: '残業の申請・報告を、給与期間1か月ぶんの表でまとめて入力して送れる入口。パソコンで開いたときだけ出ます。送った申請は1件ずつの申請と同じ流れで受理されます。OFFの役職にはボタンが出ません', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
+  { key: 'overtime_own_table', icon: '📋', label: '残業の履歴を表で見る（自分の分）', note: '残業申請の［履歴・実績報告］に［カード｜表］の切り替えを出します（表・全日の表示）。OFFの役職はカードの表示だけです。部門集計で人の表を見るのは「残業の集計・超過バナー閲覧」の権限です', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
 
   // ── 申請・精算 ──
   { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可', group: '申請・精算' as FeatureGroup, bySuperior: false },

@@ -100,6 +100,8 @@ interface UseAuthReturn {
   canLeaveTypeChange: boolean;
   /** 連絡板のアンケートを作れるか（2026-10-29・最初はマネージャー・社長・管理者だけ）。DB の board_messages_survey_guard も同じ権限を見る */
   canBoardSurvey: boolean;
+  /** 残業の［履歴・実績報告］（自分の分）で［カード｜表］を切り替えられるか（2026-11-03・最初はマネージャー以上だけ）。部門集計の表は overtime_summary のまま */
+  canOvertimeOwnTable: boolean;
   canPartLeaveFormSend: boolean;
   canLeaveApprovals: boolean;
   /** 勤怠カレンダーへの登録・取消（2026-09-09 追加）。DB側の RLS も同じトグルを見る */
@@ -545,6 +547,7 @@ export const useAuth = (): UseAuthReturn => {
   const canApplicationRequest = realIsAdmin && !previewRole ? true : (effectivePerms.application_request ?? false);
   const canLeaveTypeChange = realIsAdmin && !previewRole ? true : (effectivePerms.leave_type_change ?? false);
   const canBoardSurvey = realIsAdmin && !previewRole ? true : (effectivePerms.board_survey ?? false);
+  const canOvertimeOwnTable = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_own_table ?? false);
   const canPartLeaveFormSend = realIsAdmin && !previewRole ? true : (effectivePerms.part_leave_form_send ?? false);
   // 勤怠カレンダーへの登録・取消（2026-09-09）。🚨 役職名では判定しない。
   //    以前は承認者（APPROVER_ROLES）で出していたが、DBのRLSはリーダー以上で弾いており
@@ -646,6 +649,7 @@ export const useAuth = (): UseAuthReturn => {
     canApplicationRequest,
     canLeaveTypeChange,
     canBoardSurvey,
+    canOvertimeOwnTable,
     canPartLeaveFormSend,
     leaveRequestEnabled,
     // 役職プレビュー中は他の権限と同じく実権限を伏せる（プレビューで実際の見え方を確認するため）

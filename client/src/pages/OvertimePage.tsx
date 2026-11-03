@@ -4278,7 +4278,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     d => (!ownLeaveFrom || d >= ownLeaveFrom) && (!ownLeaveTo || d <= ownLeaveTo), ownHistoryFilter.sortAsc));
   const groupPeriod = (g: (typeof ownRestGroups)[number]) => g.units.find(u => u.rep)?.rep?.pay_period_start ?? calcPayPeriodStartJst(g.date);
   // ［📋 表で見る］（2026-10-30）。🚨 Hook なので、下の早い return（?proposal=）より前に置く
-  const ownView = useOtTableMode('fivem_ot_view_own');
+  // 🚨 ご本人の分の［カード｜表］は権限 overtime_own_table の役職だけ（2026-11-03・最初はマネージャー以上）。OFF の方はカードのまま
+  const { canOvertimeOwnTable } = useAuth();
+  const ownView = useOtTableMode('fivem_ot_view_own', canOvertimeOwnTable);
   // 全日（2026-10-31）：上の合計時間数カードと同じ期（ownCardPeriod）の日を全部。取消は出さない・絞り込みは使わない
   const ownAllEnd = payPeriodEnd(ownCardPeriod);
   const ownAllGroups = fillAllDays(groupUnitsByDay(mergeLeaveUnits(
@@ -5767,7 +5769,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   return (
                     <>
                       {/* 表示の切り替え（カード／表・申請／全日・並び順）2026-10-31 */}
-                      <OtViewSwitch mode={ownView.mode} onMode={ownView.setMode} allDays={ownView.allDays} onAllDays={setOwnAllDays}
+                      <OtViewSwitch tableOn={ownView.enabled} mode={ownView.mode} onMode={ownView.setMode} allDays={ownView.allDays} onAllDays={setOwnAllDays}
                         sortAsc={ownHistoryFilter.sortAsc} onSort={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
                         isDark={isDark} borderColor={borderColor} subText={subText} />
                       {/* 状態フィルタ・取消済み表示（全日のときは使わない＝期の日を全部出すため） */}
@@ -6524,7 +6526,8 @@ const MemberDetailView: React.FC<{
 // ────────────────────────────────────────────────────────────────
 const OT_DOW = ['日', '月', '火', '水', '木', '金', '土'];
 
-function useOtTableMode(storageKey: string) {
+/** enabled=false のときは端末に「表」と覚えていてもカードで出す（切り替えも出さない） */
+function useOtTableMode(storageKey: string, enabled = true) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -6559,7 +6562,7 @@ function useOtTableMode(storageKey: string) {
     p.delete('otday');
     navigate({ search: p.toString() }, { replace: true });
   };
-  const showTable = mode === 'table' && !jumpDay;
+  const showTable = enabled && mode === 'table' && !jumpDay;
   // 表に戻ったら、押した行まで動かす／カードに移ったら、その日まで動かす
   useEffect(() => {
     if (showTable && lastPicked.current) {
@@ -6571,7 +6574,7 @@ function useOtTableMode(storageKey: string) {
     if (jumpDay) setTimeout(() => document.getElementById(`ot-day-${jumpDay}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
   }, [jumpDay]);
   const showAll = showTable && allDays;
-  return { mode, setMode, showTable, showAll, allDays, setAllDays, jumpDay, pickDay, backToTable };
+  return { mode: enabled ? mode : 'card' as const, setMode, showTable, showAll, allDays, setAllDays, jumpDay, pickDay, backToTable, enabled };
 }
 
 /** 表示の切り替え（2026-10-31 ユーザー確定）：［カード｜表］・表のときだけ［申請｜全日］・［↕ 降順］を1行に。
@@ -6580,8 +6583,10 @@ const OtViewSwitch: React.FC<{
   mode: 'card' | 'table'; onMode: (m: 'card' | 'table') => void;
   allDays: boolean; onAllDays: (v: boolean) => void;
   sortAsc: boolean; onSort: () => void;
+  /** false＝［カード｜表］を出さず、並び順だけ（権限 overtime_own_table が OFF の方・2026-11-03） */
+  tableOn?: boolean;
   isDark: boolean; borderColor: string; subText: string;
-}> = ({ mode, onMode, allDays, onAllDays, sortAsc, onSort, isDark, borderColor, subText }) => {
+}> = ({ tableOn = true, mode, onMode, allDays, onAllDays, sortAsc, onSort, isDark, borderColor, subText }) => {
   const blue = isDark ? '#90caf9' : '#1976d2';
   const seg = (items: { key: string; label: string; on: boolean; onClick: () => void }[]) => (
     <span style={{ display: 'inline-flex', border: `1.5px solid ${blue}`, borderRadius: 8, overflow: 'hidden' }}>
@@ -6596,11 +6601,11 @@ const OtViewSwitch: React.FC<{
     <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
       {/* 🚨 ［申請｜全日］は［カード｜表］の左に出す（右に寄せた並びなので、出ても［カード｜表］の位置が動かない・2026-11-02 ユーザー指示）。
           ボタンはどれも同じ幅（押しやすさ・同日ユーザー指示） */}
-      {mode === 'table' && seg([
+      {tableOn && mode === 'table' && seg([
         { key: 'some', label: '申請', on: !allDays, onClick: () => onAllDays(false) },
         { key: 'all', label: '全日', on: allDays, onClick: () => onAllDays(true) },
       ])}
-      {seg([
+      {tableOn && seg([
         { key: 'card', label: 'カード', on: mode === 'card', onClick: () => onMode('card') },
         { key: 'table', label: '表', on: mode === 'table', onClick: () => onMode('table') },
       ])}
