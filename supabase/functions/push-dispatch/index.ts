@@ -45,6 +45,7 @@ function addParams(url: string, params: Record<string, string>): string {
 //   ③連絡板（開けば未読が見える。🚨 お知らせへの返信だけは例外＝一覧に行が無いので付ける）
 //   ④安否・緊急（災害時にベルを挟まない）。
 // urgent: true を付けると、受信時間帯・休暇日のミュート判定を無視して常に送る。
+// 🚨 urgent を付けるのは safety: で始まる種類だけ。ほかに付けるなら、毎分の門（DB の push_dispatch_due の ①）にも足す（2026-11-03）
 //   付けるのは安否・緊急系のみ（災害時に「夜だから」で止めてはいけないもの）。
 //   ⚠️ event_key が safety: で始まるものはコード側でも常に urgent 扱いにしている
 //   （将来 safety 系のキーを足したとき、この印の付け忘れで夜間に止まる事故を防ぐ）
@@ -584,11 +585,11 @@ serve(async (req) => {
     {
       const { data: defRows } = await supabase
         .from("push_deferred")
-        .select("id, user_id, payload")
+        .select("id, user_id, payload, retry_count")
         .eq("status", "pending")
         .order("created_at", { ascending: true })
         .limit(500);
-      const deferred = (defRows ?? []) as { id: string; user_id: string; payload: { title: string; body: string; url: string; tag: string } }[];
+      const deferred = (defRows ?? []) as { id: string; user_id: string; retry_count?: number; payload: { title: string; body: string; url: string; tag: string } }[];
       if (deferred.length > 0) {
         // まだミュート中の人の分は残す
         let stillMuted = new Set<string>();
@@ -609,7 +610,7 @@ serve(async (req) => {
         // 同一 user×tag は「最後の1件だけ」送る。Webプッシュは同じtagで端末上書きされる
         // ため全部送っても最後の1件しか残らない（古い方は sent 扱いで片付ける）。
         // ⚠️ 古い方を pending に残すと毎分再判定され続けるので必ず片付けること
-        const latestByUserTag = new Map<string, { id: string; user_id: string; payload: { title: string; body: string; url: string; tag: string } }>();
+        const latestByUserTag = new Map<string, { id: string; user_id: string; retry_count?: number; payload: { title: string; body: string; url: string; tag: string } }>();
         const supersededIds: string[] = [];
         for (const d of deferred) {
           if (stillMuted.has(d.user_id) || defLeaveBlocked.has(d.user_id)) continue;
@@ -642,8 +643,15 @@ serve(async (req) => {
               .update({ status: "sent", sent_at: new Date().toISOString() })
               .eq("id", d.id);
             deferredSent++;
+          } else {
+            // 失敗は3回で諦める（push_queue と同じ）。🚨 pending のまま残すと、毎分の門（DB の push_dispatch_due）が
+            //    「送れる行がある」と見て毎分呼び続ける（2026-11-03 ログの量の直し）
+            const rc = (d.retry_count ?? 0) + 1;
+            const errText = result ? JSON.stringify(result).slice(0, 300) : `HTTP ${res.status}`;
+            await supabase.from("push_deferred")
+              .update(rc >= 3 ? { status: "failed", retry_count: rc, error: errText } : { retry_count: rc, error: errText })
+              .eq("id", d.id);
           }
-          // 失敗時は pending のまま次回リトライ（7日超で掃除される）
         }
       }
     }
