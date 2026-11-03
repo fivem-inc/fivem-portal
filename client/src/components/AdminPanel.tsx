@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { PendingApproval, Submission } from '../types';
 import { AdminPanelProvider, useAdminPanel } from './admin/AdminPanelContext';
 import { useAdminSetupAlerts } from '../hooks/useAdminSetupAlerts';
@@ -94,7 +95,10 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase, isAdminUser]);
   const isEgressLow = !!egress && egress.status === 'ok' && (egress.projected_gb ?? 0) / egress.limit_gb >= 0.8;
   // 使用量の表（2026-09-27・ユーザー確定：右上の［使用量］ボタンから開く。タブの一覧には足さない）
-  const [usageOpen, setUsageOpen] = useState(false);
+  // 毎朝の点検のベル（health:daily）は ?usage=1 で開く（2026-11-03）
+  const usageParam = useLocation().search.includes('usage=1');
+  const [usageOpen, setUsageOpen] = useState(usageParam);
+  useEffect(() => { if (usageParam) setUsageOpen(true); }, [usageParam]);
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
 
   // データベース本体の使用量。画像（ストレージ）とは無料枠が別枠なので分けて出す。

@@ -53,6 +53,109 @@ const md = (ymd: string) => { const [, m, d] = ymd.split('-').map(Number); retur
 const pct = (used: number | null | undefined, limit: number) =>
   used === null || used === undefined ? null : Math.round((used / limit) * 100);
 
+// ── 点検（2026-11-03・ユーザー確定）：毎朝 9:05 に DB が同じ関数 admin_health_check で前の日を見て、確認が要ることがあれば管理者と社長のベルへ。
+//    🚨 判定は DB の1か所。ここは返ってきた値を並べるだけ（黄色＝確認が要る・緑の ✓＝問題なし・赤は使わない）
+interface HealthItem { at: string; message?: string; error?: string; name?: string; event_key?: string }
+interface Health {
+  day: string; issues: number;
+  cron: { total: number; failed: number; list: HealthItem[] };
+  inner: { count: number; list: HealthItem[] };
+  net: { failed: number };
+  push: { failed: number; users: number; stuck: number; list: HealthItem[] };
+  mail: { failed: number; list: HealthItem[] };
+  db: { mb: number; limit_mb: number };
+}
+const jstYmd = (offsetDays: number) => {
+  const d = new Date(Date.now() + 9 * 3600_000 + offsetDays * 86400_000);
+  return d.toISOString().slice(0, 10);
+};
+
+const HealthSection: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
+  const [which, setWhich] = useState<-1 | 0>(-1);   // -1＝きのう・0＝きょう（ここまで）
+  const [h, setH] = useState<Health | null>(null);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setH(null); setErr('');
+    supabase.rpc('admin_health_check', { p_day: jstYmd(which) }).then(({ data, error }: { data: Health | null; error: { message: string } | null }) => {
+      if (!alive) return;
+      if (error || !data) { setErr('点検の結果を読み込めませんでした'); return; }
+      setH(data);
+    }, () => { if (alive) setErr('点検の結果を読み込めませんでした'); });
+    return () => { alive = false; };
+  }, [which]);
+
+  const text = isDarkMode ? '#e9ecef' : '#212529';
+  const sub = isDarkMode ? '#adb5bd' : '#6c757d';
+  const border = isDarkMode ? '#495057' : '#dee2e6';
+  const okC = isDarkMode ? '#81c784' : '#2e7d32';
+  const warnBg = isDarkMode ? '#3a2f00' : '#fff8e1';
+  const warnC = isDarkMode ? '#fcd34d' : '#b45309';
+  const cell: React.CSSProperties = { padding: '6px 8px', borderTop: `1px solid ${border}`, verticalAlign: 'top', fontSize: 13 };
+
+  const line = (key: string, label: string, bad: boolean, okText: string, badText: string, list?: HealthItem[]) => (
+    <React.Fragment key={key}>
+      <tr style={{ background: bad ? warnBg : 'transparent', cursor: bad && list && list.length ? 'pointer' : 'default' }}
+        onClick={() => { if (bad && list && list.length) setOpen(o => (o === key ? null : key)); }}>
+        <td style={{ ...cell, color: bad ? warnC : text, width: '45%' }}>{label}</td>
+        <td style={{ ...cell, color: bad ? warnC : okC, fontWeight: bad ? 'bold' : 'normal' }}>
+          {bad ? badText : `✓ ${okText}`}{bad && list && list.length ? <div style={{ fontWeight: 'normal', color: sub, fontSize: 12 }}>{open === key ? '閉じる ▲' : '中身を見る ▼'}</div> : null}
+        </td>
+      </tr>
+      {open === key && list && list.length > 0 && (
+        <tr><td colSpan={2} style={{ ...cell, background: warnBg }}>
+          {list.map((x, i) => (
+            <div key={i} style={{ fontSize: 12, color: text, padding: '2px 0', wordBreak: 'break-word' }}>
+              {x.at}　{x.name ?? x.event_key ?? ''}　<span style={{ color: sub }}>{x.message ?? x.error ?? ''}</span>
+            </div>
+          ))}
+        </td></tr>
+      )}
+    </React.Fragment>
+  );
+
+  const tab = (v: -1 | 0, label: string) => (
+    <button type="button" onClick={() => { setWhich(v); setOpen(null); }}
+      style={{ padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer',
+        background: which === v ? '#1976d2' : 'transparent', color: which === v ? '#fff' : sub }}>{label}</button>
+  );
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+        <span style={{ fontWeight: 'bold', color: text, fontSize: 13 }}>
+          点検{h ? `（${md(h.day)}${which === 0 ? '・ここまで' : ''}）` : ''}
+        </span>
+        <span style={{ display: 'inline-flex', border: `1px solid ${border}`, borderRadius: 8, overflow: 'hidden' }}>
+          {tab(-1, 'きのう')}{tab(0, 'きょう')}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>毎朝 9:05 に自動で点検し、確認が要ることがあれば管理者と社長のベルに届きます（何も無い日は届きません）</div>
+      {err && <div style={{ fontSize: 12, color: sub }}>{err}</div>}
+      {!h && !err && <div style={{ fontSize: 12, color: sub }}>読み込んでいます…</div>}
+      {h && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <tbody>
+            {line('cron', '自動の処理（cron）', h.cron.failed > 0, `${h.cron.total.toLocaleString()}回とも成功`, `失敗 ${h.cron.failed}件（${h.cron.total.toLocaleString()}回のうち）`, h.cron.list)}
+            {line('inner', '毎分の処理の中の失敗', h.inner.count > 0, '0件', `${h.inner.count}件`, h.inner.list)}
+            {line('net', 'サーバー呼び出しの失敗（自動の処理から）', h.net.failed > 0, '0件', `${h.net.failed}件`)}
+            {line('push', 'スマホ通知', h.push.failed > 0 || h.push.stuck > 0, '送信失敗 0件・残っているもの 0件',
+              `送信失敗 ${h.push.failed}件${h.push.users ? `（${h.push.users}人）` : ''}・送れずに残っている ${h.push.stuck}件`, h.push.list)}
+            {line('mail', '連絡板のメール', h.mail.failed > 0, '送信失敗 0件', `送信失敗 ${h.mail.failed}件`, h.mail.list)}
+            {line('db', 'データベースの大きさ', h.db.mb >= 400, `${h.db.mb}MB／${h.db.limit_mb}MB（${Math.round((h.db.mb / h.db.limit_mb) * 100)}%）`,
+              `${h.db.mb}MB／${h.db.limit_mb}MB（上限の8割を超えています）`)}
+            <tr>
+              <td style={{ ...cell, color: text }}>ログの量</td>
+              <td style={{ ...cell, color: sub }}>ここでは見られません（Supabase の画面だけ・週に1回確認）</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
 const UsagePanel: React.FC<Props> = ({ isDarkMode, onClose, egress, storageMb, storageLimitMb, dbMb, dbLimitMb, mail, mailErr, egressErr }) => {
   const [ov, setOv] = useState<Overview | null>(null);
   const [ovErr, setOvErr] = useState('');
@@ -102,6 +205,8 @@ const UsagePanel: React.FC<Props> = ({ isDarkMode, onClose, egress, storageMb, s
           ✕ 閉じる
         </button>
       </div>
+
+      <HealthSection isDarkMode={isDarkMode} />
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

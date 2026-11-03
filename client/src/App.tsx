@@ -1468,6 +1468,8 @@ const classifyNotif = (n: NotifLike) => {
     // 🚨 isBoard（文言で判定）より先に見る。push-dispatch の EVENT_MAP（payroll:close_notice）と同じ行き先
     if (n.source_type === 'payroll_close') return { path: '/?payroll=1', closeOnTap: true };
     if (n.source_type === 'payroll_close_test') return { path: '/', closeOnTap: true };
+    // 毎朝の自動の点検（2026-11-03・管理者と社長だけ・ベルだけ）。管理画面の［使用量 ▼］の「点検」を開く
+    if (n.source_type === 'health:daily') return { path: '/admin?usage=1', closeOnTap: true };
     if (isBoard || isUnconfirmedReminder) {
       return { path: n.reference_id ? `/board?openInboxId=${n.reference_id}` : '/board', closeOnTap: false };
     }
