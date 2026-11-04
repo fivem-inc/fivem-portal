@@ -36,33 +36,37 @@ export const OT_TYPE_INFO: Record<OvertimeType, { label: string; color: string; 
 // 2026-10-22（ユーザー確定 案B）：先に「何があったか」を3つから選ぶ。
 //   ① 出勤の打刻を忘れた ② 退勤の打刻を忘れた … 理由はこれで決まり（押せた方の打刻時刻だけ任意で入れる）
 //   ③ 打刻が遅れた・早かった（残業ではない） … CLOCK_LATE_REASONS から理由を選ぶ
+// 2026-11-04（ユーザー確定 案A）：出勤・退勤とも押し忘れた日のために「出勤・退勤の両方の打刻を忘れた」を③に足し、遅れた・早かったは④に。時刻の欄は出さない
 //   保存する理由の文（「残業ではありません（理由：…）」）は今までどおり1つの文字。①②は下の CLOCK_FORGOT_* がそのまま入る。
 //   旧「打刻を忘れた（あとで押した）」は①②に分けた（過去の記録はそのまま）
 export const CLOCK_FORGOT_IN = '出勤の打刻を忘れた';
 export const CLOCK_FORGOT_OUT = '退勤の打刻を忘れた';
+export const CLOCK_FORGOT_BOTH = '出勤・退勤の両方の打刻を忘れた';
 export const CLOCK_LATE_REASONS = [
   '同僚と話していた',
   '私用で残っていた（休憩・電話・迎え待ちなど）',
   'その他',
 ];
-/** 選べる理由の全部（経理の確認への回答・メモの文例）。並びは ①②③ の順 */
-export const CLOCK_ONLY_REASONS = [CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, ...CLOCK_LATE_REASONS];
+/** 選べる理由の全部（経理の確認への回答・メモの文例）。並びは ①②③④ の順 */
+export const CLOCK_ONLY_REASONS = [CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, CLOCK_FORGOT_BOTH, ...CLOCK_LATE_REASONS];
 
-export type ClockKind = 'in' | 'out' | 'late';
+export type ClockKind = 'in' | 'out' | 'both' | 'late';
 export const CLOCK_KINDS: { key: ClockKind; label: string }[] = [
   { key: 'in', label: `① ${CLOCK_FORGOT_IN}` },
   { key: 'out', label: `② ${CLOCK_FORGOT_OUT}` },
-  { key: 'late', label: '③ 打刻が遅れた・早かった（残業ではない）' },
+  { key: 'both', label: `③ ${CLOCK_FORGOT_BOTH}` },
+  { key: 'late', label: '④ 打刻が遅れた・早かった（残業ではない）' },
 ];
 /** 選んである理由から ①②③ のどれかを決める（③で理由をまだ選んでいないときは null・画面が別に覚える） */
 export function clockKindOf(reason: string | null | undefined): ClockKind | null {
   if (reason === CLOCK_FORGOT_IN) return 'in';
   if (reason === CLOCK_FORGOT_OUT) return 'out';
+  if (reason === CLOCK_FORGOT_BOTH) return 'both';
   return reason && CLOCK_LATE_REASONS.includes(reason) ? 'late' : null;
 }
-/** ①②③ ごとに出す打刻の時刻の欄（①＝退勤だけ・②＝出勤だけ・③と未選択＝両方） */
+/** ①②③④ ごとに出す打刻の時刻の欄（①＝退勤だけ・②＝出勤だけ・③＝出さない・④と未選択＝両方） */
 export function clockTimeFields(kind: ClockKind | null): { in: boolean; out: boolean } {
-  return { in: kind !== 'in', out: kind !== 'out' };
+  return { in: kind !== 'in' && kind !== 'both', out: kind !== 'out' && kind !== 'both' };
 }
 
 /**

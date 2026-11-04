@@ -1,12 +1,12 @@
 // 打刻の報告（残業ではない）の「何がありましたか」（2026-10-22 ユーザー確定 案B）
 //
-// ① 出勤の打刻を忘れた ② 退勤の打刻を忘れた ③ 打刻が遅れた・早かった（残業ではない）の3つから選び、③のときだけ理由を選ぶ。
+// ① 出勤の打刻を忘れた ② 退勤の打刻を忘れた ③ 出勤・退勤の両方の打刻を忘れた ④ 打刻が遅れた・早かった（残業ではない）の4つから選び、④のときだけ理由を選ぶ。
 // 🚨 1件フォーム（OvertimePage）・まとめて申請（OvertimeBox）・表入力（OvertimeGrid）の3か所が同じこの部品を使う。書き写さないこと。
 // 🚨 選択肢と並びは lib/overtimeTypes（CLOCK_KINDS・CLOCK_LATE_REASONS）。経理の確認への回答（ClockInquiryResponse）も同じ一覧
 // 保存するのは今までどおり理由の文字1つ（①②は「出勤の打刻を忘れた」「退勤の打刻を忘れた」がそのまま入る）。
 // ③を押して理由をまだ選んでいない間は、理由は空のまま（この部品が「③を選んだ」ことを覚える）
 import React, { useState } from 'react';
-import { CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, CLOCK_KINDS, CLOCK_LATE_REASONS, clockKindOf, type ClockKind } from '../lib/overtimeTypes';
+import { CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, CLOCK_FORGOT_BOTH, CLOCK_KINDS, CLOCK_LATE_REASONS, clockKindOf, type ClockKind } from '../lib/overtimeTypes';
 
 interface Props {
   reason: string;
@@ -55,11 +55,11 @@ const ClockReasonPicker: React.FC<Props> = ({ reason, other, onPick, onOtherChan
             onClick={() => {
               if (k.key === 'late') {
                 setLateOpen(true);
-                // ①②から③に変えたら理由を空に（③の理由を選び直してもらう）
+                // ①②③から④に変えたら理由を空に（④の理由を選び直してもらう）
                 onPick(clockKindOf(reason) === 'late' ? reason : '', 'late');
               } else {
                 setLateOpen(false);
-                onPick(k.key === 'in' ? CLOCK_FORGOT_IN : CLOCK_FORGOT_OUT, k.key);
+                onPick(k.key === 'in' ? CLOCK_FORGOT_IN : k.key === 'out' ? CLOCK_FORGOT_OUT : CLOCK_FORGOT_BOTH, k.key);
               }
             }}>
             {k.label}

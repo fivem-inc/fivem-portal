@@ -1076,6 +1076,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             onOtherChange={v => touch({ clockReasonOther: v })} />
                           {(() => {
                             const tf = clockTimeFields(clockKindOf(r.draft.clockReason));
+                            // ③（両方とも忘れた）は打刻の時刻の欄ごと出さない（2026-11-04）
+                            if (!tf.in && !tf.out) return null;
                             return (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
                                 <span>打刻の時刻<span style={{ color: subText }}>（{tf.in && tf.out ? '' : '押せた方・'}分かれば・任意）</span></span>

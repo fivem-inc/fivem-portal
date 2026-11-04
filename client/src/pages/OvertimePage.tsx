@@ -2663,6 +2663,8 @@ const OvertimeForm: React.FC<{
 
           {(() => {
             const tf = clockTimeFields(clockKindOf(clockReason));
+            // ③（両方とも忘れた）は打刻の時刻の欄ごと出さない（2026-11-04）
+            if (!tf.in && !tf.out) return null;
             return (
               <>
                 <span style={labelStyle}>打刻の時刻<span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（{tf.in && tf.out ? '' : '押せた方・'}分かれば・任意）</span></span>

@@ -760,6 +760,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             </div>
             {(() => {
               const tf = clockTimeFields(clockKindOf(d.clockReason));
+              // ③（両方とも忘れた）は打刻の時刻の欄ごと出さない（2026-11-04）
+              if (!tf.in && !tf.out) return null;
               return (
                 <>
                   <label style={lbl}>打刻の時刻<span style={{ fontSize: 11 }}>（{tf.in && tf.out ? '' : '押せた方・'}分かれば・任意）</span></label>

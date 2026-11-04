@@ -4,7 +4,7 @@ import { resolveNormalShift, normalShiftTimeText, normalShiftEdges, normalShiftS
 import type { PatternRow } from '../lib/overtimeShift';
 import { calcPayPeriodStartJst } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
-import { CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, CLOCK_LATE_REASONS } from '../lib/overtimeTypes';
+import { CLOCK_FORGOT_IN, CLOCK_FORGOT_OUT, CLOCK_FORGOT_BOTH, CLOCK_LATE_REASONS } from '../lib/overtimeTypes';
 import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
 import { primaryBtn } from '../lib/buttonStyles';
 import TimeInput from './TimeInput';
@@ -549,10 +549,11 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
                 <select value={p.reason} onChange={e => setPick(d.id, { reason: e.target.value })}
                   style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 13 }}>
                   <option value="">選んでください</option>
-                  {/* ①②③ と③の理由（1件フォームの ClockReasonPicker と同じ一覧・2026-10-22 案B） */}
+                  {/* ①②③④ と④の理由（1件フォームの ClockReasonPicker と同じ一覧・2026-10-22 案B・③は 2026-11-04） */}
                   <option value={CLOCK_FORGOT_IN}>① {CLOCK_FORGOT_IN}</option>
                   <option value={CLOCK_FORGOT_OUT}>② {CLOCK_FORGOT_OUT}</option>
-                  <optgroup label="③ 打刻が遅れた・早かった（残業ではない）">
+                  <option value={CLOCK_FORGOT_BOTH}>③ {CLOCK_FORGOT_BOTH}</option>
+                  <optgroup label="④ 打刻が遅れた・早かった（残業ではない）">
                     {CLOCK_LATE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                   </optgroup>
                 </select>
