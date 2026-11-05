@@ -19,6 +19,7 @@ const STATUS: Record<Exclude<ApplicationKind, 'attendance'>, Record<string, stri
   },
   shift: {
     pending: '確認待ち', resubmitted: '再提出（確認待ち）', confirmed: '受理済み', returned: '差し戻し', cancelled: '取消済み',
+    requested: '事前申請（受理待ち）', request_confirmed: '事前申請 受理済み（報告待ち）',
   },
   expense: {
     pending: '受理待ち', approved: '受理済み', rejected: '差し戻し',

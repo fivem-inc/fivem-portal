@@ -89,7 +89,12 @@ interface ShiftReport {
   break_minutes: number | null;
   labor_minutes: number | null;
   reviewer_id: string | null;
-  status: 'pending' | 'confirmed' | 'resubmitted' | 'cancelled' | 'returned';
+  status: 'pending' | 'confirmed' | 'resubmitted' | 'cancelled' | 'returned' | 'requested' | 'request_confirmed';
+  /** 事前申請から始まった行（2026-11-06・DB のトリガーが決める） */
+  advance?: boolean;
+  request_confirmed_at?: string | null;
+  /** 事前申請が受理された瞬間の中身の写し */
+  planned?: { actual_start?: string | null; actual_end?: string | null; actual_segments?: unknown; actual_location?: string | null } | null;
   confirmed_by: string | null;
   confirmed_at: string | null;
   created_at: string;
@@ -203,6 +208,8 @@ const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> 
   confirmed:   { label: '受理済み', color: '#065f46', bg: '#d1fae5' },
   cancelled:   { label: '取消済み', color: '#6c757d', bg: '#e9ecef' },
   returned:    { label: '差戻し',   color: '#9d174d', bg: '#fce7f3' },
+  requested:   { label: '事前申請（受理待ち）', color: '#856404', bg: '#fff3cd' },
+  request_confirmed: { label: '事前申請 受理済み', color: '#0c447c', bg: '#e6f1fb' },
 };
 
 // ────────────────────────────────────────────────────────────────
@@ -280,6 +287,10 @@ interface ConfirmData {
   actNotes: string;
   breakMin: number; laborMin: number; reviewerName: string; isSelfReview: boolean;
   applicantName: string; isProxy: boolean;
+  /** 事前申請（先の日・2026-11-06） */
+  isAdvance?: boolean;
+  /** 受理された事前申請の内容を変える（受理のやり直し） */
+  redoAccept?: boolean;
 }
 const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: () => void; saving: boolean; warn?: string | null; slow?: boolean }> = ({ data, onBack, onSubmit, saving, warn, slow }) => {
   const isDark = useDarkMode();
@@ -299,15 +310,16 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
       <div style={{ background: bg, width: '100%', maxHeight: '90vh', borderRadius: '16px 16px 0 0', overflowY: 'auto', paddingBottom: 32 }}>
         <div style={{ position: 'sticky', top: 0, background: bg, padding: '16px 16px 12px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: text }}>‹</button>
-          <span style={{ fontWeight: 'bold', fontSize: 16, color: text }}>報告内容を確認</span>
+          <span style={{ fontWeight: 'bold', fontSize: 16, color: text }}>{data.isAdvance ? '事前申請の内容を確認' : '報告内容を確認'}</span>
         </div>
         <div style={{ padding: '16px 20px' }}>
+          {data.isAdvance && <AdvanceBand date={data.date} />}
           {data.isProxy && (
             <div style={{ background: isDark ? '#1a2e4a' : '#e0f2fe', border: '1px solid #38bdf8', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: isDark ? '#7dd3fc' : '#0369a1', fontWeight: 500 }}>
-              👤 代行報告：<b>{data.applicantName}</b> さんの報告
+              👤 {data.isAdvance ? '代わりに申請' : '代行報告'}：<b>{data.applicantName}</b> さんの{data.isAdvance ? '申請' : '報告'}
             </div>
           )}
-          <CRow label="報告者"     value={data.applicantName} textColor={text} />
+          <CRow label={data.isAdvance ? '申請者' : '報告者'} value={data.applicantName} textColor={text} />
           <CRow label="日付"       value={`${data.date}（${dow(data.date)}）`} textColor={text} />
           {/* 種別は入力画面と同じ色のバッジで出す（文字だけだと見分けにくいため） */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '5px 0' }}>
@@ -333,7 +345,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
                 : <CRow label="" value={`${data.origLoc || '—'}　${formatSegs(data.origSegs)}`} textColor={text} />
               }
               <Sep isDark={isDark} />
-              <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>✅ 実際に勤務した時間</div>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>{data.isAdvance ? '📅 申請する勤務の時間' : '✅ 実際に勤務した時間'}</div>
               <CRow label="勤務地"  value={data.actLoc || '—'} textColor={text} />
               <CRow label="時間"    value={formatSegs(data.actSegs)} textColor={text} />
               <CRow label="休憩"    value={`${data.breakMin}分`} textColor={text} />
@@ -350,9 +362,12 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           )}
           <Sep isDark={isDark} />
           <CRow label="申請先" value={data.reviewerName} textColor={text} />
+          {data.redoAccept && (
+            <div style={{ fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '6px 10px', marginTop: 4 }}>受理された申請の内容を変更するため、受理はやり直しになります</div>
+          )}
           {data.isSelfReview && (
             <div style={{ background: isDark ? '#1e3d2f' : '#d1fae5', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 報告と同時に受理されます</span>
+              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>{data.isAdvance ? '✓ 申請と同時に受理されます' : '✓ 報告と同時に受理されます'}</span>
             </div>
           )}
           {warn && (
@@ -360,7 +375,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           )}
           <button onClick={onSubmit} disabled={saving}
             style={{ ...primaryBtn({ disabled: saving }), width: '100%', marginTop: 20 }}>
-            {saving ? '送信中...' : 'この内容で報告する'}
+            {saving ? '送信中...' : data.isAdvance ? 'この内容で事前申請する' : 'この内容で報告する'}
           </button>
           {saving && slow && <div style={{ fontSize: 12, color: '#6c757d', marginTop: 6, textAlign: 'right' }}>{SEND_SLOW_TEXT}</div>}
         </div>
@@ -368,6 +383,13 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
     </div>
   );
 };
+/** 事前申請の青い帯（フォームの上・確認の窓・2026-11-06 ユーザー確定） */
+const AdvanceBand: React.FC<{ date: string }> = ({ date }) => (
+  <div style={{ background: '#1976d2', color: '#fff', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+    <div style={{ fontWeight: 'bold', fontSize: 14 }}>📅 事前申請</div>
+    <div style={{ fontSize: 12 }}>{date ? `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}（${dow(date)}）` : ''}の勤務の変更を、前もって上長に伝えます</div>
+  </div>
+);
 const CRow: React.FC<{ label: string; value: string; textColor?: string }> = ({ label, value, textColor = '#1a1a2e' }) => (
   <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 14 }}>
     {label && <span style={{ color: '#888', minWidth: 72, flexShrink: 0 }}>{label}</span>}
@@ -396,12 +418,13 @@ const ShiftReportForm: React.FC<{
   onApplicantChange?: (id: string) => void;
   /** 自分の分を出せるか。🚨 正社員は false（正社員の残業・早退などは残業申請・2026-10-17 ユーザー確定）。パートの方の代わりに出すことはできる */
   allowSelf?: boolean;
-  onClose: () => void; onSaved: (recovered?: boolean) => void;
+  onClose: () => void; onSaved: (recovered?: boolean, advance?: boolean) => void;
 }> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, prefill = null, initialApplicantId, onApplicantChange, allowSelf = true, onClose, onSaved }) => {
   const navigate = useNavigate();
   // 代理報告＝承認者（役職名では判定しない）。🚨 Hook は || の右に置かない（条件付き呼び出しになる）
   const rolesForProxy = useRoles();
   const canProxy = isAdmin || attrsFor(rolesForProxy, roleTitle).is_approver;
+  const { canShiftReportAdvance } = useAuth();
   // 会社の休館日（全社員休み／社員出勤日）を日付カレンダーに出す
   const calendarKinds = useCompanyCalendar();
   // 確認者が他人の報告を修正するときは、確認依頼先を変えられない。
@@ -589,6 +612,15 @@ const ShiftReportForm: React.FC<{
 
   const hasAbsence    = types.includes('absence');
   const hasHoliday    = types.includes('holiday_work');
+  // ── 事前申請（2026-11-06・権限 shift_report_advance・DB の見張り enforce_shift_report_status と同じ決まり）──
+  // ・先の日＝事前申請（欠勤・打刻忘れは除く＝欠勤は今までどおり前もって「報告」）
+  // ・直すとき：事前申請の行（受理待ち・受理済み・事前の差し戻し）だけが事前申請のまま。受理済みを直すと受理のやり直し
+  // ・その日以降に事前申請を直す＝実績の報告（時間が違いました）→ 確認待ち
+  const editAdvance = !!editTarget && (editTarget.status === 'requested' || editTarget.status === 'request_confirmed'
+    || (editTarget.status === 'returned' && !!editTarget.advance && !editTarget.request_confirmed_at));
+  const advanceDay = date > todayStr() && (editTarget ? editAdvance : canShiftReportAdvance);
+  const isAdvance = advanceDay && !hasAbsence && !types.includes('missed_clock');
+  const reportFromAdvance = !!editTarget && (editTarget.status === 'requested' || editTarget.status === 'request_confirmed') && date <= todayStr();
   // 「予定と比べて初めて意味が決まる」種別。休日出勤の日でも
   // （イベントを9:00〜17:00で頼まれた等）予定より遅れた・延びたは起こるので、
   // これらを選んだときは休日出勤でも「予定していた時間」を入力してもらう。
@@ -693,7 +725,7 @@ const ShiftReportForm: React.FC<{
     if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '勤務の時間が重なっています。順番に入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => !(s.location ?? '').trim())) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
     if (!reviewerId)    return { msg: '申請先を選択してください', field: 'reviewer' };
-    if (editTarget && !changeSummary.trim()) return { msg: '修正内容を入力してください', field: 'changeSummary' };
+    if (editTarget && !reportFromAdvance && !changeSummary.trim()) return { msg: '修正内容を入力してください', field: 'changeSummary' };
     return { msg: '' };
   };
 
@@ -708,6 +740,11 @@ const ShiftReportForm: React.FC<{
     setError(''); setErrFields(new Set()); setShowConfirm(true);
   };
 
+  // 申請先＝自分（受理できる方が代わりに出した）の事前申請は、その場で受理する（報告の自己受理と同じ）
+  const acceptOwnAdvance = async (id: string) => {
+    const { error: accErr } = await supabase.from('shift_reports').update({ status: 'request_confirmed' }).eq('id', id).select('id');
+    if (accErr) console.error('[事前申請の受理]', accErr.message);
+  };
   const handleSubmit = async () => {
     setSaving(true); setSendWarn(null); setSendSlow(false);
     let recovered = false;
@@ -741,9 +778,9 @@ const ShiftReportForm: React.FC<{
         break_minutes:     !hasAbsence && actStart && actEnd ? breakMin : null,
         labor_minutes:     !hasAbsence && actStart && actEnd ? laborMin : null,
         reviewer_id:       reviewerId,
-        status:       isSelfReview ? 'confirmed' : (editTarget ? 'resubmitted' : 'pending'),
-        confirmed_by: isSelfReview ? user.id : null,
-        confirmed_at: isSelfReview ? now : null,
+        status:       isAdvance ? 'requested' : reportFromAdvance ? 'pending' : isSelfReview ? 'confirmed' : (editTarget ? 'resubmitted' : 'pending'),
+        confirmed_by: isSelfReview && !isAdvance && !reportFromAdvance ? user.id : null,
+        confirmed_at: isSelfReview && !isAdvance && !reportFromAdvance ? now : null,
         // 出張報告から作った申請の印（表示だけ・新規で出張の日のままのとき・2026-10-14）
         ...(!editTarget && prefill?.trip && prefill.trip.work_date === date ? { from_trip_date: date } : {}),
       };
@@ -759,14 +796,15 @@ const ShiftReportForm: React.FC<{
           return;
         }
         // 🚨 修正の記録は、書き換えが通ってから残す（前は先に残していて、押し直すたびに記録が増えた・2026-10-21）
-        await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: changeSummary.trim(), snapshot: editTarget })
+        await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: reportFromAdvance ? '事前申請の実績を報告しました（申請と違う）' : changeSummary.trim(), snapshot: editTarget })
           .then(...logFail('勤務変更の修正の記録'));
         // 🚨 再提出も確認者へベル（2026-09-27・案A）。それまで新規だけで、再提出は確認者の数字が増えるのに何も届かなかった。
         //    自己受理（その場で確定）のときは確認者の番にならないので送らない。プッシュは新規と同じ種類（文は種類ごとに固定）
+        if (isAdvance && isSelfReview) await acceptOwnAdvance(editTarget.id);
         if (!isSelfReview) {
           supabase.from('notifications').insert({
             user_id: reviewerId,
-            message: `${profileName ?? ''}さんから勤務変更報告の再提出が届きました`,
+            message: isAdvance ? `${profileName ?? ''}さんから勤務変更の事前申請（内容の変更）が届きました` : reportFromAdvance ? `${profileName ?? ''}さんから勤務変更報告が届きました（事前申請の実績）` : `${profileName ?? ''}さんから勤務変更報告の再提出が届きました`,
             sub_message: reviewerBellSub,
             source_type: 'shift_report:pending_approval',
             reference_id: editTarget.id,
@@ -796,18 +834,19 @@ const ShiftReportForm: React.FC<{
         }
         const newReport = { id: r.id };
         recovered = r.recovered;
+        if (isAdvance && isSelfReview) await acceptOwnAdvance(r.id);
         if (!isSelfReview) {
           // 通知：レビュアーへ
           supabase.from('notifications').insert({
             user_id: reviewerId,
-            message: `${profileName ?? ''}さんから勤務変更報告が届きました`,
+            message: isAdvance ? `${profileName ?? ''}さんから勤務変更の事前申請が届きました` : `${profileName ?? ''}さんから勤務変更報告が届きました`,
             sub_message: reviewerBellSub,
             source_type: 'shift_report:pending_approval',
             reference_id: newReport?.id,
             event_key: 'shift_report:new_request',
             read: false,
           }).then(...logFail('ベル通知の作成'));
-        } else {
+        } else if (!isAdvance) {
           // 自己受理の場合は即confirmedになるため、同グループの該当役職者へ一斉通知
           supabase.functions.invoke('shift-report-confirmed-notify', {
             body: {
@@ -824,7 +863,7 @@ const ShiftReportForm: React.FC<{
       }
       if (!editTarget) clearDraft(DRAFT_KEYS.shiftReport); // 送信成功で下書きを消す（新規のみ）
       setSaving(false);
-      onSaved(recovered);
+      onSaved(recovered, isAdvance);
     } catch (e) {
       console.error('[handleSubmit] unexpected error:', e);
       setSaving(false);
@@ -903,6 +942,12 @@ const ShiftReportForm: React.FC<{
               <label style={{ ...L, color: errorLabelColor(errFields.has('date'), subColor) }}>日付 {Req} <span style={{ fontSize: 11, fontWeight: 'normal', color: subColor }}>（{jpDateLabel(shiftMaxDate)}まで）</span></label>
               <SingleDatePicker value={date} onChange={d => { setDate(d); clearErr('date'); }} isDark={isDark} calendarKinds={calendarKinds} hasError={errFields.has('date')} maxDate={shiftMaxDate} />
             </div>
+            {isAdvance && <AdvanceBand date={date} />}
+            {advanceDay && (
+              <div style={{ fontSize: 11.5, color: subColor, margin: '-6px 0 12px', lineHeight: 1.6 }}>
+                {hasAbsence ? '欠勤は、事前申請ではなく今までどおり「報告」として送ります。' : '打刻忘れは、その日以降に報告してください。欠勤は今までどおり「報告」として送ります。'}
+              </div>
+            )}
             {/* 種別 */}
             <div style={{ marginBottom: 14 }}>
               <label style={{ ...L, color: errorLabelColor(errFields.has('types'), subColor) }}>種別 {Req}（複数選択可）</label>
@@ -960,7 +1005,8 @@ const ShiftReportForm: React.FC<{
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                 {(['location_change', 'missed_clock'] as ApplicationType[]).map(t => {
                   const sel = types.includes(t);
-                  const blk = isBlockedWith(types, t) && !sel;
+                  // 打刻忘れは前もっては分からない＝事前申請の日には選べない（2026-11-06）
+                  const blk = (isBlockedWith(types, t) || (t === 'missed_clock' && advanceDay)) && !sel;
                   const locColor = TYPE_INFO[t].color;
                   return (
                     <button key={t} onClick={() => toggleType(t)} disabled={blk}
@@ -1141,7 +1187,7 @@ const ShiftReportForm: React.FC<{
             {/* 実際のシフト */}
             {!hasAbsence && (
               <div style={{ background: cardBg2, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>✅ 実際に勤務した時間</div>
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>{isAdvance ? '📅 申請する勤務の時間' : '✅ 実際に勤務した時間'}</div>
                 <label style={L}>勤務時間・勤務地 {Req}</label>
                 {/* 勤務した時間帯を最大3つ。校をまたぐ日があるため勤務地は時間帯ごとに選ぶ */}
                 {actSegs.map((s, i) => {
@@ -1234,7 +1280,7 @@ const ShiftReportForm: React.FC<{
                 {/* 自分が承認者の場合は最上部に表示 */}
                 {reviewers.find(r => r.id === user.id) && (
                   <option value={user.id}>
-                    ✓ {reviewers.find(r => r.id === user.id)!.name}（自分）※報告と同時に受理されます
+                    ✓ {reviewers.find(r => r.id === user.id)!.name}（自分）※{isAdvance ? '申請' : '報告'}と同時に受理されます
                   </option>
                 )}
                 {/* 確認先の候補から経営（社長・経理）を除く。役職名ではなく属性 is_org_wide で（2026-09-09） */}
@@ -1258,8 +1304,8 @@ const ShiftReportForm: React.FC<{
               )}
             </div>
 
-            {/* 修正コメント（編集時） */}
-            {editTarget && (
+            {/* 修正コメント（編集時）。事前申請の実績の報告では出さない */}
+            {editTarget && !reportFromAdvance && (
               <div style={{ marginBottom: 14 }}>
                 <label style={L}>修正内容 {Req}</label>
                 <textarea data-err-field="changeSummary" value={changeSummary} onChange={e => { setChangeSummary(e.target.value); clearErr('changeSummary'); }} rows={2}
@@ -1271,14 +1317,14 @@ const ShiftReportForm: React.FC<{
             {error && <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12 }}>⚠️ {error}</div>}
             <button type="button" onClick={handleConfirmOpen}
               style={{ ...primaryBtn(), width: '100%' }}>
-              報告内容を確認する
+              {isAdvance ? '事前申請の内容を確認する' : '報告内容を確認する'}
             </button>
     </div>
   );
 
   const confirmModal = showConfirm ? (
     <ConfirmModal
-      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: noPlan, origSegs, actLoc: finalActLoc, actStart, actEnd, actSegs, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
+      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: noPlan, origSegs, actLoc: finalActLoc, actStart, actEnd, actSegs, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, isAdvance, redoAccept: isAdvance && editTarget?.status === 'request_confirmed', applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
       onBack={() => { setShowConfirm(false); setSendWarn(null); }}
       onSubmit={handleSubmit}
       saving={saving}
@@ -1488,7 +1534,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       .from('shift_reports')
       .select('*')
       .eq('reviewer_id', user.id)
-      .in('status', ['pending', 'resubmitted'])
+      .in('status', ['pending', 'resubmitted', 'requested'])
       .order('work_date', { ascending: false });
     if (error) { setPendingFailed(true); return; }
     setPendingFailed(false);
@@ -1561,7 +1607,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       .then(({ data }) => { if (data) setGroupOptions(data.map((r: { value: string }) => r.value)); });
   }, [fetchMyReports, fetchPending, fetchReviewedReports, fetchProxyReports, fetchAllReports]);
 
-  const handleSaved = (recovered = false) => {
+  const handleSaved = (recovered = false, advance = false) => {
     setShowForm(false); setEditTarget(null);
     setFormKey(k => k + 1);
     fetchMyReports(); fetchPending(); fetchReviewedReports(); fetchProxyReports(); fetchAllReports();
@@ -1583,7 +1629,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       setPrefill(null);
       return;
     }
-    setSuccessMsg(deliveredMsg ?? '報告を送信しました ✓');
+    setSuccessMsg(deliveredMsg ?? (advance ? '事前申請を送りました。受理されたら、その日の勤務のあとに［実績を報告する］が出ます ✓' : '報告を送信しました ✓'));
     setTab('history');
   };
   const reportedDates = useMemo(() => (myReportsFresh ? new Set(myReports.map(r => r.work_date)) : null), [myReports, myReportsFresh]);
@@ -1655,6 +1701,25 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const handleConfirm = async (report: ShiftReport) => {
     setConfirmingId(report.id);
     setActionError('');
+    // 事前申請の受理（2026-11-06）：予定として受理するだけ。確定はその日以降のご本人の報告のあと
+    if (report.status === 'requested') {
+      const accRes = await supabase.from('shift_reports').update({ status: 'request_confirmed' }).eq('id', report.id).select('id');
+      const accFail = describeUpdate(accRes, '受理', 'missing');
+      if (accFail) { setConfirmingId(null); setActionError(accFail); return; }
+      await supabase.from('notifications').insert({
+        user_id: report.applicant_id,
+        message: '勤務変更の事前申請が受理されました',
+        sub_message: `${(report.application_types?.length ? report.application_types : [report.application_type]).map(t => TYPE_INFO[t].label).join('＋')}　${report.work_date}　その日の勤務のあとに［実績を報告する］から報告してください`,
+        source_type: 'shift_report',
+        reference_id: report.id,
+        read: false,
+      }).then(...logFail('ベル通知の作成'));
+      setConfirmingId(null);
+      setSuccessMsg('事前申請を受理しました ✓');
+      window.dispatchEvent(new CustomEvent('shift-pending-changed'));
+      fetchPending(); fetchMyReports();
+      return;
+    }
     // 🚨 管理画面（ShiftReportsTab）と同じ処理がここにも写しである。
     //    あちらは 2026-09-09 に直したが、こちらは戻り値を見ておらず、
     //    受理が通っていなくても申請者へ「受理されました」と通知が飛んでいた。
@@ -1697,7 +1762,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     const summary = cancelReason.trim() ? `報告を取り消しました\n取り消し理由：${cancelReason.trim()}` : '報告を取り消しました';
     // 🐛 前は件数・状態を見ず、0件でも「取り消しました」と出していた。本人は受理済みも上書きできた（2026-10-26 不具合3）
     let q = supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', r.id);
-    if (r.applicant_id === user.id) q = q.in('status', ['pending', 'resubmitted', 'returned']);
+    if (r.applicant_id === user.id) q = q.in('status', ['pending', 'resubmitted', 'returned', 'requested', 'request_confirmed']);
     const { data: cancelled, error } = await q.select('id');
     if (error || !cancelled || cancelled.length === 0) {
       console.error('[cancelReport]', error);
@@ -2105,10 +2170,19 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 {r.status === 'resubmitted' && (
                   <div style={{ fontSize: 11, color: '#9d174d', background: '#fce7f3', borderRadius: 6, padding: '4px 8px', marginBottom: 8 }}>⚠️ 修正されました（再確認をお願いします）</div>
                 )}
+                {r.status === 'requested' && (
+                  <div style={{ fontSize: 11.5, color: '#0c447c', background: '#e6f1fb', borderRadius: 6, padding: '5px 8px', marginBottom: 8, lineHeight: 1.6 }}>
+                    📅 <b>事前申請</b>（{r.work_date.slice(5).replace('-', '/')} の勤務の変更を前もって申請）。受理すると予定になり、その日以降にご本人が実績を報告します。
+                    <div style={{ color: '#6c757d' }}>試しの間は、シフト調整・勤怠カレンダーにはまだつながっていません</div>
+                  </div>
+                )}
+                {r.planned && r.status !== 'requested' && (
+                  <div style={{ fontSize: 11.5, color: '#6c757d', marginBottom: 6 }}>申請：{formatSegsFromRecord(r.planned.actual_segments, r.planned.actual_start ?? null, r.planned.actual_end ?? null, null, null, r.planned.actual_location ?? null)} → 報告：<b>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}</b></div>
+                )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                   <button onClick={() => handleConfirm(r)} disabled={confirmingId === r.id}
                     style={{ ...primaryBtn({ disabled: confirmingId === r.id }), flex: 2 }}>
-                    {confirmingId === r.id ? '処理中...' : '✓ 受理'}
+                    {confirmingId === r.id ? '処理中...' : r.status === 'requested' ? '✓ 事前申請を受理' : '✓ 受理'}
                   </button>
                   <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }}
                     style={{ ...backBtn(isDark), flex: 1 }}>
@@ -2431,7 +2505,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
             {srView.showTable && showPlans && (
               <ShiftReportHistoryTable days={srDays} showDiff={srShowDiff} isDark={isDark} text={text} subText={subText} borderColor={borderCol}
-                onPick={srView.pickDay} reportText={srReportText} between={srPeriodHead} dayNote={srDayNote} />
+                onPick={srView.pickDay} reportText={srReportText} between={srPeriodHead}
+                plannedText={r => (r.planned ? [(r.application_types?.length ? r.application_types : [r.application_type]).map(t => TYPE_INFO[t].label).join('・'), formatSegsFromRecord(r.planned.actual_segments, r.planned.actual_start ?? null, r.planned.actual_end ?? null, null, null, r.planned.actual_location ?? null)].filter(Boolean).join(' ') : null)} dayNote={srDayNote} />
             )}
             {!(srView.showTable && showPlans) && Object.keys(histGrouped).sort((a, b) => b.localeCompare(a)).map(period => (
               <div key={period} style={{ borderRadius: 10, border: `1px solid ${borderCol}`, marginBottom: 8, overflow: 'hidden' }}>
@@ -2446,7 +2521,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   <div style={{ background: bg }}>
                     {histGrouped[period].map(it => srWrap(it.date, it.kind === 'report' ? it.r.id : `p-${it.date}`, (() => {
                       if (it.kind === 'plan') {
-                        return <PlanOnlyCard key={`plan-${it.date}`} date={it.date} dowLabel={dow(it.date)} entries={calByDate.get(it.date) ?? []} state={planOnlyState(it.date)} isDark={isDark} onReport={() => openPlanReport(it.date)} />;
+                        return <PlanOnlyCard key={`plan-${it.date}`} date={it.date} dowLabel={dow(it.date)} entries={calByDate.get(it.date) ?? []} state={planOnlyState(it.date)} isDark={isDark} onReport={() => openPlanReport(it.date)} byName={(() => { const by = (calByDate.get(it.date) ?? []).map(e => (e as CalendarEntryRow).created_by).find(Boolean); return by ? reviewers.find(x => x.id === by)?.name : undefined; })()} />;
                       }
                       const r = it.r;
                       // 遅刻の時間＝実際の始まり − 予定の始まり（入力の画面と同じ計算）。
@@ -2457,7 +2532,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                       const isTardiness = (r.application_types?.length ? r.application_types : [r.application_type]).includes('tardiness');
                       const isFocused = highlightId === r.id;
                       // 本人が自分で直せる/取り消せるのは「未承認（承認前）」のときだけ。受理済みは修正/取消依頼へ。
-                      const canSelfEdit = r.applicant_id === user.id && ['pending', 'resubmitted', 'returned'].includes(r.status);
+                      const canSelfEdit = r.applicant_id === user.id && (['pending', 'resubmitted', 'returned'].includes(r.status)
+                        || ((r.status === 'requested' || r.status === 'request_confirmed') && r.work_date > todayStr()));
+                      // その日が来た事前申請＝実績の報告（2026-11-06）
+                      const advReport = r.applicant_id === user.id && (r.status === 'requested' || r.status === 'request_confirmed') && r.work_date <= todayStr();
                       return (
                         <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10, transition: 'background 0.6s' }}>
                           <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#555', minWidth: 52, flexShrink: 0, marginTop: 2 }}>
@@ -2491,6 +2569,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                                   </span>
                                 )}
                               </div>
+                            )}
+                            {r.planned && r.status !== 'requested' && r.status !== 'request_confirmed' && (
+                              <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888', marginTop: 2 }}>申請：{formatSegsFromRecord(r.planned.actual_segments, r.planned.actual_start ?? null, r.planned.actual_end ?? null, null, null, r.planned.actual_location ?? null)}（事前申請で受理された内容）</div>
                             )}
                             <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888', marginTop: 2 }}>{r.reason}</div>
                             {/* 🐛 依頼中は状態が変わっても（差し戻しなど）バッジと［依頼を取り下げる］を出す（2026-10-26 不具合4・残業と同じ） */}
@@ -2527,6 +2608,12 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                           </div>
                           {/* ［内容を変更する］［この申請を取り消す］をカードの幅いっぱいに横に並べる（2026-10-28 ユーザー確定・休暇・残業と同じ形・lib/buttonStyles）。
                               中の列に置くとスマホで1つ65pxほどになり、文字が2行に折れるため、下の段に出す */}
+                          {advReport && (
+                            <AdvanceReportBox r={r} isDark={isDark}
+                              onDiffer={() => { setEditTarget(r); setShowForm(true); }}
+                              onDone={msg => { setSuccessMsg(msg); window.dispatchEvent(new CustomEvent('shift-pending-changed')); fetchMyReports(); }}
+                              onError={setActionError} />
+                          )}
                           {canSelfEdit && (
                             <div style={{ display: 'flex', gap: 8, width: '100%' }}>
                               <button data-net="write" onClick={() => { setEditTarget(r); setShowForm(true); }} style={cardChangeBtn(isDark)}>
@@ -2556,6 +2643,60 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       </div>
 
       {modals}
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────
+// 事前申請の実績の報告（その日以降のカード・2026-11-06 ユーザー確定）
+// ［申請どおりでした（確定）］＝受理なしで確定（申請した勤務が終わってから・DB の shift_report_finish_advance が確かめる）
+// ［時間が違いました］＝フォームで直して確認待ちへ／［申請した変更はありませんでした］＝取消（いつもどおり勤務）
+// ────────────────────────────────────────────────────────────────
+const AdvanceReportBox: React.FC<{ r: ShiftReport; isDark: boolean; onDiffer: () => void; onDone: (msg: string) => void; onError: (msg: string) => void }> = ({ r, isDark, onDiffer, onDone, onError }) => {
+  const [ask, setAsk] = useState<null | 'as_planned' | 'no_change'>(null);
+  const [busy, setBusy] = useState(false);
+  const accepted = r.status === 'request_confirmed';
+  const segs = parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end);
+  const endHm = segLastEnd(segs) || r.actual_end?.slice(0, 5) || '';
+  const nowHm = new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false });
+  const ended = r.work_date < todayStr() || !endHm || nowHm >= endHm;
+  const run = async (kind: 'as_planned' | 'no_change') => {
+    setBusy(true);
+    const { error } = await supabase.rpc('shift_report_finish_advance', { p_id: r.id, p_kind: kind });
+    setBusy(false); setAsk(null);
+    if (error) { onError(sendFailureText(error) ?? error.message); return; }
+    onDone(kind === 'as_planned' ? '申請どおりで確定しました ✓' : '申請を取り消しました（いつもどおり勤務）');
+  };
+  const box: React.CSSProperties = { width: '100%', background: isDark ? '#3d3420' : '#fff8e1', border: '1px solid #f0c36d', borderRadius: 8, padding: '8px 10px' };
+  return (
+    <div style={box}>
+      <div style={{ fontWeight: 'bold', fontSize: 13, marginBottom: 2 }}>申請どおりでしたか？</div>
+      {!accepted && <div style={{ fontSize: 11.5, color: '#856404', marginBottom: 4 }}>まだ受理されていませんが、このまま報告できます。</div>}
+      {ask ? (
+        <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+          {ask === 'as_planned' ? '受理なしで、申請どおりに確定します。よろしいですか？' : 'この日は申請した変更が無く、いつもどおり勤務したとして、申請を取り消します。よろしいですか？'}
+          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <button type="button" onClick={() => setAsk(null)} style={{ ...backBtn(isDark), flex: 1 }}>やめる</button>
+            <button type="button" data-net="write" disabled={busy} onClick={() => void run(ask)} style={{ ...primaryBtn({ disabled: busy }), flex: 2 }}>{busy ? '処理中...' : ask === 'as_planned' ? '確定する' : '取り消す'}</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {accepted && (
+            <button type="button" data-net="write" disabled={!ended} onClick={() => setAsk('as_planned')}
+              style={{ ...primaryBtn({ disabled: !ended }), width: '100%', marginTop: 6 }}>申請どおりでした（確定）</button>
+          )}
+          {accepted && !ended && <div style={{ fontSize: 11.5, color: '#6c757d', marginTop: 2 }}>申請した勤務が終わってから押せます（{endHm} から）</div>}
+          <button type="button" data-net="write" onClick={onDiffer}
+            style={{ width: '100%', marginTop: 6, padding: '9px 0', borderRadius: 8, border: '1px solid #1976d2', color: '#1976d2', background: isDark ? 'transparent' : '#fff', fontSize: 13, cursor: 'pointer' }}>
+            {accepted ? '時間が違いました' : '実績を報告する'}
+          </button>
+          <div style={{ textAlign: 'center', marginTop: 8 }}>
+            <button type="button" data-net="write" onClick={() => setAsk('no_change')}
+              style={{ background: 'none', border: 'none', color: '#1976d2', textDecoration: 'underline', fontSize: 12, cursor: 'pointer' }}>申請した変更はありませんでした（いつもどおり勤務）</button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

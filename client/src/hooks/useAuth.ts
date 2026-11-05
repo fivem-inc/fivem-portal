@@ -63,6 +63,8 @@ interface UseAuthReturn {
   canShiftReportTodo: boolean;
   /** 勤務変更の履歴に「カレンダーの予定」と［カード｜表］（2026-11-05・最初はマネージャー以上だけ） */
   canShiftReportCalendar: boolean;
+  /** 勤務変更の事前申請（2026-11-06・最初は社長・管理者だけ・feature_key shift_report_advance） */
+  canShiftReportAdvance: boolean;
   /** 上のナビの「📋 手続き」（入社・退職の手続き /retire）。マネージャー以上の役職のうち、権限管理の「手続き」が ON の役職と管理者 */
   canProcedures: boolean;
   /**
@@ -508,6 +510,7 @@ export const useAuth = (): UseAuthReturn => {
   const canShiftReportTodo = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_todo ?? false);
   // 勤務変更の履歴に「カレンダーの予定」と［カード｜表］（2026-11-05）。既定は OFF
   const canShiftReportCalendar = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_calendar ?? false);
+  const canShiftReportAdvance = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_advance ?? false);
   // 「📋 手続き」（2026-10-19・権限管理の行）。🚨 中身の読み書き（DB の RLS）は「マネージャー以上」のままなので、
   //    ON にできるのはマネージャー以上の役職だけ（リーダーなどを ON にしても中身が空のページになるため）。退職者には出さない
   const canProcedures = !retireeMode && isManagerPlus && (realIsAdmin && !previewRole ? true : (effectivePerms.procedures ?? false));
@@ -640,6 +643,7 @@ export const useAuth = (): UseAuthReturn => {
     canOvertimeGrid,
     canShiftReportTodo,
     canShiftReportCalendar,
+    canShiftReportAdvance,
     canProcedures,
     shiftAdjust,
     canFaq,

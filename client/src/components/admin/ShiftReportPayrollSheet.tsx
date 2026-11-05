@@ -28,7 +28,8 @@ interface Rep {
 interface Staff { id: string; name: string; employee_no: string | null; is_active: boolean; employment_type: string | null; hire_date: string | null; retire_date: string | null }
 interface Loaded { staff: Staff[]; reps: Rep[]; patterns: PatternRow[]; calendar: Record<string, CalendarKind>; names: Record<string, string>; leaves: SheetLeave[] }
 
-const PENDING = ['pending', 'resubmitted'];
+// 事前申請の受理待ち・受理済み（報告待ち）も合計に入れない（2026-11-06）
+const PENDING = ['pending', 'resubmitted', 'requested', 'request_confirmed'];
 
 const ShiftReportPayrollSheet: React.FC<{
   isDarkMode: boolean;
@@ -115,7 +116,7 @@ const ShiftReportPayrollSheet: React.FC<{
         const reason = [typeText, r.reason?.trim()].filter(Boolean).join('：');
         const absent = types.includes('absence');
         const diff = shiftReportDiff(r).diff;
-        const sign = pend ? '（確認待ち）'
+        const sign = r.status === 'requested' ? '（事前申請）' : r.status === 'request_confirmed' ? '（報告待ち）' : pend ? '（確認待ち）'
           : r.confirmed_by ? (r.confirmed_by === r.applicant_id ? '自己受理' : (data.names[r.confirmed_by] || '不明')) : '';
         return {
           key: r.id,

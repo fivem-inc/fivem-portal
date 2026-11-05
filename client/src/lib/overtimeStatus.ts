@@ -16,9 +16,9 @@ export const STATUS_INFO: Record<OvertimeStatus, { label: string; color: string;
 
 // 表で見る（部門集計の人の画面・ご本人の履歴）の1文字の印（2026-10-31 ユーザー確定）。読み方は表の上に出す
 export const STATUS_MARK: Record<OvertimeStatus, string> = {
-  requested: '待', request_confirmed: '予', reported: '待', confirmed: '済', returned: '戻', cancelled: '消',
+  requested: '待', request_confirmed: '受', reported: '待', confirmed: '済', returned: '戻', cancelled: '消',
 };
 /** 印の読み方（表の上の1行）。同じ字が2つの状態にあるので、状態ではなく字ごとに書く */
 export const STATUS_MARK_LEGEND: Record<string, string> = {
-  予: '事前申請 受理済み', 済: '確定', 待: '確認待ち', 戻: '差し戻し', 消: '取消',
+  受: '受理済み（あとで報告）', 済: '確定', 待: '確認待ち', 戻: '差し戻し', 消: '取消',
 };

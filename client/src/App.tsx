@@ -828,7 +828,7 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
     if (!userId || !canShiftReport) { setPendingCount(0); return; }
     if (!isAdmin && !isApprover) { setPendingCount(0); return; }
 
-    const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted']);
+    const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted', 'requested']);
     setPendingCount(data?.length ?? 0);
   }, [userId, isApprover, isAdmin, canShiftReport, setPendingCount]);
 

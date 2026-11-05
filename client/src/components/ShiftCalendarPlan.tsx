@@ -6,7 +6,12 @@ import React from 'react';
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import type { CalendarEntry, EntryState } from '../lib/shiftReportTodo';
 
-export interface CalendarEntryRow extends CalendarEntry { id: string }
+export interface CalendarEntryRow extends CalendarEntry { id: string; created_by?: string | null }
+
+/** 履歴の頭の札（申請／報告／上長が入力・2026-11-06 ユーザー確定）。表とカードで共用 */
+export const SrPill: React.FC<{ label: string; isDark: boolean }> = ({ label, isDark }) => (
+  <span style={{ display: 'inline-block', background: isDark ? '#3d4349' : '#eef1f4', color: isDark ? '#ced4da' : '#44515e', borderRadius: 9, padding: '0 6px', fontSize: 11, marginRight: 4, fontWeight: 'normal', lineHeight: '18px' }}>{label}</span>
+);
 
 /** 予定の中身（種類 時刻 校） */
 export const planText = (e: CalendarEntry): string => {
@@ -22,7 +27,7 @@ export const PlanLines: React.FC<{ entries: CalendarEntry[]; isDark: boolean; ca
   const sub = isDark ? '#adb5bd' : '#888';
   return (
     <div style={{ fontSize: 11, color: sub, marginBottom: 3, lineHeight: 1.6, textAlign: 'left' }}>
-      {entries.map((e, i) => <div key={i}>予定　{planText(e)}</div>)}
+      {entries.map((e, i) => <div key={i}><SrPill label="上長が入力" isDark={isDark} />{planText(e)}</div>)}
       {cancelled && <div>報告は取り消し済み（出し直しは管理者へ）</div>}
     </div>
   );
@@ -38,7 +43,9 @@ export const PlanOnlyCard: React.FC<{
   isDark: boolean;
   /** 報告のフォームを開く（押しても送らない） */
   onReport?: () => void;
-}> = ({ date, dowLabel, entries, state, isDark, onReport }) => {
+  /** 入力した上長の名前（カードにだけ出す） */
+  byName?: string;
+}> = ({ date, dowLabel, entries, state, isDark, onReport, byName }) => {
   const text = isDark ? '#fff' : '#1a1a2e';
   const sub = isDark ? '#adb5bd' : '#666';
   // 欠勤は前もって報告できる（勤務変更のページの注意書きと同じ決まり）
@@ -55,8 +62,8 @@ export const PlanOnlyCard: React.FC<{
     <div style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, borderLeft: `4px solid ${isDark ? '#b8860b' : '#f0a020'}`, borderRadius: 0, background: isDark ? '#3d3420' : '#fffaf0', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10, textAlign: 'left', boxSizing: 'border-box', minWidth: 0 }}>
       <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#555', minWidth: 52, flexShrink: 0, marginTop: 2 }}>{md(date)}（{dowLabel}）</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, color: isDark ? '#f5e3b0' : '#8a5a00' }}>上長が入れたカレンダーの予定</div>
-        {entries.map((e, i) => <div key={i} style={{ fontSize: 13.5, fontWeight: 'bold', color: text, marginTop: 2 }}>予定　{planText(e)}</div>)}
+        <div style={{ fontSize: 11, color: isDark ? '#f5e3b0' : '#8a5a00' }}>上長が入力した、この日の勤務の変更です{byName ? `（${byName}さん）` : ''}</div>
+        {entries.map((e, i) => <div key={i} style={{ fontSize: 13.5, fontWeight: 'bold', color: text, marginTop: 2 }}><SrPill label="上長が入力" isDark={isDark} />{planText(e)}</div>)}
         {notes.length > 0 && <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>上長からの連絡：{notes.join('／')}</div>}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 6 }}>
           {chipEl}

@@ -81,10 +81,12 @@ const STATUS_INFO: Record<string, { label: string; color: string }> = {
   confirmed:   { label: '受理済み', color: '#065f46' },
   cancelled:   { label: '取消済み', color: '#6c757d' },
   returned:    { label: '差戻し',   color: '#9d174d' },
+  requested:   { label: '事前申請', color: '#856404' },
+  request_confirmed: { label: '事前受理', color: '#0c447c' },
 };
 const STATUS_BG: Record<string, string> = {
   pending: '#e67e22', resubmitted: '#e67e22', confirmed: '#28a745',
-  cancelled: '#6c757d', returned: '#dc3545',
+  cancelled: '#6c757d', returned: '#dc3545', requested: '#e67e22', request_confirmed: '#1976d2',
 };
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
