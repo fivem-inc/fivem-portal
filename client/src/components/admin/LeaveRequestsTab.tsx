@@ -1,3 +1,4 @@
+import { fetchMemos } from '../../lib/attendanceMemo';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import PartLeaveFormBox from '../PartLeaveFormBox';
@@ -60,6 +61,7 @@ interface AbsenceRec {
   type: AttendanceType;
   actual_time: string | null;
   notes: string | null;
+  memo?: string | null; // 🔒 上長だけのメモ（attendance_exception_memos・2026-11-05）
   location: string | null; // 校（過去データはnull）。移動がある場合は '四条本校→洛西口校'
   work_segments: WorkSegment[]; // 勤務時間帯。無い場合は空配列
   original_location: string | null; // 勤務地変更の「変更前の校」
@@ -310,8 +312,10 @@ const LeaveRequestsTab: React.FC = () => {
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
     const map: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
+    const { map: memoMap } = await fetchMemos(data.map((r: { id: string }) => r.id));
     setAbsenceRecs((data as (AbsenceRec & { work_segments: unknown })[]).map(r => ({
       ...r,
+      memo: memoMap[r.id] ?? null,
       work_segments: parseSegments(r.work_segments),
       targetName: map[r.user_id] || '不明',
       creatorName: r.created_by ? (map[r.created_by] || '不明') : '不明',
@@ -1367,7 +1371,7 @@ const LeaveRequestsTab: React.FC = () => {
                           const s = v == null ? '' : String(v);
                           return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
                         };
-                        const headers = ['日付', '対象者', '種別', '時間', '校', '勤務時間帯', '備考', '追加者', '追加日'];
+                        const headers = ['日付', '対象者', '種別', '時間', '校', '勤務時間帯', 'スタッフへの連絡', '上長だけのメモ', '追加者', '追加日'];
                         const rows = [...filteredAbsRecs]
                           .sort((a, b) => a.date.localeCompare(b.date))
                           .map(r => [
@@ -1375,7 +1379,7 @@ const LeaveRequestsTab: React.FC = () => {
                             r.actual_time ? r.actual_time.slice(0, 5) : '',
                             r.original_location ? `${r.original_location}→${r.location ?? ''}` : (r.location ?? ''),
                             r.work_segments.length > 0 ? formatSegments(r.work_segments) : '',
-                            r.notes ?? '', r.creatorName,
+                            r.notes ?? '', r.memo ?? '', r.creatorName,
                             r.created_at.slice(0, 10),
                           ].map(esc).join(','));
                         const csv = '﻿' + [headers.join(','), ...rows].join('\n');
@@ -1443,7 +1447,7 @@ const LeaveRequestsTab: React.FC = () => {
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>
                                 {rec.original_location ? `${rec.original_location}→${rec.location || ''}` : (rec.location || '—')}
                               </td>
-                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'left', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>{rec.notes || '—'}</td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'left', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>{rec.notes || (rec.memo ? '' : '—')}{rec.memo && <div>🔒 {rec.memo}</div>}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center' }}>
                                 <button onClick={() => setDeleteTarget(rec)} style={{ padding: '3px 10px', background: 'transparent', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 6, cursor: 'pointer', fontSize: 11 }}>取消</button>
                               </td>
@@ -1881,7 +1885,8 @@ const LeaveRequestsTab: React.FC = () => {
                         <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>勤務：{formatSegments(deleteTarget.work_segments)}</div>
                       )}
                       <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>追加者：{deleteTarget.creatorName}</div>
-                      {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>備考：{deleteTarget.notes}</div>}
+                      {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>スタッフへの連絡：{deleteTarget.notes}</div>}
+                      {deleteTarget.memo && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>🔒 上長だけのメモ：{deleteTarget.memo}</div>}
                     </div>
                     <div style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>このレコードを削除します。元に戻せません。</div>
                     <div style={{ display: 'flex', gap: 10 }}>

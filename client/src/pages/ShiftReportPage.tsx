@@ -2186,7 +2186,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {prefill && !prefill.trip && (
               <div style={{ background: isDark ? '#1f2d3d' : '#eef6ff', border: '1px solid #90caf9', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13, color: text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span>📋 カレンダーの予定（{Number(prefill.date.slice(5, 7))}/{Number(prefill.date.slice(8, 10))} {ABSENCE_LABEL[prefill.calendarType] ?? ''}）から入れています。理由などを確かめて送ってください</span>
-                {prefill.notes && <span style={{ width: '100%', fontSize: 12, color: subText }}>予定の備考：{prefill.notes}</span>}
+                {prefill.notes && <span style={{ width: '100%', fontSize: 12, color: subText }}>上長からの連絡：{prefill.notes}</span>}
                 <button type="button" onClick={() => { setPrefill(null); setFormKey(k => k + 1); }} style={{ ...backBtn(isDark), marginLeft: 'auto', padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>やめる</button>
               </div>
             )}
