@@ -34,6 +34,9 @@ import { primaryBtn, backBtn, tintBtn, cardChangeBtn, cardCancelBtn, TOGGLE_BLUE
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import { classifyEntry, todoItemOf, type TodoItem } from '../lib/shiftReportTodo';
 import { PlanLines, PlanOnlyCard, type CalendarEntryRow } from '../components/ShiftCalendarPlan';
+import ShiftReportHistoryTable, { fmtShiftDiff, type SrTableDay } from '../components/ShiftReportHistoryTable';
+import { useHistoryTableMode, HistoryViewSwitch, HistoryDayWrap } from '../components/historyTable';
+import { summarizeShiftDiffs } from '../lib/shiftCalc';
 import { calcPayPeriodStartJst, todayJstStr } from '../lib/breakCalc';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
 import { resolveNormalShift, normalShiftBands, type PatternRow } from '../lib/overtimeShift';
@@ -1864,6 +1867,59 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     return acc;
   }, {});
 
+  // ［カード｜表］（2026-11-05・残業と同じ部品 components/historyTable・URL の印 srday・目印 sr-）。予定を出しているときだけ
+  const srView = useHistoryTableMode('fivem_sr_view', calOn, { param: 'srday', prefix: 'sr' });
+  const srShowDiff = histMode === 'person';
+  // 表の日（期間ごと・新しい順）。全日は、出ている期間の毎日を1日1行
+  const srDays = useMemo<SrTableDay<ShiftReport>[]>(() => {
+    if (!showPlans) return [];
+    const byDate = new Map<string, SrTableDay<ShiftReport>>();
+    for (const it of histItems) {
+      const d = byDate.get(it.date) ?? { date: it.date, reports: [], plans: calByDate.get(it.date) ?? [], planState: null };
+      if (it.kind === 'report') d.reports.push(it.r); else d.planState = planOnlyState(it.date);
+      byDate.set(it.date, d);
+    }
+    if (srView.showAll) {
+      const periods = [...new Set(histItems.map(it => (it.kind === 'report' ? it.r.pay_period_start : calcPayPeriodStartJst(it.date))))];
+      for (const p of periods) {
+        const [y, m] = p.split('-').map(Number);
+        const end = new Date(Date.UTC(y, m, 15)).toISOString().slice(0, 10);
+        const cur = new Date(`${p}T00:00:00Z`);
+        for (let d = p; d <= end; ) {
+          if (!byDate.has(d)) byDate.set(d, { date: d, reports: [], plans: [], planState: null });
+          cur.setUTCDate(cur.getUTCDate() + 1); d = cur.toISOString().slice(0, 10);
+        }
+      }
+    }
+    return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPlans, histItems, calByDate, srView.showAll]);
+  // 表から来た日の期間は開く
+  useEffect(() => {
+    if (!srView.jumpDay) return;
+    const p = calcPayPeriodStartJst(srView.jumpDay);
+    setOpenPeriods(prev => (prev.has(p) ? prev : new Set(prev).add(p)));
+  }, [srView.jumpDay]);
+  const srWrap = (date: string, key: string, node: React.ReactNode) =>
+    srView.jumpDay === date ? <HistoryDayWrap key={`srw-${key}`} prefix="sr" date={date} jumpDay={srView.jumpDay} onBack={srView.backToTable} isDark={isDark}>{node}</HistoryDayWrap> : node;
+  const srReportText = (r: ShiftReport) => {
+    const types = (r.application_types?.length ? r.application_types : [r.application_type]).map(t => TYPE_INFO[t].label).join('・');
+    const when = r.actual_start || r.actual_segments ? formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location) : '';
+    return [types, when].filter(Boolean).join(' ');
+  };
+  const srPeriodHead = (d: SrTableDay<ShiftReport>, i: number) => {
+    const p = calcPayPeriodStartJst(d.date);
+    if (i > 0 && calcPayPeriodStartJst(srDays[i - 1].date) === p) return null;
+    const reps = srDays.filter(x => calcPayPeriodStartJst(x.date) === p).flatMap(x => x.reports);
+    const sum = srShowDiff ? summarizeShiftDiffs(reps) : null;
+    return (
+      <div style={{ background: inactiveBg, padding: '7px 8px', fontSize: 12.5, fontWeight: 'bold', color: text, display: 'flex', flexWrap: 'wrap', gap: '2px 10px', alignItems: 'baseline' }}>
+        <span>{payPeriodLabel(p)}</span>
+        {sum && <span style={{ fontSize: 12, fontWeight: 'normal', color: text }}>合計 {fmtShiftDiff(sum.total)}{sum.pendingCount > 0 ? `（確認待ちを入れると ${fmtShiftDiff(sum.planned)}）` : ''}</span>}
+      </div>
+    );
+  };
+
   // 強調対象が古い期間（折りたたみ中）にある場合はその期間を自動で開く
   useEffect(() => {
     if (!highlightId) return;
@@ -2326,6 +2382,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {calTarget && calFailed && (
               <LoadFailedNotice text="カレンダーの予定を読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。" onRetry={() => setCalRetry(k => k + 1)} />
             )}
+            {showPlans && srView.enabled && (
+              <HistoryViewSwitch someLabel="報告" mode={srView.mode} onMode={srView.setMode} allDays={srView.allDays} onAllDays={srView.setAllDays} isDark={isDark} borderColor={borderCol} subText={subText} />
+            )}
             {showPlans && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                 {([['all', 'すべて'], ['report', '報告'], ['calendar', 'カレンダー'], ['todo', `未報告${planOnlyDays.filter(d => planOnlyState(d) === 'todo').length ? ' ' + planOnlyDays.filter(d => planOnlyState(d) === 'todo').length : ''}`]] as [typeof calFilter, string][]).map(([k, label]) => (
@@ -2358,7 +2417,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               </div>
             )}
 
-            {Object.keys(histGrouped).sort((a, b) => b.localeCompare(a)).map(period => (
+            {srView.showTable && showPlans && (
+              <ShiftReportHistoryTable days={srDays} showDiff={srShowDiff} isDark={isDark} text={text} subText={subText} borderColor={borderCol}
+                onPick={srView.pickDay} reportText={srReportText} between={srPeriodHead} />
+            )}
+            {!(srView.showTable && showPlans) && Object.keys(histGrouped).sort((a, b) => b.localeCompare(a)).map(period => (
               <div key={period} style={{ borderRadius: 10, border: `1px solid ${borderCol}`, marginBottom: 8, overflow: 'hidden' }}>
                 <div onClick={() => togglePeriod(period)} style={{ display: 'flex', alignItems: 'center', padding: '12px 14px', cursor: 'pointer', background: inactiveBg }}>
                   <div style={{ flex: 1 }}>
@@ -2369,7 +2432,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 </div>
                 {openPeriods.has(period) && (
                   <div style={{ background: bg }}>
-                    {histGrouped[period].map(it => {
+                    {histGrouped[period].map(it => srWrap(it.date, it.kind === 'report' ? it.r.id : `p-${it.date}`, (() => {
                       if (it.kind === 'plan') {
                         return <PlanOnlyCard key={`plan-${it.date}`} date={it.date} dowLabel={dow(it.date)} entries={calByDate.get(it.date) ?? []} state={planOnlyState(it.date)} isDark={isDark} onReport={() => openPlanReport(it.date)} />;
                       }
@@ -2464,7 +2527,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                           )}
                         </div>
                       );
-                    })}
+                    })()))}
                   </div>
                 )}
               </div>

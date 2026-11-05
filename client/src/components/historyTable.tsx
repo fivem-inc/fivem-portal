@@ -76,7 +76,8 @@ export const HistoryViewSwitch: React.FC<{
   someLabel?: string;
   mode: 'card' | 'table'; onMode: (m: 'card' | 'table') => void;
   allDays: boolean; onAllDays: (v: boolean) => void;
-  sortAsc: boolean; onSort: () => void;
+  /** onSort を渡さなければ並び順のボタンは出さない（勤務変更） */
+  sortAsc?: boolean; onSort?: () => void;
   /** false＝［カード｜表］を出さず、並び順だけ（権限 overtime_own_table が OFF の方・2026-11-03） */
   tableOn?: boolean;
   isDark: boolean; borderColor: string; subText: string;
@@ -103,10 +104,10 @@ export const HistoryViewSwitch: React.FC<{
         { key: 'card', label: 'カード', on: mode === 'card', onClick: () => onMode('card') },
         { key: 'table', label: '表', on: mode === 'table', onClick: () => onMode('table') },
       ])}
-      <button type="button" onClick={onSort}
+      {onSort && <button type="button" onClick={onSort}
         style={{ minHeight: 34, padding: '0 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
         ↕ {sortAsc ? '昇順' : '降順'}
-      </button>
+      </button>}
     </div>
   );
 };
