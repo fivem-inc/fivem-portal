@@ -472,8 +472,13 @@ const AnnouncementBanner: React.FC = () => {
                 <div style={{ fontSize: 12.5, color: '#1565c0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{a.body}</div>
               )}
             </div>
-            <AckButton keys={[annKey(a)]} onDone={() => setAckedLocal(prev => [...prev, annKey(a)])} />
           </div>
+          {/* ［確認した］は開いて本文を読んだあとだけ（2026-11-05 ユーザー確定 案A：閉じたまま押して読まずに消せてしまっていた） */}
+          {isOpen && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <AckButton keys={[annKey(a)]} onDone={() => setAckedLocal(prev => [...prev, annKey(a)])} />
+            </div>
+          )}
         </div>
         );
       })}

@@ -4901,6 +4901,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             ))}
           </div>
         )}
+        {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定・案B。前は［✅ 確認ページへ］のオレンジのボタンで別の画面だった）。
+            ✅ 確認待ち＝確認者・集計閲覧者だけ（前のボタンと同じ条件）／📩 申請の依頼＝依頼を出せる人だけ。
+            🚨 URL は ?view=confirm／?view=ask（ベル・メールのリンクはそのまま使える） */}
+        {/* 形と色は components/ManagerTabs（休暇申請のページと共用・うすいオレンジの2行・選んだら緑） */}
+        <ManagerTabs isDark={isDark} style={{ marginTop: 0 }}
+          items={[
+            ...(showConfirmTab ? [{ key: 'confirm' as const, label: '✅ 確認待ち', sub: '残業申請を確認する', count: pendingForMe.length }] : []),
+            ...(canApplicationRequest ? [{ key: 'ask' as const, label: '📩 申請の依頼', sub: '正社員へ依頼', count: myOpenAskCount }] : []),
+          ]}
+          active={isConfirmView ? 'confirm' : askOpen ? 'ask' : null}
+          onChange={k => { setEditTarget(null); setSearchParams({ view: k }); window.scrollTo({ top: 0 }); }}
+        />
+
         {/* タブ（共通部品 PageTabs）
             履歴タブのバッジ＝「実績未報告（要報告）」件数。開いた瞬間どこに何件あるか分かる */}
         <PageTabs
@@ -4920,19 +4933,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           // 2段目（確認待ち・申請の依頼）を開いているときは、1段目はどれも選んでいない形にする
           active={(managerOpen ? '' : tab) as typeof tab}
           onChange={t => { setTab(t); setEditTarget(null); if (isConfirmView || isAskView) setSearchParams({}); }}
-        />
-
-        {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定・案B。前は［✅ 確認ページへ］のオレンジのボタンで別の画面だった）。
-            ✅ 確認待ち＝確認者・集計閲覧者だけ（前のボタンと同じ条件）／📩 申請の依頼＝依頼を出せる人だけ。
-            🚨 URL は ?view=confirm／?view=ask（ベル・メールのリンクはそのまま使える） */}
-        {/* 形と色は components/ManagerTabs（休暇申請のページと共用・うすいオレンジの2行・選んだら緑） */}
-        <ManagerTabs isDark={isDark}
-          items={[
-            ...(showConfirmTab ? [{ key: 'confirm' as const, label: '✅ 確認待ち', sub: '残業申請を確認する', count: pendingForMe.length }] : []),
-            ...(canApplicationRequest ? [{ key: 'ask' as const, label: '📩 申請の依頼', sub: '正社員へ依頼', count: myOpenAskCount }] : []),
-          ]}
-          active={isConfirmView ? 'confirm' : askOpen ? 'ask' : null}
-          onChange={k => { setEditTarget(null); setSearchParams({ view: k }); window.scrollTo({ top: 0 }); }}
         />
 
         {/* 表でまとめて入力（PCだけ・試験中）。🚨 入力の枠の外に置く（2026-09-24 ユーザー確定・案A。前は「確認ページへ」と同じ形だった）。

@@ -1100,6 +1100,19 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
       </div>
 
+      {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定。前は［✅ 受理ページへ］のオレンジのボタンで別の画面だった）。
+          形と色は components/ManagerTabs（残業・時間のページと共用） */}
+      {!leaveRequestEnabled && (
+        <ManagerTabs isDark={isDark} style={{ marginTop: 0 }}
+          items={[
+            ...(canApproveTab ? [{ key: 'approve' as const, label: '✅ 受理待ち', sub: '休暇申請を受理する', count: approvalPendingCount }] : []),
+            ...(canAskTab ? [{ key: 'ask' as const, label: '📩 申請の依頼', sub: canPartForm && canApplicationRequest ? '正社員・パートへ依頼' : canPartForm ? 'パートへ依頼' : '正社員へ依頼', count: askCount }] : []),
+          ]}
+          active={mv}
+          onChange={k => { setManagerView(k); setSearchParams({ tab: k }); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); }}
+        />
+      )}
+
       {/* タブ切替（共通部品 PageTabs。パートへのフォーム送信中は休暇タブのみ） */}
       <PageTabs
         variant="shadow"
@@ -1115,19 +1128,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         active={(mv ? '' : tab) as typeof tab}
         onChange={t => { setTab(t); setManagerView(null); if (tabParam === 'approve' || tabParam === 'ask') setSearchParams({}); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
       />
-
-      {/* 2段目のタブ：上長の仕事（2026-10-15 ユーザー確定。前は［✅ 受理ページへ］のオレンジのボタンで別の画面だった）。
-          形と色は components/ManagerTabs（残業・時間のページと共用） */}
-      {!leaveRequestEnabled && (
-        <ManagerTabs isDark={isDark}
-          items={[
-            ...(canApproveTab ? [{ key: 'approve' as const, label: '✅ 受理待ち', sub: '休暇申請を受理する', count: approvalPendingCount }] : []),
-            ...(canAskTab ? [{ key: 'ask' as const, label: '📩 申請の依頼', sub: canPartForm && canApplicationRequest ? '正社員・パートへ依頼' : canPartForm ? 'パートへ依頼' : '正社員へ依頼', count: askCount }] : []),
-          ]}
-          active={mv}
-          onChange={k => { setManagerView(k); setSearchParams({ tab: k }); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); }}
-        />
-      )}
 
       {/* ✅ 受理待ち（前の受理ページの中身） */}
       {mv === 'approve' && (
