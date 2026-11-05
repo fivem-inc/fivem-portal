@@ -837,7 +837,37 @@ const AbsenceInputSheet: React.FC<{
     }
     return null;
   })();
-  /** ②勤務の中で休憩を取る（勤務の時刻は変わらない・時間帯も増えない）。いつ取るかは備考に書く（必須） */
+  /**
+   * ②勤務を2つに分けて休憩を入れる（2026-11-05 ユーザー確定・「勤務の中で休憩」は一度も使われていなかった）。
+   * いちばん長い時間帯（移る先ではないもの）を、まん中あたりで足りない分だけ空けて2つにする。時刻はあとで直せる。
+   * 🚨 時間帯がすでに3つ（上限）の日は分けられないので、今までの「勤務の中で休憩（いつ取るかを書く）」を残す
+   */
+  const splitForBreak = (() => {
+    if (!planLegal || planLegal.ok || segments.length >= MAX_SEGMENTS) return null;
+    const need = Math.ceil(planLegal.shortfall / 5) * 5;
+    let best = -1, bestLen = 0;
+    segments.forEach((sg, i) => {
+      if (segMoves[i + 1]) return; // 次へ移る時間帯の途中は分けない（移動の時刻が変わってしまう）
+      const a = timeToMin(sg.start), b = timeToMin(sg.end);
+      if (a == null || b == null) return;
+      if (b - a > bestLen) { best = i; bestLen = b - a; }
+    });
+    if (best < 0 || bestLen <= need + 30) return null;
+    const a = timeToMin(segments[best].start)!, b = timeToMin(segments[best].end)!;
+    const mid = Math.round((a + (b - a - need) / 2) / 5) * 5;
+    return {
+      note: `休憩 ${minToTime(mid)}〜${minToTime(mid + need)}（${need}分）。時刻はあとで直せます`,
+      apply: () => {
+        const sg = segments[best];
+        setSegAll(
+          [...segments.slice(0, best), { ...sg, end: pad2(mid) }, { ...sg, start: pad2(mid + need) }, ...segments.slice(best + 1)],
+          [...segmentCustoms.slice(0, best + 1), segmentCustoms[best] ?? '', ...segmentCustoms.slice(best + 1)],
+          [...segMoves.slice(0, best + 1), false, ...segMoves.slice(best + 1)],
+        );
+      },
+    };
+  })();
+  /** ③勤務の中で休憩を取る（時間帯が3つの日だけ・勤務の時刻は変わらない）。いつ取るかは備考に書く（必須） */
   const addInWorkBreak = () => {
     const n = parseInt(inWorkInput || String(planLegal?.shortfall ?? 0), 10);
     if (!Number.isFinite(n) || n <= 0) return;
@@ -1514,7 +1544,16 @@ const AbsenceInputSheet: React.FC<{
               <div style={{ margin: '4px 0 6px', padding: '8px 10px', borderRadius: 8, background: '#fff8e1', border: '1px solid #f59e0b', color: '#856404', fontSize: 12.5, lineHeight: 1.6 }}>
                 <div style={{ fontWeight: 'bold', fontSize: 13 }}>⚠️ {planLegal.title}</div>
                 {planLegal.lines.map((ln, i) => <div key={i}>{ln}</div>)}
-                {/* 授業の時刻を動かさない方を先に勧める（UI/UX レビュー）。青い塗りは1つだけ */}
+                {/* ［勤務を2つに分けて休憩を入れる］（時間帯が1つ・2つの日）。青い塗りは1つだけ */}
+                {splitForBreak && (
+                  <button type="button" onClick={splitForBreak.apply}
+                    style={{ display: 'block', width: '100%', marginTop: 8, padding: '9px 8px', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}>
+                    勤務を2つに分けて休憩を入れる
+                    <div style={{ fontSize: 11.5, fontWeight: 'normal' }}>（{splitForBreak.note}）</div>
+                  </button>
+                )}
+                {/* 時間帯がすでに3つの日だけ：今までの「勤務の中で休憩」（いつ取るかは備考に書く） */}
+                {!splitForBreak && segments.length >= MAX_SEGMENTS && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8, padding: '8px', borderRadius: 8, background: '#1976d2', color: '#fff' }}>
                   <span>勤務の中で休憩を</span>
                   <input type="text" inputMode="numeric" aria-label="勤務の中で取る休憩（分）" value={inWorkInput || String(planLegal.shortfall)}
@@ -1525,6 +1564,7 @@ const AbsenceInputSheet: React.FC<{
                     style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 8, border: '1px solid #fff', background: '#fff', color: '#1565c0', fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}>取る</button>
                   <div style={{ width: '100%', fontSize: 11.5 }}>（勤務の時刻は変わりません）</div>
                 </div>
+                )}
                 {gapExtend && (
                   <button type="button" onClick={gapExtend.apply}
                     style={{ display: 'block', width: '100%', marginTop: 6, padding: '6px 8px', background: '#fff', border: '1px solid #bbb', borderRadius: 8, color: '#555', fontSize: 13, cursor: 'pointer' }}>
