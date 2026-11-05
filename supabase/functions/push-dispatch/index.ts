@@ -217,7 +217,7 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // アプリ名を「残業」と分けている。
   // 「勤務時間」は 2026-08-04 に実機確認済み（警告表示に化けない）
   // 🚨 hl=threshold で着いた先（本人＝合計時間数のカード／上長＝目安を超えた人の行）を光らせる。ベル（App.tsx の classifyNotif）と同じ URL（2026-09-30）
-  "overtime:threshold":          { app: "勤務時間", word: "新着", text: "今月の残業が目安を超えています", url: "/overtime?tab=history&hl=threshold" },
+  "overtime:threshold":          { app: "勤務時間", word: "新着", text: "残業が目安を超えています", url: "/overtime?tab=history&hl=threshold" },
   // 上長向けの部門まとめ。本人向けと同じ event_key を使っていたため上長が自分の履歴に
   // 着地していた（2026-08-18 修正）。飛び先はベル側（classifyNotif）と揃えてある
   "overtime:threshold_summary":  { app: "勤務時間", word: "新着", text: "部門の残業が目安を超えています", url: "/overtime?tab=history&mode=summary&hl=threshold" },
