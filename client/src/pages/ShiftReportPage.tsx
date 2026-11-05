@@ -32,7 +32,9 @@ import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
 import { primaryBtn, backBtn, tintBtn, cardChangeBtn, cardCancelBtn, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
-import type { TodoItem } from '../lib/shiftReportTodo';
+import { classifyEntry, todoItemOf, type TodoItem } from '../lib/shiftReportTodo';
+import { PlanLines, PlanOnlyCard, type CalendarEntryRow } from '../components/ShiftCalendarPlan';
+import { calcPayPeriodStartJst, todayJstStr } from '../lib/breakCalc';
 import { loadMyTripPendingDays, tripDayLabel, tripDeadlineLabel, tripTimesText, useTripApplyStart, type TripPendingDay } from '../lib/tripPending';
 import { resolveNormalShift, normalShiftBands, type PatternRow } from '../lib/overtimeShift';
 import { registeredShiftFor, registeredShiftText, matchesRegisteredShift, type RegisteredShift } from '../lib/shiftRegistered';
@@ -1357,7 +1359,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   // 上の「だれの予定を見るか」と下の「対象スタッフ」は同じ値（2026-10-05・食い違わないようにページで1つだけ持つ）
   const [todoTarget, setTodoTarget]     = useState<string>(() => loadDraft<{ applicantId?: string }>(DRAFT_KEYS.shiftReport)?.applicantId ?? user.id);
   const formAnchorRef                   = useRef<HTMLDivElement>(null);
-  const { canShiftReportTodo, canAttendanceInput } = useAuth();
+  const { canShiftReportTodo, canAttendanceInput, canShiftReportCalendar } = useAuth();
   // 🚨 ほかの方のカレンダーの予定を見るスタッフを選べるのは、勤怠カレンダーを入力できる方（attendance_input・リーダー以上）か管理者だけ（2026-11-05 ユーザー確定 A）。
   //   前は受理できる方（isApprover）＝フロア責任者も選べたが、予定を読む権限が無く黙って「ありません」と出ていた。［✏️ 報告］の代理報告は今までどおり
   const canPickCalendar = isAdmin || (canAttendanceInput && isApprover);
@@ -1419,7 +1421,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [returningId, setReturningId]   = useState<string | null>(null);
 
   // 履歴タブ モード
-  const [histMode, setHistMode] = useState<'own' | 'reviewed' | 'proxy' | 'all'>(
+  const [histMode, setHistMode] = useState<'own' | 'reviewed' | 'proxy' | 'all' | 'person'>(
     // 承認者は「全件」、それ以外は「自分の分」（旧コードの 'reviewed' 分岐は条件が同じで到達不能だった）
     () => isApprover ? 'all' : 'own'
   );
@@ -1768,25 +1770,97 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setSuccessMsg('削除しました');
   };
 
+  // ── 履歴に「カレンダーの予定」（2026-11-05・権限 shift_report_calendar）──
+  // ・ご本人の分（自分の報告）と、勤怠カレンダーを入力できる方が選んだスタッフの分（person）だけに出す
+  // ・🚨 予定と報告の両方が確かに読めたときだけ出す（読めないのに「まだ報告していません」と出さない）
+  const [histPerson, setHistPerson] = useState('');
+  const [calFilter, setCalFilter] = useState<'all' | 'report' | 'calendar' | 'todo'>('all');
+  const [partPeople, setPartPeople] = useState<{ id: string; name: string }[]>([]);
+  const calOn = canShiftReportCalendar && (histMode === 'own' || (histMode === 'person' && canPickCalendar));
+  const calTarget = !calOn ? '' : histMode === 'own' ? user.id : histPerson;
+  const [calEntries, setCalEntries] = useState<CalendarEntryRow[] | null>(null);
+  const [calFailed, setCalFailed] = useState(false);
+  const [calRetry, setCalRetry] = useState(0);
+  useEffect(() => {
+    if (!(canShiftReportCalendar && canPickCalendar)) return;
+    supabase.from('profiles').select('id, name').eq('is_active', true).eq('employment_type', 'パート').order('name')
+      .then(({ data, error }) => { if (!error) setPartPeople((data ?? []) as { id: string; name: string }[]); });
+  }, [canShiftReportCalendar, canPickCalendar]);
+  useEffect(() => {
+    setCalEntries(null); setCalFailed(false);
+    if (!calTarget) return;
+    let alive = true;
+    supabase.from('attendance_exceptions').select('id, date, type, location, work_segments, notes, planned_break_minutes')
+      .eq('user_id', calTarget).order('date', { ascending: false }).limit(400)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { console.error('[shift-report] 履歴のカレンダーの予定を読めませんでした:', error.message); setCalFailed(true); return; }
+        setCalEntries((data ?? []) as CalendarEntryRow[]);
+      });
+    return () => { alive = false; };
+  }, [calTarget, calRetry]);
+  // その人の報告（状態で絞る前・全部）。確かに読めていなければ null
+  const calReports = useMemo<ShiftReport[] | null>(() => {
+    if (!calTarget) return null;
+    if (histMode === 'own') return myReportsFresh ? myReports : null;
+    return histFailMap.all ? null : allReports.filter(r => r.applicant_id === calTarget);
+  }, [calTarget, histMode, myReportsFresh, myReports, histFailMap, allReports]);
+  const calReady = !!calTarget && !!calEntries && !!calReports;
+  const todayYmd = todayJstStr();
+  // 日付 → その日の予定（一覧に出さない種類は除く）
+  const calByDate = useMemo(() => {
+    const m = new Map<string, CalendarEntryRow[]>();
+    if (!calReady) return m;
+    const none = new Set<string>();
+    for (const e of calEntries!) {
+      if (classifyEntry(e, none, todayYmd) === 'hidden') continue;
+      m.set(e.date, [...(m.get(e.date) ?? []), e]);
+    }
+    return m;
+  }, [calReady, calEntries, todayYmd]);
+  const calReportedDates = useMemo(() => new Set((calReports ?? []).map(r => r.work_date)), [calReports]);
+  // 予定だけの日（報告が無い日）
+  const planOnlyDays = useMemo(() => [...calByDate.keys()].filter(d => !calReportedDates.has(d)), [calByDate, calReportedDates]);
+  const planOnlyState = (d: string) => classifyEntry(calByDate.get(d)![0], calReportedDates, todayYmd);
+  const openPlanReport = (d: string) => {
+    const e = calByDate.get(d)![0];
+    setTodoTarget(calTarget);
+    setTab('apply');
+    pickTodo(todoItemOf(e), calTarget);
+  };
+
   const histReports = React.useMemo(() => {
     let base = histMode === 'own' ? myReports
       : histMode === 'reviewed' ? reviewedReports
       : histMode === 'proxy'    ? proxyReports
+      : histMode === 'person'   ? allReports.filter(r => r.applicant_id === histPerson)
       : allReports;
     if (histStatusFilter !== 'all') base = base.filter(r => r.status === histStatusFilter);
     if (histMode === 'all' && histGroupFilter !== 'all') {
       base = base.filter(r => (groupMap[r.applicant_id] ?? []).includes(histGroupFilter));
     }
     return base;
-  }, [histMode, myReports, reviewedReports, proxyReports, allReports, histStatusFilter, histGroupFilter, groupMap]);
+  }, [histMode, myReports, reviewedReports, proxyReports, allReports, histStatusFilter, histGroupFilter, groupMap, histPerson]);
 
   // 変更前が登録シフトと違う報告に「⚠️ 登録シフトは…」（2026-10-21 案A の③・受理待ちと履歴）
   const regRows = useMemo(() => [...pendingReports, ...histReports], [pendingReports, histReports]);
   const regOf = useRegisteredShifts(regRows);
 
-  const histGrouped = histReports.reduce<Record<string, ShiftReport[]>>((acc, r) => {
-    if (!acc[r.pay_period_start]) acc[r.pay_period_start] = [];
-    acc[r.pay_period_start].push(r);
+  // 履歴の1件＝報告 か 予定だけの日。絞り込み［すべて｜報告｜カレンダー｜未報告］は予定を出しているときだけ
+  type HistItem = { kind: 'report'; date: string; r: ShiftReport } | { kind: 'plan'; date: string };
+  const showPlans = calReady && histStatusFilter === 'all';
+  const histItems: HistItem[] = [
+    ...(showPlans && calFilter === 'todo' ? [] : histReports
+      .filter(r => !(showPlans && calFilter === 'calendar' && !calByDate.has(r.work_date)))
+      .map(r => ({ kind: 'report' as const, date: r.work_date, r }))),
+    ...(showPlans && calFilter !== 'report' ? planOnlyDays
+      .filter(d => calFilter !== 'todo' || planOnlyState(d) === 'todo')
+      .map(d => ({ kind: 'plan' as const, date: d })) : []),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+  const histGrouped = histItems.reduce<Record<string, HistItem[]>>((acc, it) => {
+    const p = it.kind === 'report' ? it.r.pay_period_start : calcPayPeriodStartJst(it.date);
+    if (!acc[p]) acc[p] = [];
+    acc[p].push(it);
     return acc;
   }, {});
 
@@ -2227,9 +2301,36 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   ['reviewed', '確認した報告'],
                   ['proxy',    '代行した報告'],
                   ...(canSeeAll ? [['all', '全スタッフ']] : []),
+                  ...(canShiftReportCalendar && canPickCalendar ? [['person', 'スタッフを選ぶ']] : []),
                 ] as [typeof histMode, string][]).map(([key, label]) => (
                   <button key={key} onClick={() => setHistMode(key)}
                     style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: histMode === key ? `1.5px solid ${TOGGLE_BLUE}` : `1px solid ${borderCol}`, background: histMode === key ? TOGGLE_BLUE : 'transparent', color: histMode === key ? '#fff' : subText, cursor: 'pointer', fontWeight: histMode === key ? 'bold' : 'normal' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* スタッフを選ぶ（勤怠カレンダーを入力できる方・2026-11-05） */}
+            {histMode === 'person' && (
+              <div style={{ fontSize: 13, marginBottom: 10, color: text }}>
+                スタッフ{' '}
+                <select value={histPerson} onChange={e => { setHistPerson(e.target.value); setCalFilter('all'); }}
+                  style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${borderCol}`, fontSize: 13, background: isDark ? '#495057' : '#fff', color: text }}>
+                  <option value="">選択してください</option>
+                  {partPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                {histPerson && <div style={{ fontSize: 11.5, color: subText, marginTop: 4 }}>予定から［内容を確認 ›］で送ると、代理報告になります</div>}
+              </div>
+            )}
+            {calTarget && calFailed && (
+              <LoadFailedNotice text="カレンダーの予定を読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。" onRetry={() => setCalRetry(k => k + 1)} />
+            )}
+            {showPlans && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                {([['all', 'すべて'], ['report', '報告'], ['calendar', 'カレンダー'], ['todo', `未報告${planOnlyDays.filter(d => planOnlyState(d) === 'todo').length ? ' ' + planOnlyDays.filter(d => planOnlyState(d) === 'todo').length : ''}`]] as [typeof calFilter, string][]).map(([k, label]) => (
+                  <button key={k} type="button" onClick={() => setCalFilter(k)}
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: calFilter === k ? `1.5px solid ${TOGGLE_BLUE}` : `1px solid ${borderCol}`, background: calFilter === k ? TOGGLE_BLUE : 'transparent', color: calFilter === k ? '#fff' : subText, cursor: 'pointer', fontWeight: calFilter === k ? 'bold' : 'normal' }}>
                     {label}
                   </button>
                 ))}
@@ -2262,13 +2363,17 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <div onClick={() => togglePeriod(period)} style={{ display: 'flex', alignItems: 'center', padding: '12px 14px', cursor: 'pointer', background: inactiveBg }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{payPeriodLabel(period)}</div>
-                    <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{period.slice(5).replace('-', '/')} 〜 翌月15日　{histGrouped[period].length}件</div>
+                    <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{period.slice(5).replace('-', '/')} 〜 翌月15日　{histGrouped[period].filter(it => it.kind === 'report').length}件{histGrouped[period].some(it => it.kind === 'plan') ? `（予定だけの日 ${histGrouped[period].filter(it => it.kind === 'plan').length}日）` : ''}</div>
                   </div>
                   <span style={{ fontSize: 12, color: '#aaa', display: 'inline-block', transform: openPeriods.has(period) ? 'rotate(180deg)' : 'none' }}>▼</span>
                 </div>
                 {openPeriods.has(period) && (
                   <div style={{ background: bg }}>
-                    {histGrouped[period].map(r => {
+                    {histGrouped[period].map(it => {
+                      if (it.kind === 'plan') {
+                        return <PlanOnlyCard key={`plan-${it.date}`} date={it.date} dowLabel={dow(it.date)} entries={calByDate.get(it.date) ?? []} state={planOnlyState(it.date)} isDark={isDark} onReport={() => openPlanReport(it.date)} />;
+                      }
+                      const r = it.r;
                       // 遅刻の時間＝実際の始まり − 予定の始まり（入力の画面と同じ計算）。
                       // 🚨 2026-10-08 まで「実労働 − 予定の長さ」で出していて、予定の長さは休憩を引く前なので、休憩の30〜60分がそのまま遅刻に見えていた（ある方の 10/8 の「遅刻 0:30」）
                       const actFirst = segFirstStart(parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)) || r.actual_start?.slice(0, 5) || '';
@@ -2284,7 +2389,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                             {r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            {histMode !== 'own' && (
+                            {showPlans && calByDate.has(r.work_date) && <PlanLines entries={calByDate.get(r.work_date)!} isDark={isDark} cancelled={r.status === 'cancelled'} />}
+                            {histMode !== 'own' && histMode !== 'person' && (
                               <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 2 }}>
                                 {(r.applicant as { name: string | null } | null)?.name ?? '不明'}
                               </div>
@@ -2363,7 +2469,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 )}
               </div>
             ))}
-            {Object.keys(histGrouped).length === 0 && (histFailed ? (
+            {histMode === 'person' && !histPerson ? (
+              <div style={{ textAlign: 'center', color: '#aaa', padding: 32, fontSize: 13 }}>スタッフを選ぶと、その方の報告とカレンダーの予定が見られます</div>
+            ) : Object.keys(histGrouped).length === 0 && (histFailed ? (
               <LoadFailedNotice onRetry={() => { void fetchMyReports(); void fetchReviewedReports(); void fetchProxyReports(); void fetchAllReports(); }} />
             ) : (
               <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>報告履歴がありません</div>
