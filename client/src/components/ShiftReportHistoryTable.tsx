@@ -27,13 +27,15 @@ const mdDow = (d: string) => { const [y, m, dd] = d.split('-').map(Number); retu
 const fmtDiff = (m: number) => `${m > 0 ? '+' : m < 0 ? '−' : ''}${Math.floor(Math.abs(m) / 60)}:${String(Math.abs(m) % 60).padStart(2, '0')}`;
 const CSS = '.sr-tbl td.sr-c{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}@media (min-width:600px){.sr-tbl td.sr-c{white-space:normal}}';
 
-function ShiftReportHistoryTable<R extends ShiftDiffRow & { status: string }>({ days, showDiff, isDark, text, subText, borderColor, onPick, reportText, between }: {
+function ShiftReportHistoryTable<R extends ShiftDiffRow & { status: string }>({ days, showDiff, isDark, text, subText, borderColor, onPick, reportText, between, dayNote }: {
   days: SrTableDay<R>[];
   showDiff: boolean;
   isDark: boolean; text: string; subText: string; borderColor: string;
   onPick: (date: string) => void;
   /** 報告の中身（種類 時刻）。呼ぶ側の書き方（TYPE_INFO）を使う */
   reportText: (r: R) => string;
+  /** 報告も予定も無い日に出す文（いつものシフト・休み・会社休）。無ければ — */
+  dayNote?: (date: string) => string;
   /** 日の前に挟む行（期ごとの見出し） */
   between?: (d: SrTableDay<R>, i: number) => React.ReactNode;
 }) {
@@ -92,7 +94,7 @@ function ShiftReportHistoryTable<R extends ShiftDiffRow & { status: string }>({ 
                   style={{ borderTop: `1px solid ${borderColor}`, cursor: empty ? 'default' : 'pointer', background: planOnly ? (isDark ? '#3d3420' : '#fffaf0') : undefined, color: !r || settled ? text : subText }}>
                   <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12, color: dowColor(d.date) ?? (empty ? subText : undefined) }}>{mdDow(d.date)}</td>
                   <td className="sr-c" style={td}>
-                    {empty && <span style={{ color: subText }}>—</span>}
+                    {empty && <span style={{ color: subText }}>{dayNote?.(d.date) || '—'}</span>}
                     {r && d.plans.map((p, j) => <div key={j} className="sr-c" style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis' }}>予定　{planText(p)}</div>)}
                     {r && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}><span style={{ ...small, marginRight: 4 }}>報告</span>{reportText(r)}</div>}
                     {r && r.status === 'cancelled' && d.plans.length > 0 && <div style={small}>報告は取り消し済み（出し直しは管理者へ）</div>}

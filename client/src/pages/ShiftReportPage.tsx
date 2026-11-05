@@ -1900,6 +1900,18 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     const p = calcPayPeriodStartJst(srView.jumpDay);
     setOpenPeriods(prev => (prev.has(p) ? prev : new Set(prev).add(p)));
   }, [srView.jumpDay]);
+  // 全日の表の、報告も予定も無い日：いつものシフト（その日に有効な登録シフトだけ・lib/shiftRegistered）と会社の予定（会社休・休館）
+  const srRegRows = useMemo(() => (srView.showTable && calTarget ? srDays.map(d => ({ applicant_id: calTarget, work_date: d.date })) : []), [srView.showTable, calTarget, srDays]);
+  const srRegOf = useRegisteredShifts(srRegRows);
+  const srCal = useCompanyCalendar(srRegRows.length ? srRegRows[srRegRows.length - 1].work_date : undefined, srRegRows.length ? srRegRows[0].work_date : undefined);
+  const srDayNote = (date: string) => {
+    const cal = srCal[date] ? CALENDAR_CELL_STYLE[srCal[date]].short : '';
+    const reg = srRegOf(calTarget, date);
+    const hm = (t: string) => t.slice(0, 5).replace(/^0/, '');
+    const shift = !reg ? '' : reg.bands.length === 0 ? '休み'
+      : reg.bands.map(b => `${hm(b.start)}〜${hm(b.end)}`).join('／') + (reg.location ? ` ${reg.location}` : '');
+    return [cal, shift].filter(Boolean).join('　');
+  };
   const srWrap = (date: string, key: string, node: React.ReactNode) =>
     srView.jumpDay === date ? <HistoryDayWrap key={`srw-${key}`} prefix="sr" date={date} jumpDay={srView.jumpDay} onBack={srView.backToTable} isDark={isDark}>{node}</HistoryDayWrap> : node;
   const srReportText = (r: ShiftReport) => {
@@ -2419,7 +2431,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
             {srView.showTable && showPlans && (
               <ShiftReportHistoryTable days={srDays} showDiff={srShowDiff} isDark={isDark} text={text} subText={subText} borderColor={borderCol}
-                onPick={srView.pickDay} reportText={srReportText} between={srPeriodHead} />
+                onPick={srView.pickDay} reportText={srReportText} between={srPeriodHead} dayNote={srDayNote} />
             )}
             {!(srView.showTable && showPlans) && Object.keys(histGrouped).sort((a, b) => b.localeCompare(a)).map(period => (
               <div key={period} style={{ borderRadius: 10, border: `1px solid ${borderCol}`, marginBottom: 8, overflow: 'hidden' }}>
