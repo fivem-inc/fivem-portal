@@ -60,7 +60,9 @@ interface Health {
   day: string; issues: number;
   cron: { total: number; failed: number; list: HealthItem[] };
   inner: { count: number; list: HealthItem[] };
-  net: { failed: number };
+  net: { failed: number; list?: HealthItem[] };
+  /** 返事待ちの時間切れ（2026-11-05）：limit 件を超えた日だけ確認が要る。古い DB の返事には無い */
+  timeout?: { count: number; limit: number; list: HealthItem[] };
   push: { failed: number; users: number; stuck: number; list: HealthItem[] };
   mail: { failed: number; list: HealthItem[] };
   db: { mb: number; limit_mb: number };
@@ -139,7 +141,33 @@ const HealthSection: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           <tbody>
             {line('cron', '自動の処理（cron）', h.cron.failed > 0, `${h.cron.total.toLocaleString()}回とも成功`, `失敗 ${h.cron.failed}件（${h.cron.total.toLocaleString()}回のうち）`, h.cron.list)}
             {line('inner', '毎分の処理の中の失敗', h.inner.count > 0, '0件', `${h.inner.count}件`, h.inner.list)}
-            {line('net', 'サーバー呼び出しの失敗（自動の処理から）', h.net.failed > 0, '0件', `${h.net.failed}件`)}
+            {line('net', 'サーバー呼び出しの失敗（自動の処理から）', h.net.failed > 0, '0件', `${h.net.failed}件`, h.net.list)}
+            {h.timeout && (h.timeout.count > h.timeout.limit
+              ? line('timeout', '返事待ちの時間切れ（処理は続いています）', true, '', `${h.timeout.count}件（1日${h.timeout.limit}件を超えました）`, h.timeout.list)
+              : h.timeout.count === 0
+                ? line('timeout', '返事待ちの時間切れ（処理は続いています）', false, '0件', '')
+                : (
+                  // 目安までの日は灰色で数だけ（確認は要らない・押すと何の処理か）
+                  <React.Fragment key="timeout">
+                    <tr style={{ cursor: h.timeout.list.length ? 'pointer' : 'default' }}
+                      onClick={() => { if (h.timeout?.list.length) setOpen(o => (o === 'timeout' ? null : 'timeout')); }}>
+                      <td style={{ ...cell, color: text, width: '45%' }}>返事待ちの時間切れ（処理は続いています）</td>
+                      <td style={{ ...cell, color: sub }}>
+                        {h.timeout.count}件（1日{h.timeout.limit}件までは確認不要）
+                        {h.timeout.list.length ? <div style={{ fontSize: 12 }}>{open === 'timeout' ? '閉じる ▲' : '中身を見る ▼'}</div> : null}
+                      </td>
+                    </tr>
+                    {open === 'timeout' && (
+                      <tr><td colSpan={2} style={cell}>
+                        {h.timeout.list.map((x, i) => (
+                          <div key={i} style={{ fontSize: 12, color: text, padding: '2px 0', wordBreak: 'break-word' }}>
+                            {x.at}　<span style={{ color: sub }}>{x.message ?? ''}</span>
+                          </div>
+                        ))}
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                ))}
             {line('push', 'スマホ通知', h.push.failed > 0 || h.push.stuck > 0, '送信失敗 0件・残っているもの 0件',
               `送信失敗 ${h.push.failed}件${h.push.users ? `（${h.push.users}人）` : ''}・送れずに残っている ${h.push.stuck}件`, h.push.list)}
             {line('mail', '連絡板のメール', h.mail.failed > 0, '送信失敗 0件', `送信失敗 ${h.mail.failed}件`, h.mail.list)}
