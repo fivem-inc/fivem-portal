@@ -7,6 +7,9 @@ import {
   updateAnnouncement,
   setAnnouncementActive,
   deleteAnnouncement,
+  setAnnouncementRecipients,
+  fetchAnnouncementRecipients,
+  fetchRecipientCounts,
   type Announcement,
   type AnnouncementInput,
   type RemindFrequency,
@@ -23,12 +26,15 @@ import {
 import { dateTimeProblem, splitDateTime } from '../../lib/dateTimeValue';
 import DateTimeInput from '../DateTimeInput';
 import { describePartial, describeUpdate } from '../../lib/statusUpdate';
+import AnnouncementRecipientPicker, { recipientIdsOf, type PickerProfile } from './AnnouncementRecipientPicker';
+import { useRoles } from '../../hooks/useRoles';
 
 // 作成時の通知（announcement-notify）を送る。失敗したら理由を返す（成功は null）。
 // 🚨 functions.invoke は 4xx/5xx でも throw しない。error と中身の両方を見る
 // 🚨 同じお知らせの通知は1回だけ（関数が notified_at で断る。2回目は「すでに送っています」）
-const sendCreateNotify = async (id: string): Promise<string | null> => {
-  const { data, error } = await supabase.functions.invoke('announcement-notify', { body: { id } });
+// userIds を渡すと、その人だけ（出したあとに宛先へ足した人・2026-11-05）
+const sendCreateNotify = async (id: string, userIds?: string[]): Promise<string | null> => {
+  const { data, error } = await supabase.functions.invoke('announcement-notify', { body: userIds ? { id, user_ids: userIds } : { id } });
   if (error) {
     const res = (error as { context?: unknown }).context;
     if (res instanceof Response) {
@@ -79,6 +85,18 @@ const AnnouncementsTab: React.FC = () => {
   const [loadFailed, setLoadFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // 宛先（2026-11-05）：押したボタン・個別に足した人。新しいお知らせは最初「全員」を押した状態
+  useRoles();   // 「マネージャー・リーダー」のボタンが役職の一覧を使うので読んでおく
+  const [profiles, setProfiles] = useState<PickerProfile[]>([]);
+  const [pressed, setPressed] = useState<string[]>(['全員']);
+  const [extras, setExtras] = useState<string[]>([]);
+  // 編集のとき：今の宛先と、作成時の通知が届いている人（外すときの注意に使う）。null＝まだ読めていない
+  const [origIds, setOrigIds] = useState<string[] | null>(null);
+  const [origNotified, setOrigNotified] = useState<Set<string>>(new Set());
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  // 編集中のお知らせが全員あて（今までのお知らせ）か。🚨 「全員」だけのままなら宛先に触らない（全員あてのまま＝あとから入った人にも出る）
+  const [origAll, setOrigAll] = useState<{ notified: boolean } | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
 
   const bg = isDarkMode ? '#343a40' : 'white';
   const text = isDarkMode ? '#fff' : '#333';
@@ -97,10 +115,22 @@ const AnnouncementsTab: React.FC = () => {
     const data = await fetchAllAnnouncements();
     setLoadFailed(data === null);
     setItems(data ?? []);
+    setCounts(await fetchRecipientCounts());
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void (async () => {
+      const { data } = await supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).order('name');
+      setProfiles((data ?? []) as PickerProfile[]);
+    })();
+  }, []);
+  const recipientIds = recipientIdsOf(pressed, extras, profiles);
+  const stillAll = !!origAll && pressed.length === 1 && pressed[0] === '全員' && extras.length === 0;
+  const removedNotified = origAll
+    ? (stillAll || !origAll.notified ? 0 : profiles.filter(p => !recipientIds.includes(p.id)).length)
+    : origIds ? origIds.filter(id => !recipientIds.includes(id) && origNotified.has(id)).length : 0;
 
   const resetForm = () => {
     setEditingId(null);
@@ -113,6 +143,7 @@ const AnnouncementsTab: React.FC = () => {
     setRemindFrequency('once');
     setShowDetails(false);
     setShowPreview(false);
+    setPressed(['全員']); setExtras([]); setOrigIds(null); setOrigNotified(new Set()); setConfirmRemove(false); setOrigAll(null);
   };
 
   // 終了日が未設定だとリマインド（終了日基準）は成立しないので使えない
@@ -127,10 +158,13 @@ const AnnouncementsTab: React.FC = () => {
   const remindOn = hasEnd && (remindInApp || remindPush || remindEmail);
 
   const canSubmit =
-    title.trim().length > 0 && body.trim().length > 0 && !dateOrderError && !startProblem && !endProblem && !saving;
+    title.trim().length > 0 && body.trim().length > 0 && !dateOrderError && !startProblem && !endProblem && !saving
+    && recipientIds.length > 0 && (!editingId || origAll !== null || origIds !== null);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+    // 外す人にすでに通知が届いているときは、1回目は注意だけ出す（もう一度押すと保存）
+    if (editingId && removedNotified > 0 && !confirmRemove) { setConfirmRemove(true); return; }
     setSaving(true);
     const input: AnnouncementInput = {
       title: title.trim(),
@@ -149,13 +183,38 @@ const AnnouncementsTab: React.FC = () => {
     // 🚨 保存・通知の失敗は必ず出す（2026-09-15 まで、失敗しても「✓ お知らせを出しました」と出ていた）
     if (editingId) {
       const fail = describeUpdate(await updateAnnouncement(editingId, input), 'お知らせの更新', 'missing');
+      if (fail) { setSaving(false); setErrorMsg(fail); return; }
+      // 宛先が変わったときだけ直す（全員あての今までのお知らせで「全員」のままなら触らない）
+      const orig = origAll ? profiles.map(p => p.id) : (origIds ?? []);
+      const changed = origAll ? !stillAll : (orig.length !== recipientIds.length || recipientIds.some(id => !orig.includes(id)));
+      if (changed) {
+        const { data: res, error: rErr } = await setAnnouncementRecipients(editingId, recipientIds, pressed, extras);
+        if (rErr || !res) { setSaving(false); setErrorMsg(`宛先を直せませんでした：${rErr?.message ?? '結果を確かめられませんでした'}`); load(); return; }
+        // 足した人には、作成時の通知を設定どおりに送る（印の無い人だけ・DB が決める）
+        const added = origAll ? [] : recipientIds.filter(id => !orig.includes(id));
+        if (res.added_unnotified > 0 && added.length > 0 && (input.notify_on_create_push || input.notify_on_create_email)) {
+          const notifyFail = await sendCreateNotify(editingId, added);
+          if (notifyFail) {
+            setSaving(false); resetForm(); load();
+            setPartialMsg(describePartial('宛先の変更', `足した方への通知を送れませんでした（${notifyFail}）`));
+            return;
+          }
+        }
+      }
       setSaving(false);
-      if (fail) { setErrorMsg(fail); return; }
     } else {
       const { data, error } = await createAnnouncement(input, (await supabase.auth.getUser()).data.user?.id ?? null);
       if (error || !data) {
         setSaving(false);
         setErrorMsg(`お知らせを出せませんでした：${error?.message ?? '作成したお知らせを確かめられませんでした'}`);
+        return;
+      }
+      // 宛先を入れる（入れるまでは誰にも見えない）。入れられなければ作ったお知らせを消して出し直してもらう
+      const { error: rErr } = await setAnnouncementRecipients(data.id, recipientIds, pressed, extras);
+      if (rErr) {
+        await deleteAnnouncement(data.id);
+        setSaving(false);
+        setErrorMsg(`お知らせを出せませんでした（宛先を保存できませんでした）：${rErr.message}`);
         return;
       }
       // 作成時通知（プッシュ／メール）はサーバー側で全員へ配信。失敗してもお知らせ自体は作成済み。
@@ -196,6 +255,23 @@ const AnnouncementsTab: React.FC = () => {
     setShowDetails(!!(item.starts_at || item.ends_at || item.notify_on_create_push ||
       item.notify_on_create_email || item.remind_in_app || item.remind_push || item.remind_email));
     setShowPreview(false);
+    setConfirmRemove(false);
+    // 宛先：全員あて（今までのお知らせ）は「全員」を押した状態・今の在籍者全員が今の宛先
+    if ((item.audience ?? 'all') === 'all') {
+      setPressed(['全員']); setExtras([]);
+      setOrigIds(null); setOrigNotified(new Set());
+      setOrigAll({ notified: !!item.notified_at && (item.notify_on_create_push || item.notify_on_create_email) });
+    } else {
+      setOrigAll(null);
+      setPressed(item.recipient_presets ?? []); setExtras(item.recipient_extra_ids ?? []);
+      setOrigIds(null);
+      void (async () => {
+        const rows = await fetchAnnouncementRecipients(item.id);
+        if (!rows) { setErrorMsg('このお知らせの宛先を読み込めませんでした。画面を開き直してください。'); return; }
+        setOrigIds(rows.map(r => r.user_id));
+        setOrigNotified(new Set(rows.filter(r => r.notified_at).map(r => r.user_id)));
+      })();
+    }
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -279,7 +355,7 @@ const AnnouncementsTab: React.FC = () => {
 
         <div style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 12, padding: '14px 16px' }}>
           <div style={{ fontSize: 12, color: subText, lineHeight: 1.7, marginBottom: 12 }}>
-            全スタッフのホーム画面の上部にお知らせバナーを表示します。<br />
+            宛先の方のホーム画面の上部にお知らせバナーを表示します。<br />
             作成すると「表示中」になり、下の履歴からいつでも停止・編集・削除できます。
           </div>
 
@@ -295,6 +371,10 @@ const AnnouncementsTab: React.FC = () => {
               placeholder="お知らせの内容を入力してください" rows={3}
               style={{ ...inputStyle, lineHeight: 1.6, resize: 'vertical', fontFamily: 'inherit' }} />
           </div>
+
+          <AnnouncementRecipientPicker profiles={profiles} pressed={pressed} extras={extras} isDarkMode={isDarkMode}
+            removedNotified={removedNotified}
+            onChange={(p, e) => { setPressed(p); setExtras(e); setConfirmRemove(false); }} />
 
           {/* 詳細設定（表示期間・リマインド）：既定は折りたたみ */}
           <div style={{ marginBottom: 14 }}>
@@ -351,7 +431,7 @@ const AnnouncementsTab: React.FC = () => {
                   </label>
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: text, cursor: 'pointer' }}>
                     <input type="checkbox" checked={notifyCreateEmail} onChange={e => setNotifyCreateEmail(e.target.checked)} style={{ marginTop: 2 }} />
-                    <span>メールで知らせる<br /><span style={{ fontSize: 11, color: subText }}>全員のメールに届きます（通知OFFの人にも気づいてもらえます）</span></span>
+                    <span>メールで知らせる<br /><span style={{ fontSize: 11, color: subText }}>宛先の方のメールに届きます（通知OFFの人にも気づいてもらえます）</span></span>
                   </label>
                 </div>
 
@@ -374,7 +454,7 @@ const AnnouncementsTab: React.FC = () => {
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: hasEnd ? text : subText, marginBottom: 10, cursor: hasEnd ? 'pointer' : 'default' }}>
                     <input type="checkbox" checked={hasEnd && remindEmail} disabled={!hasEnd}
                       onChange={e => setRemindEmail(e.target.checked)} style={{ marginTop: 2 }} />
-                    <span>メールでも知らせる<br /><span style={{ fontSize: 11, color: subText }}>全員のメールに届きます（通知OFFの人にも気づいてもらえます）</span></span>
+                    <span>メールでも知らせる<br /><span style={{ fontSize: 11, color: subText }}>宛先の方のメールに届きます（通知OFFの人にも気づいてもらえます）</span></span>
                   </label>
 
                   {remindOn && (
@@ -439,7 +519,7 @@ const AnnouncementsTab: React.FC = () => {
                 color: '#fff', fontSize: 13, fontWeight: 'bold',
                 cursor: canSubmit ? 'pointer' : 'default',
               }}>
-              {saving ? '保存中...' : (editingId ? '更新する' : 'お知らせを出す')}
+              {saving ? '保存中...' : (editingId ? (confirmRemove ? '外して更新する' : '更新する') : 'お知らせを出す')}
             </button>
             {editingId && (
               <button onClick={resetForm} disabled={saving}
@@ -448,6 +528,11 @@ const AnnouncementsTab: React.FC = () => {
               </button>
             )}
             {savedMsg && <span style={{ fontSize: 12, color: '#28a745', fontWeight: 600 }}>{savedMsg}</span>}
+            {confirmRemove && (
+              <span style={{ fontSize: 12, color: isDarkMode ? '#ffcc80' : '#8a5a00', width: '100%' }}>
+                外す{removedNotified}人には、すでに通知が届いています（取り消せません）。よければ［外して更新する］を押してください。
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -489,6 +574,11 @@ const AnnouncementsTab: React.FC = () => {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                   <span style={statusStyle(status)}>{STATUS_LABEL[status]}</span>
+                  {/* 宛先の札（2026-11-05） */}
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: isDarkMode ? '#1e3d2b' : '#e8f5e9', color: isDarkMode ? '#a5d6a7' : '#2e7d32' }}>
+                    {(item.audience ?? 'all') === 'all' ? '全員'
+                      : `${[...(item.recipient_presets ?? []), ...((item.recipient_extra_ids ?? []).length ? ['個別'] : [])].join('・') || '宛先'} ${counts[item.id] ?? 0}人`}
+                  </span>
                   <span style={{ fontSize: 14, fontWeight: 'bold', color: text, flex: 1, minWidth: 0 }}>{item.title}</span>
                   <span style={{ fontSize: 11, color: subText, whiteSpace: 'nowrap' }}>{fmtDateTime(item.created_at)}</span>
                 </div>

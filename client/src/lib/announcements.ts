@@ -30,22 +30,23 @@ export interface Announcement {
   remind_frequency: RemindFrequency;
   /** スマホの通知に件名そのものを出すか（false なら「社内お知らせが届いています」に伏せる） */
   push_show_title: boolean;
+  /** 宛先（2026-11-05）：'all'＝全員（今までのお知らせ）／'list'＝宛先の表の人だけ（announcement_recipients） */
+  audience?: 'all' | 'list';
+  /** 押した宛先のボタン・個別に足した人（表示用の控え・判定は DB） */
+  recipient_presets?: string[];
+  recipient_extra_ids?: string[];
+  /** 作成時の通知を送った時刻（全員あてのお知らせの、外すと届いていた人の数に使う） */
+  notified_at?: string | null;
 }
 
 const SELECT_COLS =
-  'id, title, body, active, created_at, created_by, starts_at, ends_at, notify_on_create_push, notify_on_create_email, remind_in_app, remind_push, remind_email, remind_days_before, remind_frequency, push_show_title';
+  'id, title, body, active, created_at, created_by, starts_at, ends_at, notify_on_create_push, notify_on_create_email, remind_in_app, remind_push, remind_email, remind_days_before, remind_frequency, push_show_title, audience, recipient_presets, recipient_extra_ids, notified_at';
 
-// 今まさに表示すべきお知らせ（active かつ 表示期間内）を新しい順で取得（ホームのバナー用）。
-// 期間フィルタは NULL を通す（starts_at/ends_at が未設定の既存お知らせも表示継続）。
+// 今まさに表示すべきお知らせ（active かつ 表示期間内・宛先に入っているもの）を新しい順で取得（ホームのバナー用）。
+// 🚨 2026-11-05：DB の my_active_announcements で読む（宛先の判定 announcement_visible は DB の1か所。
+//    管理画面の権限がある人は表を直接読むと宛先外のお知らせまで読めてしまうため）
 export const fetchActiveAnnouncements = async (): Promise<Announcement[]> => {
-  const nowIso = new Date().toISOString();
-  const { data, error } = await supabase
-    .from('announcements')
-    .select(SELECT_COLS)
-    .eq('active', true)
-    .or(`starts_at.is.null,starts_at.lte.${nowIso}`)
-    .or(`ends_at.is.null,ends_at.gte.${nowIso}`)
-    .order('created_at', { ascending: false });
+  const { data, error } = await supabase.rpc('my_active_announcements');
   if (error || !data) return [];
   return data as Announcement[];
 };
@@ -78,8 +79,33 @@ export interface AnnouncementInput {
 }
 
 // 作成した行（id含む）を返す。作成時通知（announcement-notify）で id を使うため。
+// 🚨 2026-11-05：新しいお知らせは audience 'list'（宛先の表の人だけ）で作り、すぐ setAnnouncementRecipients で宛先を入れる。
+//    宛先を入れる前は誰にも見えない（'all' で作ると、その一瞬だけ全員に見えるため）
 export const createAnnouncement = async (input: AnnouncementInput, createdBy: string | null) => {
-  return supabase.from('announcements').insert({ ...input, created_by: createdBy }).select('id').single();
+  return supabase.from('announcements').insert({ ...input, created_by: createdBy, audience: 'list' }).select('id').single();
+};
+
+export interface SetRecipientsResult { total: number; added_unnotified: number; removed: number; removed_notified: number }
+
+/** 宛先を決める・直す（DB の announcement_set_recipients・在籍の人だけ残す・外した人のベルと送信待ちのスマホ通知を消す） */
+export const setAnnouncementRecipients = async (id: string, userIds: string[], presets: string[], extraIds: string[]) => {
+  return supabase.rpc('announcement_set_recipients', { p_id: id, p_user_ids: userIds, p_presets: presets, p_extra_ids: extraIds }) as unknown as Promise<{ data: SetRecipientsResult | null; error: { message: string } | null }>;
+};
+
+/** 宛先の今の人（外していない）と、作成時の通知を送ったか。読めなければ null */
+export const fetchAnnouncementRecipients = async (id: string): Promise<{ user_id: string; notified_at: string | null }[] | null> => {
+  const { data, error } = await supabase.from('announcement_recipients').select('user_id, notified_at').eq('announcement_id', id).is('removed_at', null);
+  if (error || !data) return null;
+  return data as { user_id: string; notified_at: string | null }[];
+};
+
+/** お知らせごとの宛先の人数（管理画面の一覧の札）。読めなければ空 */
+export const fetchRecipientCounts = async (): Promise<Record<string, number>> => {
+  const { data, error } = await supabase.from('announcement_recipients').select('announcement_id').is('removed_at', null).limit(5000);
+  if (error || !data) return {};
+  const out: Record<string, number> = {};
+  for (const r of data as { announcement_id: string }[]) out[r.announcement_id] = (out[r.announcement_id] ?? 0) + 1;
+  return out;
 };
 
 // 🚨 update / delete は権限で弾かれても error にならず「0件」で返る。.select('id') で件数を見る（lib/statusUpdate.ts）

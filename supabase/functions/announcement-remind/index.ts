@@ -85,16 +85,14 @@ serve(async (req) => {
     });
   }
 
-  // 送信先＝アクティブな全ユーザー（id と email）
+  // 送信先＝アクティブな全ユーザー（id と email）。宛先のあるお知らせは、下でお知らせごとにこの中から絞る（2026-11-05）
   const { data: profiles } = await supabase.from("profiles").select("id, email").eq("is_active", true);
   // 🚨 休職中でスマホの通知を「安否確認・緊急のみ」にしている人には、メールだけ送らない（2026-10-21 ユーザー確定・announcement-notify と同じ）。
   //    ベルは全員に届ける（スマホへの通知は push-dispatch が休職中の希望どおりに止める）
   const { data: quietRows, error: quietErr } = await supabase.rpc("staff_on_leave_ids", { p_quiet_only: true });
   if (quietErr) console.error("[announcement-remind] 休職中の方の読み込みに失敗（全員にメールを送ります）:", quietErr.message);
   const quiet = new Set(((quietRows ?? []) as (string | { staff_on_leave_ids: string })[]).map((r) => (typeof r === "string" ? r : r.staff_on_leave_ids)));
-  const rows = (profiles ?? []) as { id: string; email: string | null }[];
-  const userIds = rows.map((p) => p.id);
-  const emails = rows.filter((p) => !quiet.has(p.id)).map((p) => p.email).filter((e): e is string => !!e);
+  const allRows = (profiles ?? []) as { id: string; email: string | null }[];
 
   let pushCount = 0;
   let emailCount = 0;
@@ -102,6 +100,14 @@ serve(async (req) => {
 
   for (const a of due) {
     let anySent = false;
+    // 🚨 宛先（2026-11-05）：お知らせごとに DB の announcement_audience_ids で送る相手を出す（全員あてなら在籍者全員）。
+    //    読めなければこのお知らせは送らない（全員に送ってしまわないように・翌日以降の cron でやり直し）
+    const { data: aud, error: audErr } = await supabase.rpc("announcement_audience_ids", { p_id: a.id });
+    if (audErr) { console.error(`[announcement-remind] audience read failed ${a.id}:`, audErr.message); continue; }
+    const audSet = new Set(((aud ?? []) as (string | { announcement_audience_ids: string })[]).map((r) => (typeof r === "string" ? r : r.announcement_audience_ids)));
+    const rows = allRows.filter((p) => audSet.has(p.id));
+    const userIds = rows.map((p) => p.id);
+    const emails = rows.filter((p) => !quiet.has(p.id)).map((p) => p.email).filter((e): e is string => !!e);
 
     // プッシュ（ベル通知INSERT→push_queue→push-dispatch）
     if (a.remind_push && userIds.length > 0) {

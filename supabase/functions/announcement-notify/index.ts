@@ -10,6 +10,9 @@
 // 二重送信の歯止め（2026-09-15）：announcements.notified_at が null の行だけ「送る印」を付けてから送る。
 //   🚨 印を付けられなかった＝すでに送っている → 409 で断る（id を渡すたびに全員へ送り直していた）
 //   🚨 送る相手を読めなかったときだけ印を戻す（何も送っていないので、もう一度押せるように）
+// 宛先（2026-11-05）：audience='list' のお知らせは、宛先の1人ごとの印（announcement_recipients.notified_at）で送る。
+//   DB の announcement_claim_recipients が「外していない・在籍・まだ送っていない」人の印を取り、その人だけに送る（二度押しでも二重にならない）。
+//   body.user_ids を渡すと、その人だけ（出したあとに宛先へ足した人）。audience='all'（今までのお知らせ）は前のまま
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -52,8 +55,9 @@ serve(async (req) => {
   }
 
   try {
-    const { id } = await req.json();
+    const { id, user_ids } = await req.json();
     if (!id) return json({ error: 'id は必須です' }, 400);
+    const onlyIds: string[] | null = Array.isArray(user_ids) && user_ids.length > 0 ? user_ids.map(String) : null;
 
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -63,31 +67,51 @@ serve(async (req) => {
 
     const { data: ann, error: annErr } = await supabaseAdmin
       .from('announcements')
-      .select('id, title, body, notify_on_create_push, notify_on_create_email')
+      .select('id, title, body, notify_on_create_push, notify_on_create_email, audience, notified_at')
       .eq('id', id)
       .single();
     if (annErr || !ann) return json({ error: 'お知らせが見つかりません' }, 404);
     if (!ann.notify_on_create_push && !ann.notify_on_create_email) return json({ push: 0, email: 0 });
 
-    // 送る印を先に付ける（null の行だけ）。付けられなければ、すでに送っている
-    const { data: claimed, error: claimErr } = await supabaseAdmin
-      .from('announcements')
-      .update({ notified_at: new Date().toISOString() })
-      .eq('id', id)
-      .is('notified_at', null)
-      .select('id');
-    if (claimErr) {
-      console.error('[announcement-notify] claim failed:', claimErr);
-      return json({ error: '送信の準備に失敗しました' }, 500);
-    }
-    if (!claimed || claimed.length === 0) {
-      return json({ error: 'このお知らせの通知はすでに送っています' }, 409);
+    const isList = ann.audience === 'list';
+    let claimedIds: string[] = [];
+    if (isList) {
+      // 宛先あり：1人ごとの印を取る（印の無い人だけ）
+      const { data: cl, error: clErr } = await supabaseAdmin.rpc('announcement_claim_recipients', { p_id: id, p_user_ids: onlyIds });
+      if (clErr) {
+        console.error('[announcement-notify] recipient claim failed:', clErr);
+        return json({ error: '送信の準備に失敗しました' }, 500);
+      }
+      claimedIds = ((cl ?? []) as (string | { announcement_claim_recipients: string })[])
+        .map((r) => (typeof r === 'string' ? r : r.announcement_claim_recipients));
+      if (claimedIds.length === 0) {
+        if (onlyIds) return json({ push: 0, email: 0 });
+        return json({ error: 'このお知らせの通知はすでに送っています' }, 409);
+      }
+      if (!ann.notified_at) await supabaseAdmin.from('announcements').update({ notified_at: new Date().toISOString() }).eq('id', id).is('notified_at', null);
+    } else {
+      // 送る印を先に付ける（null の行だけ）。付けられなければ、すでに送っている
+      const { data: claimed, error: claimErr } = await supabaseAdmin
+        .from('announcements')
+        .update({ notified_at: new Date().toISOString() })
+        .eq('id', id)
+        .is('notified_at', null)
+        .select('id');
+      if (claimErr) {
+        console.error('[announcement-notify] claim failed:', claimErr);
+        return json({ error: '送信の準備に失敗しました' }, 500);
+      }
+      if (!claimed || claimed.length === 0) {
+        return json({ error: 'このお知らせの通知はすでに送っています' }, 409);
+      }
     }
 
-    const { data: profiles, error: profErr } = await supabaseAdmin.from('profiles').select('id, email').eq('is_active', true);
+    const profQuery = supabaseAdmin.from('profiles').select('id, email').eq('is_active', true);
+    const { data: profiles, error: profErr } = isList ? await profQuery.in('id', claimedIds) : await profQuery;
     if (profErr) {
       console.error('[announcement-notify] profiles read failed:', profErr);
-      await supabaseAdmin.from('announcements').update({ notified_at: null }).eq('id', id);
+      if (isList) await supabaseAdmin.from('announcement_recipients').update({ notified_at: null }).eq('announcement_id', id).in('user_id', claimedIds);
+      else await supabaseAdmin.from('announcements').update({ notified_at: null }).eq('id', id);
       return json({ error: '送る相手を読み込めませんでした' }, 500);
     }
     // 🚨 休職中でスマホの通知を「安否確認・緊急のみ」にしている人には、メールだけ送らない（2026-10-21 ユーザー確定）。

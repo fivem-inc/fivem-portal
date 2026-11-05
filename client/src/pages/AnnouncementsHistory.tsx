@@ -38,7 +38,8 @@ const AnnouncementsHistory: React.FC = () => {
   useEffect(() => {
     void (async () => {
       const [a, h] = await Promise.all([
-        supabase.from('announcements').select('id, title, body, created_at, starts_at, ends_at, active').eq('active', true).order('created_at', { ascending: false }).limit(200),
+        // 🚨 2026-11-05：宛先どおりに DB の my_announcement_history で読む（管理画面の権限がある人も、自分あて・全員あてだけ）
+        supabase.rpc('my_announcement_history').select('id, title, body, created_at, starts_at, ends_at, active'),
         supabase.from('home_acks').select('item_key, acked_at').like('item_key', 'ann:%'),
       ]);
       if (a.error) {
