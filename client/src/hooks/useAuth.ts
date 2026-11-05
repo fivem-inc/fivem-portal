@@ -61,6 +61,8 @@ interface UseAuthReturn {
   canOvertimeGrid: boolean;
   /** 勤務変更の「カレンダーの予定の一覧」（2026-10-05・最初はマネージャー以上だけ） */
   canShiftReportTodo: boolean;
+  /** 勤務変更の履歴に「カレンダーの予定」と［カード｜表］（2026-11-05・最初はマネージャー以上だけ） */
+  canShiftReportCalendar: boolean;
   /** 上のナビの「📋 手続き」（入社・退職の手続き /retire）。マネージャー以上の役職のうち、権限管理の「手続き」が ON の役職と管理者 */
   canProcedures: boolean;
   /**
@@ -504,6 +506,8 @@ export const useAuth = (): UseAuthReturn => {
   const canOvertimeGrid = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_grid ?? false);
   // 勤務変更の「カレンダーの予定の一覧」（2026-10-05）。既定は OFF＝権限行が読めなかったときは出さない
   const canShiftReportTodo = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_todo ?? false);
+  // 勤務変更の履歴に「カレンダーの予定」と［カード｜表］（2026-11-05）。既定は OFF
+  const canShiftReportCalendar = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_calendar ?? false);
   // 「📋 手続き」（2026-10-19・権限管理の行）。🚨 中身の読み書き（DB の RLS）は「マネージャー以上」のままなので、
   //    ON にできるのはマネージャー以上の役職だけ（リーダーなどを ON にしても中身が空のページになるため）。退職者には出さない
   const canProcedures = !retireeMode && isManagerPlus && (realIsAdmin && !previewRole ? true : (effectivePerms.procedures ?? false));
@@ -635,6 +639,7 @@ export const useAuth = (): UseAuthReturn => {
     canOvertimeMemo,
     canOvertimeGrid,
     canShiftReportTodo,
+    canShiftReportCalendar,
     canProcedures,
     shiftAdjust,
     canFaq,

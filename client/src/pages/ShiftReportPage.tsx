@@ -2023,9 +2023,20 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           </div>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '0 0 8px' }}>（これまでの残業申請表の代わりです。）</p>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※このページは「報告」用です。ここから休暇・お休みの申請はできません。</p>
-          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（リーダー・マネージャーに連絡済みの「欠勤・勤務時間の変更」は、事前に入力できます。）</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（欠勤は、前もって報告できます。遅出・早退・時間の変更などは、その日になってから報告してください。）</p>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※欠勤・遅刻・早退の連絡は、これまで通りリーダー・マネージャーへ直接連絡してください。</p>
         </div>
+
+        {/* 確認ページへ（承認者のみ・2026-11-05 から自分のタブの上＝休暇申請・残業申請と同じ「上長用のオレンジが上・自分の緑が下」） */}
+        {isApprover && (
+          <button onClick={() => setConfirmView(true)}
+            style={{ ...confirmPageBtn, marginTop: 0, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <span>✅ 確認ページへ</span>
+            {pendingReports.length > 0 && (
+              <span style={confirmPageCount}>{pendingReports.length}件</span>
+            )}
+          </button>
+        )}
 
         {/* タブ（共通部品 PageTabs・休暇申請と同スタイル）
             dividerColor は従来この画面が使っていた borderCol（ダークでは非選択背景と同色＝実質見えない）を
@@ -2042,17 +2053,6 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           active={tab}
           onChange={setTab}
         />
-
-        {/* 確認ページへ（承認者のみ・タブ直下） */}
-        {isApprover && (
-          <button onClick={() => setConfirmView(true)}
-            style={{ ...confirmPageBtn, marginBottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            <span>✅ 確認ページへ</span>
-            {pendingReports.length > 0 && (
-              <span style={confirmPageCount}>{pendingReports.length}件</span>
-            )}
-          </button>
-        )}
 
         {/* ─ 申請タブ ─ */}
         {tab === 'apply' && (
