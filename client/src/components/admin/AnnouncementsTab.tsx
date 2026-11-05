@@ -26,8 +26,8 @@ import {
 import { dateTimeProblem, splitDateTime } from '../../lib/dateTimeValue';
 import DateTimeInput from '../DateTimeInput';
 import { describePartial, describeUpdate } from '../../lib/statusUpdate';
-import AnnouncementRecipientPicker, { recipientIdsOf, type PickerProfile } from './AnnouncementRecipientPicker';
-import { useRoles } from '../../hooks/useRoles';
+import RecipientSelector, { type SelectorProfile } from '../RecipientSelector';
+import { splitRecipientsIntoPresets } from '../../lib/recipientPresets';
 
 // 作成時の通知（announcement-notify）を送る。失敗したら理由を返す（成功は null）。
 // 🚨 functions.invoke は 4xx/5xx でも throw しない。error と中身の両方を見る
@@ -85,11 +85,12 @@ const AnnouncementsTab: React.FC = () => {
   const [loadFailed, setLoadFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  // 宛先（2026-11-05）：押したボタン・個別に足した人。新しいお知らせは最初「全員」を押した状態
-  useRoles();   // 「マネージャー・リーダー」のボタンが役職の一覧を使うので読んでおく
-  const [profiles, setProfiles] = useState<PickerProfile[]>([]);
-  const [pressed, setPressed] = useState<string[]>(['全員']);
-  const [extras, setExtras] = useState<string[]>([]);
+  // 宛先（2026-11-05・連絡板と同じ欄 components/RecipientSelector）：選んだ人・押したボタンの記録。新しいお知らせは最初「全員」を選んだ状態
+  const [profiles, setProfiles] = useState<SelectorProfile[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [presetKeys, setPresetKeys] = useState<string[]>(['全員']);
+  // まだ宛先を触っていない新しいお知らせ：名簿が読めたら全員を選ぶ
+  const [touched, setTouched] = useState(false);
   // 編集のとき：今の宛先と、作成時の通知が届いている人（外すときの注意に使う）。null＝まだ読めていない
   const [origIds, setOrigIds] = useState<string[] | null>(null);
   const [origNotified, setOrigNotified] = useState<Set<string>>(new Set());
@@ -123,11 +124,14 @@ const AnnouncementsTab: React.FC = () => {
   useEffect(() => {
     void (async () => {
       const { data } = await supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).order('name');
-      setProfiles((data ?? []) as PickerProfile[]);
+      setProfiles((data ?? []) as SelectorProfile[]);
     })();
   }, []);
-  const recipientIds = recipientIdsOf(pressed, extras, profiles);
-  const stillAll = !!origAll && pressed.length === 1 && pressed[0] === '全員' && extras.length === 0;
+  useEffect(() => {
+    if (!editingId && !touched && profiles.length > 0) { setSelected(profiles.map(p => p.id)); setPresetKeys(['全員']); }
+  }, [profiles, editingId, touched]);
+  const recipientIds = profiles.filter(p => selected.includes(p.id)).map(p => p.id);
+  const stillAll = !!origAll && profiles.length > 0 && recipientIds.length === profiles.length;
   const removedNotified = origAll
     ? (stillAll || !origAll.notified ? 0 : profiles.filter(p => !recipientIds.includes(p.id)).length)
     : origIds ? origIds.filter(id => !recipientIds.includes(id) && origNotified.has(id)).length : 0;
@@ -143,7 +147,8 @@ const AnnouncementsTab: React.FC = () => {
     setRemindFrequency('once');
     setShowDetails(false);
     setShowPreview(false);
-    setPressed(['全員']); setExtras([]); setOrigIds(null); setOrigNotified(new Set()); setConfirmRemove(false); setOrigAll(null);
+    setSelected(profiles.map(p => p.id)); setPresetKeys(['全員']); setTouched(false);
+    setOrigIds(null); setOrigNotified(new Set()); setConfirmRemove(false); setOrigAll(null);
   };
 
   // 終了日が未設定だとリマインド（終了日基準）は成立しないので使えない
@@ -188,7 +193,8 @@ const AnnouncementsTab: React.FC = () => {
       const orig = origAll ? profiles.map(p => p.id) : (origIds ?? []);
       const changed = origAll ? !stillAll : (orig.length !== recipientIds.length || recipientIds.some(id => !orig.includes(id)));
       if (changed) {
-        const { data: res, error: rErr } = await setAnnouncementRecipients(editingId, recipientIds, pressed, extras);
+        const sp = splitRecipientsIntoPresets(recipientIds, presetKeys, profiles);
+        const { data: res, error: rErr } = await setAnnouncementRecipients(editingId, recipientIds, sp.presets, sp.extras);
         if (rErr || !res) { setSaving(false); setErrorMsg(`宛先を直せませんでした：${rErr?.message ?? '結果を確かめられませんでした'}`); load(); return; }
         // 足した人には、作成時の通知を設定どおりに送る（印の無い人だけ・DB が決める）
         const added = origAll ? [] : recipientIds.filter(id => !orig.includes(id));
@@ -210,7 +216,8 @@ const AnnouncementsTab: React.FC = () => {
         return;
       }
       // 宛先を入れる（入れるまでは誰にも見えない）。入れられなければ作ったお知らせを消して出し直してもらう
-      const { error: rErr } = await setAnnouncementRecipients(data.id, recipientIds, pressed, extras);
+      const sp = splitRecipientsIntoPresets(recipientIds, presetKeys, profiles);
+      const { error: rErr } = await setAnnouncementRecipients(data.id, recipientIds, sp.presets, sp.extras);
       if (rErr) {
         await deleteAnnouncement(data.id);
         setSaving(false);
@@ -258,17 +265,18 @@ const AnnouncementsTab: React.FC = () => {
     setConfirmRemove(false);
     // 宛先：全員あて（今までのお知らせ）は「全員」を押した状態・今の在籍者全員が今の宛先
     if ((item.audience ?? 'all') === 'all') {
-      setPressed(['全員']); setExtras([]);
+      setSelected(profiles.map(p => p.id)); setPresetKeys(['全員']); setTouched(true);
       setOrigIds(null); setOrigNotified(new Set());
       setOrigAll({ notified: !!item.notified_at && (item.notify_on_create_push || item.notify_on_create_email) });
     } else {
       setOrigAll(null);
-      setPressed(item.recipient_presets ?? []); setExtras(item.recipient_extra_ids ?? []);
+      setPresetKeys(item.recipient_presets ?? []); setSelected([]); setTouched(true);
       setOrigIds(null);
       void (async () => {
         const rows = await fetchAnnouncementRecipients(item.id);
         if (!rows) { setErrorMsg('このお知らせの宛先を読み込めませんでした。画面を開き直してください。'); return; }
         setOrigIds(rows.map(r => r.user_id));
+        setSelected(rows.map(r => r.user_id));
         setOrigNotified(new Set(rows.filter(r => r.notified_at).map(r => r.user_id)));
       })();
     }
@@ -359,6 +367,19 @@ const AnnouncementsTab: React.FC = () => {
             作成すると「表示中」になり、下の履歴からいつでも停止・編集・削除できます。
           </div>
 
+          {/* 宛先（いちばん上・連絡板と同じ欄） */}
+          <div style={{ marginBottom: 14 }}>
+            <RecipientSelector profiles={profiles} selected={selected} presetKeys={presetKeys} isDark={isDarkMode} labelMarginTop={0}
+              onChange={(ids, keys) => { setSelected(ids); setPresetKeys(keys); setTouched(true); setConfirmRemove(false); }} />
+            {recipientIds.length === 0 && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>宛先を選んでください</div>}
+            {removedNotified > 0 && (
+              <div style={{ fontSize: 12, color: isDarkMode ? '#ffcc80' : '#8a5a00', background: isDarkMode ? '#3a2f00' : '#fff8e1', borderRadius: 8, padding: '6px 10px', marginTop: 6 }}>
+                ⚠️ 宛先から外す {removedNotified}人には、すでにメール・スマホの通知が届いています（取り消せません）。画面とベルからは消えます。
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: subText, marginTop: 4 }}>ホームの表示・過去のお知らせ・ベル・メール・スマホの通知は、宛先の方にだけ出ます。</div>
+          </div>
+
           <div style={{ marginBottom: 12 }}>
             <label htmlFor="ann-title" style={{ display: 'block', fontSize: 12, color: subText, marginBottom: 4 }}>タイトル</label>
             <input id="ann-title" type="text" value={title} onChange={e => setTitle(e.target.value)}
@@ -372,9 +393,6 @@ const AnnouncementsTab: React.FC = () => {
               style={{ ...inputStyle, lineHeight: 1.6, resize: 'vertical', fontFamily: 'inherit' }} />
           </div>
 
-          <AnnouncementRecipientPicker profiles={profiles} pressed={pressed} extras={extras} isDarkMode={isDarkMode}
-            removedNotified={removedNotified}
-            onChange={(p, e) => { setPressed(p); setExtras(e); setConfirmRemove(false); }} />
 
           {/* 詳細設定（表示期間・リマインド）：既定は折りたたみ */}
           <div style={{ marginBottom: 14 }}>

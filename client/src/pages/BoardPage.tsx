@@ -10,6 +10,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { rolesByRank } from '../lib/roleAttrs';
 import { recipientPresetIds, splitRecipientsIntoPresets } from '../lib/recipientPresets';
+import RecipientSelector from '../components/RecipientSelector';
 import { getCachedRoles } from '../hooks/useRoles';
 import { insertNotification, markBellReadForMessages } from '../lib/notifications';
 // 🚨 ベル・メールは画面で作らない（DB の board_deliver が届けるときに作る・2026-10-26 送信の取り消し）
@@ -637,6 +638,7 @@ const BoardPage: React.FC = () => {
   const [composeSubject,       setComposeSubject]       = useState(cd?.subject ?? '');
   const [composeBody,          setComposeBody]          = useState(cd?.body ?? '');
   const [composeRecipientIds,  setComposeRecipientIds]  = useState<string[]>(cd?.recipientIds ?? []);
+  const [composeQuery,         setComposeQuery]         = useState('');
   const [composeDeadlineType,  setComposeDeadlineType]  = useState(cd?.deadlineType ?? '');
   // アンケート（2026-10-29）。種別「回答」で［質問に答えてもらう］を選んだときだけ。null＝今までの「自由に書いてもらう」
   const [composeSurvey,        setComposeSurvey]        = useState<SurveyDef | null>(() => parseSurvey(cd?.survey));
@@ -659,7 +661,6 @@ const BoardPage: React.FC = () => {
   const [copyConfirmMsg,       setCopyConfirmMsg]       = useState<BoardMessage | null>(null); // 下書きの置き換え確認
   const [composeOptions,        setComposeOptions]        = useState(true);
   const [_composeDraftId,       setComposeDraftId]        = useState<string | null>(null);
-  const [composeQuery,          setComposeQuery]          = useState('');
   const [composeAnswerPrompt,   setComposeAnswerPrompt]   = useState(cd?.answerPrompt ?? '');
   const [composeAnswerLocation, setComposeAnswerLocation] = useState(cd?.answerLocation ?? '');
   const [composeAnswerLink,     setComposeAnswerLink]     = useState(cd?.answerLink ?? '');
@@ -4394,25 +4395,6 @@ const BoardPage: React.FC = () => {
   //    🚨 ここ1か所で外せば、候補の一覧・「全員」・区分ボタンのすべてに効く
   //    （どれも composeFiltered を通るため）。2か所に書かないこと。
   const activeOthersForCompose = allProfiles.filter(p => !recipientExcludeIds.includes(p.id)); // 自分も含む
-  const composeFiltered = activeOthersForCompose.filter(p => !composeQuery || (p.name || '').includes(composeQuery));
-  const composeEmpTypes = ([...new Set(activeOthersForCompose.map(p => p.employment_type || 'その他'))] as string[])
-    .sort((a, b) => { const o = EMP_ORDER; const ai = o.indexOf(a), bi = o.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
-
-  // グループタグ設定（こども/大人/管理部のみ表示）
-  const COMPOSE_GTAG = [
-    { name: 'こども', bg: isDark ? '#1e3a5f' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8' },
-    { name: '大人',   bg: isDark ? '#14532d' : '#dcfce7', color: isDark ? '#86efac' : '#15803d' },
-    { name: '管理部', bg: isDark ? '#451a03' : '#fef3c7', color: isDark ? '#fcd34d' : '#b45309' },
-  ];
-
-  // 一括ボタン定義（固定順序）
-  // 判定の中身は recipientPresetIds（ファイル上部）1か所。ここは検索で絞った候補に当てるだけ
-  const COMPOSE_QUICK_BTNS = (['正社員', 'パート', 'マネージャー・リーダー', 'こども', '大人', '管理部'] as const)
-    .map(label => ({ label, getIds: () => recipientPresetIds(label, composeFiltered) }));
-  // 宛先から人を外したら、その人を含むボタンの記録は無効にする（「ボタン全員」ではなくなったため）
-  const dropPresetsContaining = (removedIds: string[]) =>
-    setComposePresetKeys(prev => prev.filter(k => !recipientPresetIds(k, allProfiles).some(id => removedIds.includes(id))));
-
   // ── テンプレートの一覧（絞り込み → 並び）。🚨 中身は lib/boardTemplates（画面に判定を書かない）。
   //    最初は20件＋「残り◯件を見る」。検索・分類で絞っているときは全部出す。🚨 並べてから切る
   const TPL_PAGE = 20;
@@ -4444,88 +4426,10 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={() => setComposeCopyNotice(null)} style={{ background: 'none', border: 'none', color: '#856404', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
             </div>
           )}
-          <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択 <span style={{ color: '#dc3545', fontSize: 11 }}>*必須</span></div>
-          <input value={composeQuery} onChange={e => setComposeQuery(e.target.value)} placeholder="名前で検索..."
-            style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
-          {/* 一括ボタン（全員→各グループ→全解除の固定順） */}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
-            <button type="button" onClick={() => { setComposeRecipientIds(composeFiltered.map(p => p.id)); setComposePresetKeys(composeQuery ? [] : ['全員']); }}
-              style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
-            {COMPOSE_QUICK_BTNS.map(btn => {
-              const ids = btn.getIds();
-              const allInSel = ids.length > 0 && ids.every(id => composeRecipientIds.includes(id));
-              const allSel = allInSel && composeRecipientIds.length === ids.length;
-              return (
-                <button key={btn.label} type="button"
-                  onClick={() => {
-                    // 押したボタンを記録する（検索で絞っているときは「ボタン全員」ではないので記録しない）
-                    const remember = !composeQuery;
-                    if (allInSel && composeRecipientIds.length === ids.length) {
-                      setComposeRecipientIds([]); setComposePresetKeys([]);
-                    } else if (allInSel) {
-                      setComposeRecipientIds(ids); setComposePresetKeys(remember ? [btn.label] : []);
-                    } else {
-                      setComposeRecipientIds(prev => [...new Set([...prev, ...ids])]);
-                      if (remember) setComposePresetKeys(prev => [...new Set([...prev, btn.label])]);
-                    }
-                  }}
-                  style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: allInSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allInSel ? '#fff' : (isDark ? '#fff' : '#333'), opacity: allSel ? 1 : allInSel ? 0.75 : 1 }}>
-                  {btn.label}
-                </button>
-              );
-            })}
-            <button type="button" onClick={() => { setComposeRecipientIds([]); setComposePresetKeys([]); }}
-              style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全解除</button>
-          </div>
-          {/* メンバーグリッド */}
-          <div style={{ maxHeight: 200, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8 }}>
-            {composeEmpTypes.map((et, gi) => {
-              const etProfiles = composeFiltered.filter(p => (p.employment_type || 'その他') === et);
-              if (etProfiles.length === 0) return null;
-              const roles = [...new Set(etProfiles.map(p => p.role_title || 'その他'))].sort((a, b) => { const ai = ROLE_ORDER.indexOf(a), bi = ROLE_ORDER.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
-              return (
-                <div key={et}>
-                  <div style={{ padding: '4px 10px', background: isDark ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDark ? '#6c757d' : '#bbb'}` : undefined }}>
-                    <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#444' }}>{et}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                    {roles.map((role, ri) => {
-                      const roleProfiles = etProfiles.filter(p => (p.role_title || 'その他') === role).sort((a, b) => (a.name || '') > (b.name || '') ? 1 : -1);
-                      const allRoleSel = roleProfiles.every(p => composeRecipientIds.includes(p.id));
-                      return (
-                        <div key={role} style={{ flex: '1 1 130px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '5px 8px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, cursor: 'pointer' }}>
-                            <input type="checkbox" checked={allRoleSel && roleProfiles.length > 0}
-                              onChange={() => { const ids = roleProfiles.map(p => p.id); setComposeRecipientIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]); if (allRoleSel) dropPresetsContaining(ids); }} />
-                            <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
-                          </label>
-                          {roleProfiles.map(p => {
-                            const gTags = COMPOSE_GTAG.filter(g => (p.group_names || []).includes(g.name));
-                            return (
-                              <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: textColor, flexWrap: 'wrap' }}>
-                                <input type="checkbox" checked={composeRecipientIds.includes(p.id)}
-                                  onChange={e => { setComposeRecipientIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id)); if (!e.target.checked) dropPresetsContaining([p.id]); }} />
-                                <span style={{ flexShrink: 0 }}>
-                                  {p.name}
-                                  {p.id === user?.id && <span style={{ fontSize: 10, color: subColor }}> (自分)</span>}
-                                </span>
-                                {gTags.map(g => (
-                                  <span key={g.name} style={{ fontSize: 11, padding: '1px 5px', borderRadius: 3, background: g.bg, color: g.color, whiteSpace: 'nowrap', flexShrink: 0 }}>{g.name}</span>
-                                ))}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {composeRecipientIds.length > 0 && (
-            <div style={{ fontSize: 12, color: '#007bff', marginTop: 4 }}>{composeRecipientIds.length}人選択中</div>
-          )}
+          {/* 宛先を選ぶ欄は部品（components/RecipientSelector・管理者からのお知らせと共用） */}
+          <RecipientSelector profiles={activeOthersForCompose} selected={composeRecipientIds} presetKeys={composePresetKeys}
+            onChange={(ids, keys) => { setComposeRecipientIds(ids); setComposePresetKeys(keys); }} isDark={isDark} selfId={user?.id}
+            query={composeQuery} onQueryChange={setComposeQuery} />
         </div>
 
         {/* ⚙️ 設定（折りたたみ） */}
