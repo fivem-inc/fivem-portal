@@ -510,7 +510,7 @@ const AdminPanelContent: React.FC = () => {
       {isAdminUser && usageOpen && (
         <UsagePanel isDarkMode={isDarkMode} onClose={() => setUsageOpen(false)} egress={egress}
           storageMb={storageUsageMb} storageLimitMb={STORAGE_LIMIT_MB} dbMb={dbUsageMb} dbLimitMb={DB_LIMIT_MB} mail={mailUsage}
-          mailErr={mailErr} egressErr={egressErr} />
+          mailErr={mailErr} egressErr={egressErr} fromBell={usageParam} />
       )}
       
       {/* 却下理由入力モーダル */}

@@ -8,7 +8,7 @@
 //   ・Supabase のログの量・Vercel の配信量 … 自動では読めないのでリンクだけ
 // 🚨 8割の判定（赤くする）は AdminPanel と同じ式を使う。ここでは受け取った値をそのまま出すだけ
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
 export interface EgressEstimate {
@@ -43,6 +43,8 @@ interface Props {
   /** 取れなかったとき（🚨 0 と嘘をつかず「取れませんでした」と出す） */
   mailErr?: string;
   egressErr?: string;
+  /** 毎朝の点検のベル（?usage=1）から開いたとき */
+  fromBell?: boolean;
 }
 
 const SUPABASE_USAGE_URL = 'https://supabase.com/dashboard/project/xaeynaxctiiyqxjyuzfi/settings/billing/usage';
@@ -72,11 +74,14 @@ const jstYmd = (offsetDays: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-const HealthSection: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
+// fromBell：毎朝の点検のベルから開いたとき（2026-11-05 ユーザー確定）＝点検まで画面を動かし、「このお知らせの中身」の1行を出し、黄色い行を最初から開く
+const HealthSection: React.FC<{ isDarkMode: boolean; fromBell?: boolean }> = ({ isDarkMode, fromBell }) => {
   const [which, setWhich] = useState<-1 | 0>(-1);   // -1＝きのう・0＝きょう（ここまで）
   const [h, setH] = useState<Health | null>(null);
   const [err, setErr] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const bellOpened = useRef(false);
   useEffect(() => {
     let alive = true;
     setH(null); setErr('');
@@ -84,9 +89,23 @@ const HealthSection: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       if (!alive) return;
       if (error || !data) { setErr('点検の結果を読み込めませんでした'); return; }
       setH(data);
+      // ベルから開いたときは1回だけ：黄色い行のうち中身のある最初の行を開き、点検まで画面を動かす
+      if (fromBell && !bellOpened.current && which === -1) {
+        bellOpened.current = true;
+        const firstBad = ([
+          ['cron', data.cron.failed > 0 && data.cron.list.length > 0],
+          ['inner', data.inner.count > 0 && data.inner.list.length > 0],
+          ['net', data.net.failed > 0 && (data.net.list?.length ?? 0) > 0],
+          ['timeout', !!data.timeout && data.timeout.count > data.timeout.limit && data.timeout.list.length > 0],
+          ['push', (data.push.failed > 0 || data.push.stuck > 0) && data.push.list.length > 0],
+          ['mail', data.mail.failed > 0 && data.mail.list.length > 0],
+        ] as [string, boolean][]).find(([, b]) => b);
+        if (firstBad) setOpen(firstBad[0]);
+        setTimeout(() => boxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      }
     }, () => { if (alive) setErr('点検の結果を読み込めませんでした'); });
     return () => { alive = false; };
-  }, [which]);
+  }, [which, fromBell]);
 
   const text = isDarkMode ? '#e9ecef' : '#212529';
   const sub = isDarkMode ? '#adb5bd' : '#6c757d';
@@ -124,7 +143,12 @@ const HealthSection: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   );
 
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div ref={boxRef} style={{ marginBottom: 14, scrollMarginTop: 'calc(var(--topbar-height, 60px) + 12px)' }}>
+      {fromBell && h && which === -1 && h.issues > 0 && (
+        <div style={{ background: warnBg, color: warnC, border: `1px solid ${isDarkMode ? '#5c4a00' : '#ffe08a'}`, borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 8 }}>
+          🔔 このお知らせの中身：{md(h.day)} の点検で黄色くなっている行です
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
         <span style={{ fontWeight: 'bold', color: text, fontSize: 13 }}>
           点検{h ? `（${md(h.day)}${which === 0 ? '・ここまで' : ''}）` : ''}
@@ -184,7 +208,7 @@ const HealthSection: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   );
 };
 
-const UsagePanel: React.FC<Props> = ({ isDarkMode, onClose, egress, storageMb, storageLimitMb, dbMb, dbLimitMb, mail, mailErr, egressErr }) => {
+const UsagePanel: React.FC<Props> = ({ isDarkMode, onClose, egress, storageMb, storageLimitMb, dbMb, dbLimitMb, mail, mailErr, egressErr, fromBell }) => {
   const [ov, setOv] = useState<Overview | null>(null);
   const [ovErr, setOvErr] = useState('');
   useEffect(() => {
@@ -234,7 +258,7 @@ const UsagePanel: React.FC<Props> = ({ isDarkMode, onClose, egress, storageMb, s
         </button>
       </div>
 
-      <HealthSection isDarkMode={isDarkMode} />
+      <HealthSection isDarkMode={isDarkMode} fromBell={fromBell} />
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
