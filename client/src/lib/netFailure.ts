@@ -85,6 +85,8 @@ export const HISTORY_LOAD_FAILED_TEXT = '履歴を読み込めませんでした
 export const NOTICE_LOAD_FAILED_TEXT = 'お知らせを読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
 /** 「📋 出張の申請がまだの日」を読み込めなかったとき（2026-10-24・前は console だけで一覧が黙って消えていた） */
 export const TRIP_PENDING_LOAD_FAILED_TEXT = '出張の申請がまだの日を読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
+/** 勤務変更の「未報告の勤務変更」（カレンダーの予定）を読み込めなかったとき（2026-11-05・前は読めないと黙って「未報告」「ありません」と出ていた） */
+export const SHIFT_TODO_LOAD_FAILED_TEXT = '未報告の勤務変更を読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
 export const BOARD_LOAD_FAILED_TEXT = 'グループ・DMを読み込めませんでした。通信環境の良い場所で［再読み込み］を押してください。';
 /** ベルの一覧を読み込めなかったとき */
 export const BELL_LOAD_FAILED_TEXT = '通知を読み込めませんでした。通信環境の良い場所で、もう一度開いてください。';

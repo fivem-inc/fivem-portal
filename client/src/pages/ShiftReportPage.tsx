@@ -1357,7 +1357,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   // 上の「だれの予定を見るか」と下の「対象スタッフ」は同じ値（2026-10-05・食い違わないようにページで1つだけ持つ）
   const [todoTarget, setTodoTarget]     = useState<string>(() => loadDraft<{ applicantId?: string }>(DRAFT_KEYS.shiftReport)?.applicantId ?? user.id);
   const formAnchorRef                   = useRef<HTMLDivElement>(null);
-  const { canShiftReportTodo }          = useAuth();
+  const { canShiftReportTodo, canAttendanceInput } = useAuth();
+  // 🚨 ほかの方のカレンダーの予定を見るスタッフを選べるのは、勤怠カレンダーを入力できる方（attendance_input・リーダー以上）か管理者だけ（2026-11-05 ユーザー確定 A）。
+  //   前は受理できる方（isApprover）＝フロア責任者も選べたが、予定を読む権限が無く黙って「ありません」と出ていた。［✏️ 報告］の代理報告は今までどおり
+  const canPickCalendar = isAdmin || (canAttendanceInput && isApprover);
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
   // 完全削除（管理者だけ）の確認。理由は必須で、消した記録は管理画面「修正依頼」の「削除の記録」に残る（2026-10-23）
   const [hardDeleteTarget, setHardDeleteTarget] = useState<ShiftReport | null>(null);
@@ -1394,6 +1397,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [showForm, setShowForm]         = useState(false);
   const [editTarget, setEditTarget]     = useState<ShiftReport | null>(null);
   const [myReports, setMyReports]       = useState<ShiftReport[]>([]);
+  // 自分の勤務変更を通信で確かに読めたか（端末の控え・失敗・読み込み中は false＝「未報告の勤務変更」を出さない）
+  const [myReportsFresh, setMyReportsFresh] = useState(false);
   const [pendingReports, setPendingReports] = useState<ShiftReport[]>([]);
   const [openPeriods, setOpenPeriods]   = useState<Set<string>>(new Set());
   const [successMsg, setSuccessMsg]     = useState('');
@@ -1456,13 +1461,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       const copy = isNetworkFailure(error) ? await loadCopy<ShiftReport[]>(user.id, 'shift_report_own') : null;
       if (copy && copy.length > 0) {
         setHistFailed('my', false);
+        setMyReportsFresh(false);
         setMyReports(prev => (prev.length > 0 ? prev : copy));
         setOpenPeriods(prev => (prev.size > 0 ? prev : new Set([copy[0].pay_period_start])));
         return;
       }
-      setHistFailed('my', true); return;
+      setHistFailed('my', true); setMyReportsFresh(false); return;
     }
     setHistFailed('my', false);
+    setMyReportsFresh(true);
     if (data) {
       setMyReports(data as ShiftReport[]);
       if (data.length > 0) setOpenPeriods(new Set([data[0].pay_period_start]));
@@ -1574,7 +1581,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setSuccessMsg(deliveredMsg ?? '報告を送信しました ✓');
     setTab('history');
   };
-  const reportedDates = useMemo(() => new Set(myReports.map(r => r.work_date)), [myReports]);
+  const reportedDates = useMemo(() => (myReportsFresh ? new Set(myReports.map(r => r.work_date)) : null), [myReports, myReportsFresh]);
 
   // ─── 出張の申請がまだの日（2026-10-14 ユーザー確定・パートの方は勤務変更） ───
   // 🚨 どの日がまだかは DB の my_trip_pending_days だけで決める（出張報告の画面・残業申請と同じ答え）。
@@ -2090,8 +2097,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             )}
             {/* カレンダーに入っている予定（まだ出していない分）。権限管理で出し分け・パートの方は0件なら出さない（2026-10-05） */}
             {canShiftReportTodo && (
-              <ShiftReportTodo userId={user.id} allowSelf={!selfFullTime} reportedDates={reportedDates} refreshKey={formKey} isDark={isDark} canPickOthers={isApprover} onPick={pickTodo} onCount={setTodoCount}
-                targetId={isApprover ? todoTarget : undefined}
+              <ShiftReportTodo userId={user.id} allowSelf={!selfFullTime} reportedDates={reportedDates} onRetryOwn={fetchMyReports} refreshKey={formKey} isDark={isDark} canPickOthers={canPickCalendar} onPick={pickTodo} onCount={setTodoCount}
+                targetId={canPickCalendar ? todoTarget : undefined}
                 onTargetChange={id => { setTodoTarget(id); setPrefill(null); setFormKey(k => k + 1); }} />
             )}
             {/* 注意事項（常時表示） */}
@@ -2193,8 +2200,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             <ShiftReportForm
               key={formKey}
               prefill={prefill}
-              initialApplicantId={canShiftReportTodo && isApprover ? todoTarget : undefined}
-              onApplicantChange={canShiftReportTodo && isApprover ? setTodoTarget : undefined}
+              initialApplicantId={canShiftReportTodo && canPickCalendar ? todoTarget : undefined}
+              onApplicantChange={canShiftReportTodo && canPickCalendar ? setTodoTarget : undefined}
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               editTarget={null}
               allowSelf={!selfFullTime}

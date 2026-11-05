@@ -13,16 +13,22 @@ import { supabase } from '../lib/supabaseClient';
 import { ABSENCE_LABEL } from '../lib/attendanceTypes';
 import { buildTodo, todoFromDate, type CalendarEntry, type TodoItem } from '../lib/shiftReportTodo';
 import { calcPayPeriodStartJst, payPeriodCloseCutoff, todayJstStr } from '../lib/breakCalc';
+import LoadFailedNotice from './LoadFailedNotice';
+import { SHIFT_TODO_LOAD_FAILED_TEXT } from '../lib/netFailure';
 
 const mdw = (ymd: string) => {
   const d = new Date(`${ymd}T12:00:00+09:00`);
   return `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8, 10))}（${'日月火水木金土'[d.getUTCDay()]}）`;
 };
 
+const EMPTY_DATES = new Set<string>();
+
 const ShiftReportTodo: React.FC<{
   userId: string;
-  /** 自分の勤務変更がある勤務日（自分の予定を見るとき） */
-  reportedDates: Set<string>;
+  /** 自分の勤務変更がある勤務日（自分の予定を見るとき）。🚨 null＝まだ確かに読めていない（読み込み中・失敗・端末の控え）＝「未報告」を出さない */
+  reportedDates: Set<string> | null;
+  /** 自分の勤務変更が読めなかったとき（［再読み込み］で呼ぶ） */
+  onRetryOwn?: () => void;
   refreshKey: number;
   isDark: boolean;
   /** パートの方を選んでその人の予定を見られるか（承認者） */
@@ -35,8 +41,12 @@ const ShiftReportTodo: React.FC<{
   targetId?: string;
   /** 自分の予定を見られるか。🚨 正社員は false（自分の勤務変更は出さない・2026-10-17）。そのときは初め空で、パートの方を選ぶ */
   allowSelf?: boolean;
-}> = ({ userId, reportedDates, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange, targetId: targetIdProp, allowSelf = true }) => {
+}> = ({ userId, reportedDates, onRetryOwn, refreshKey, isDark, canPickOthers, onPick, onCount, onTargetChange, targetId: targetIdProp, allowSelf = true }) => {
   const [entries, setEntries] = useState<CalendarEntry[] | null>(null);
+  // 読めなかったもの（予定・ほかの方の勤務変更）。🚨 読めないのに「未報告」「ありません」と出さない
+  const [entriesFailed, setEntriesFailed] = useState(false);
+  const [otherFailed, setOtherFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const today = todayJstStr();
   // だれの予定を見るか（承認者だけ）。既定は自分
@@ -51,16 +61,18 @@ const ShiftReportTodo: React.FC<{
       .then(({ data, error }) => { if (!error) setPartList((data ?? []) as { id: string; name: string }[]); });
   }, [canPickOthers]);
   useEffect(() => {
-    if (targetId === userId || !targetId) { setOtherReported(null); return; }
+    if (targetId === userId || !targetId) { setOtherReported(null); setOtherFailed(false); return; }
     let alive = true;
+    setOtherReported(null);
     supabase.from('shift_reports').select('work_date').eq('applicant_id', targetId).gte('work_date', todoFromDate(today))
       .then(({ data, error }) => {
         if (!alive) return;
-        if (error) { console.error('[shift-report] 勤務変更を読めませんでした:', error.message); setOtherReported(new Set()); return; }
+        if (error) { console.error('[shift-report] 勤務変更を読めませんでした:', error.message); setOtherFailed(true); return; }
+        setOtherFailed(false);
         setOtherReported(new Set(((data ?? []) as { work_date: string }[]).map(r => r.work_date)));
       });
     return () => { alive = false; };
-  }, [targetId, userId, today, refreshKey]);
+  }, [targetId, userId, today, refreshKey, retryKey]);
 
   useEffect(() => {
     if (!targetId) { setEntries([]); return; }
@@ -69,15 +81,19 @@ const ShiftReportTodo: React.FC<{
       .eq('user_id', targetId).gte('date', todoFromDate(today)).lte('date', today)
       .then(({ data, error }) => {
         if (!alive) return;
-        if (error) { console.error('[shift-report] カレンダーの予定を読めませんでした:', error.message); setEntries([]); return; }
+        if (error) { console.error('[shift-report] カレンダーの予定を読めませんでした:', error.message); setEntriesFailed(true); return; }
+        setEntriesFailed(false);
         setEntries((data ?? []) as CalendarEntry[]);
       });
     return () => { alive = false; };
-  }, [targetId, today, refreshKey]);
+  }, [targetId, today, refreshKey, retryKey]);
 
+  // 報告ありの日：自分のとき＝ページから・ほかの方＝ここで読む。どちらも確かに読めていなければ null
+  const reported = !targetId ? EMPTY_DATES : targetId === userId ? reportedDates : otherReported;
   const items = useMemo(
-    () => buildTodo(entries ?? [], targetId === userId ? reportedDates : (otherReported ?? new Set<string>()), today),
-    [entries, targetId, userId, reportedDates, otherReported, today]);
+    () => (entries && reported ? buildTodo(entries, reported, today) : []),
+    [entries, reported, today]);
+  const ownFailed = targetId === userId && !reportedDates && !!onRetryOwn;
   useEffect(() => { onCount?.(items.length); }, [items.length, onCount]);
   const picker = canPickOthers && (
     <div style={{ fontSize: 13, margin: '0 0 6px' }}>
@@ -89,8 +105,18 @@ const ShiftReportTodo: React.FC<{
       </select>
     </div>
   );
+  // 🚨 読めなかったときは「未報告」も「ありません」も出さない（赤い枠と［再読み込み］）
+  if (targetId && (entriesFailed || (targetId !== userId && otherFailed) || ownFailed)) {
+    return (
+      <div style={{ marginBottom: 16 }}>
+        {picker}
+        <LoadFailedNotice text={SHIFT_TODO_LOAD_FAILED_TEXT} onRetry={() => { setRetryKey(k => k + 1); if (ownFailed) onRetryOwn?.(); }} />
+      </div>
+    );
+  }
   // 承認者は0件でも枠を出す（選び替えられるように）。パートの方は0件なら何も出さない
-  if (!entries || (items.length === 0 && !canPickOthers)) return null;
+  if (!entries || !reported) return canPickOthers ? <div style={{ marginBottom: 16 }}>{picker}</div> : null;
+  if (items.length === 0 && !canPickOthers) return null;
   if (items.length === 0) {
     return (
       <div style={{ border: `1px dashed ${isDark ? '#6b5a2a' : '#f5c26b'}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16, textAlign: 'left', fontSize: 13, color: isDark ? '#adb5bd' : '#666' }}>

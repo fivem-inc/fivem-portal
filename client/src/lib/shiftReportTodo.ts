@@ -48,27 +48,47 @@ const TYPE_MAP: Record<string, ReportType[] | null> = {
   early_end:       null,
 };
 
-/** 一覧に出す分（日付の古い順）。reportedDates＝勤務変更がすでにある勤務日 */
+/**
+ * 予定1件の状態（2026-11-05・判定はここ1か所。報告タブの一覧と、のちに作る履歴・表が同じものを使う）
+ * ・hidden … 一覧に出さない種類（正社員の時間調整）
+ * ・future … 先の日（報告は当日から）
+ * ・closed … 給与の締め切りを過ぎた（担当のリーダー・マネージャーへ）
+ * ・reported … 同じ勤務日の勤務変更がある（🚨 種類は照合しない＝時間変更などは種類が合わないため・日付だけ）
+ * ・todo … まだ報告していない
+ * 🚨 順番は前の buildTodo と同じ（種類 → 先の日 → 締め → 報告あり）
+ */
+export type EntryState = 'hidden' | 'future' | 'closed' | 'reported' | 'todo';
+export function classifyEntry(e: CalendarEntry, reportedDates: Set<string>, today: string): EntryState {
+  const mapped = TYPE_MAP[e.type];
+  if (mapped === null || mapped === undefined) return 'hidden';
+  if (e.date > today) return 'future';
+  if (isPayPeriodClosed(e.date, today)) return 'closed';
+  if (reportedDates.has(e.date)) return 'reported';
+  return 'todo';
+}
+
+/** 予定1件 → 報告のフォームに入れる中身 */
+export function todoItemOf(e: CalendarEntry): TodoItem {
+  return {
+    date: e.date,
+    calendarType: e.type,
+    reportTypes: TYPE_MAP[e.type] ?? [],
+    location: e.location,
+    segments: Array.isArray(e.work_segments) ? e.work_segments : [],
+    plannedBreak: e.planned_break_minutes ?? null,
+    notes: e.notes ?? null,
+  };
+}
+
+/** 一覧に出す分（日付の古い順）。reportedDates＝勤務変更がすでにある勤務日。同じ日に複数あっても1行（勤務変更は1日1件） */
 export function buildTodo(entries: CalendarEntry[], reportedDates: Set<string>, today: string): TodoItem[] {
   const out: TodoItem[] = [];
   const seen = new Set<string>();
   for (const e of [...entries].sort((a, b) => a.date.localeCompare(b.date))) {
-    const mapped = TYPE_MAP[e.type];
-    if (mapped === null || mapped === undefined) continue;
-    if (e.date > today) continue;                       // 先の日は出さない
-    if (isPayPeriodClosed(e.date, today)) continue;     // 締め切りを過ぎた分は出さない
-    if (reportedDates.has(e.date)) continue;            // もう出した
-    if (seen.has(e.date)) continue;                     // 同じ日に複数あっても1行（勤務変更は1日1件）
+    if (classifyEntry(e, reportedDates, today) !== 'todo') continue;
+    if (seen.has(e.date)) continue;
     seen.add(e.date);
-    out.push({
-      date: e.date,
-      calendarType: e.type,
-      reportTypes: mapped,
-      location: e.location,
-      segments: Array.isArray(e.work_segments) ? e.work_segments : [],
-      plannedBreak: e.planned_break_minutes ?? null,
-      notes: e.notes ?? null,
-    });
+    out.push(todoItemOf(e));
   }
   return out;
 }
