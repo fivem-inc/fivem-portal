@@ -1411,7 +1411,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   // 上の「だれの予定を見るか」と下の「対象スタッフ」は同じ値（2026-10-05・食い違わないようにページで1つだけ持つ）
   const [todoTarget, setTodoTarget]     = useState<string>(() => loadDraft<{ applicantId?: string }>(DRAFT_KEYS.shiftReport)?.applicantId ?? user.id);
   const formAnchorRef                   = useRef<HTMLDivElement>(null);
-  const { canShiftReportTodo, canAttendanceInput, canShiftReportCalendar } = useAuth();
+  const { canShiftReportTodo, canAttendanceInput, canShiftReportCalendar, canShiftReportAdvance } = useAuth();
   // 🚨 ほかの方のカレンダーの予定を見るスタッフを選べるのは、勤怠カレンダーを入力できる方（attendance_input・リーダー以上）か管理者だけ（2026-11-05 ユーザー確定 A）。
   //   前は受理できる方（isApprover）＝フロア責任者も選べたが、予定を読む権限が無く黙って「ありません」と出ていた。［✏️ 報告］の代理報告は今までどおり
   const canPickCalendar = isAdmin || (canAttendanceInput && isApprover);
@@ -2256,8 +2256,18 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           </div>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '0 0 8px' }}>（これまでの残業申請表の代わりです。）</p>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※このページは「報告」用です。ここから休暇・お休みの申請はできません。</p>
+          {/* 事前申請を使える方には「その日になってから」の1行を出さず、下に②を足す（2026-11-06 ユーザー確定 案B） */}
+          {!canShiftReportAdvance && (
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（欠勤は、前もって報告できます。遅出・早退・時間の変更などは、その日になってから報告してください。）</p>
+          )}
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※欠勤・遅刻・早退の連絡は、これまで通りリーダー・マネージャーへ直接連絡してください。</p>
+          {canShiftReportAdvance && (<>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '12px 0 8px' }}>
+              <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>2</span>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>先の日の勤務の変更を事前申請できます</span>
+            </div>
+            <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（日付で先の日を選ぶと事前申請になります。受理のあと、その日の勤務のあとに履歴の「申請どおりでしたか？」から報告します。欠勤・打刻忘れは今までどおり報告です。）</p>
+          </>)}
         </div>
 
         {/* 確認ページへ（承認者のみ・2026-11-05 から自分のタブの上＝休暇申請・残業申請と同じ「上長用のオレンジが上・自分の緑が下」） */}
