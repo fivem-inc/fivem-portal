@@ -1693,7 +1693,7 @@ const AbsenceInputSheet: React.FC<{
             <div style={{ fontSize: 12, fontWeight: 600, color: '#495057', marginBottom: 4 }}>{MEMO_LABEL}</div>
             <input type="text" value={memo} maxLength={500} onChange={e => setMemo(e.target.value)} onFocus={() => setPhraseTarget('memo')}
               placeholder="例：◯◯先生の休みの代わり"
-              style={{ width: '100%', padding: '10px', borderRadius: 8, border: phraseTarget === 'memo' ? '1px solid #1976d2' : '1px solid #ccc', fontSize: 14, boxSizing: 'border-box', background: '#fff' }} />
+              style={{ width: '100%', padding: '10px', borderRadius: 8, border: phraseTarget === 'memo' ? '1px solid #1976d2' : '1px solid #ccc', fontSize: 14, boxSizing: 'border-box', background: '#fff', color: '#212529' }} />
           </div>
           <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{MEMO_HINT}</div>
           {/* 定型文・最近ご自分が使った文（押すと「最後に押した欄」に入る） */}
