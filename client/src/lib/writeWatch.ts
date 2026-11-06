@@ -16,6 +16,7 @@
 // 🚨 topicsForWrite は supabase を読まない（node で検算できる）
 
 import type { RefreshKey, RefreshTopic } from './refreshBus';
+import { previewReadOnly } from './previewPublish';
 
 /** 数字に関係ない書き込み（表・RPC・Edge Function の名前） */
 const IGNORE = new Set([
@@ -126,8 +127,28 @@ export function noteWrite(keys: RefreshKey[], now = Date.now()): void {
   debounceTimer = window.setTimeout(flush, wait);
 }
 
+/** 書き込みの要求か（表への POST/PATCH/DELETE・読むだけでない RPC・Edge Function）。下見の「見るだけ」で止めるのに使う */
+export function isWriteRequest(url: string, method: string): boolean {
+  const m = method.toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return false;
+  let path: string;
+  try { path = new URL(url).pathname; } catch { path = url; }
+  const rpc = path.match(/\/rest\/v1\/rpc\/([^/?]+)/);
+  if (rpc) return !isReadRpc(rpc[1]);
+  return /\/rest\/v1\/|\/functions\/v1\//.test(path);
+}
+
 /** supabase-js に渡す fetch。要求はそのまま通し、成功した書き込みだけ noteWrite する（本文は読まない） */
 export const watchedFetch: typeof fetch = async (input, init) => {
+  // 🚨 下見（役職プレビュー「パート」で見る方を選んでいる間）は書き込みを送らない（lib/previewPublish・2026-11-06）
+  try {
+    const url0 = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method0 = init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+    if (previewReadOnly() && isWriteRequest(url0, method0)) {
+      return new Response(JSON.stringify({ code: 'PREVIEW', message: '下見中（見るだけ）のため送信していません', error: 'preview_read_only' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } });
+    }
+  } catch { /* 見張りの失敗で要求を止めない */ }
   const res = await fetch(input, init);
   try {
     if (res.ok) {

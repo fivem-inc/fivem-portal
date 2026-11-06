@@ -67,6 +67,7 @@ import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
 import { buildNavItems, navItemsSignature, applyNavOrder, navRolloutOn } from './lib/navItems';
+import { usePreviewAdvance, setPreviewAdvance, usePreviewPerson, setPreviewPerson, readPreviewPerson } from './lib/previewPublish';
 import { useMyNavOrder } from './hooks/useMyNavOrder';
 import { useMyNavTwoRow } from './hooks/useMyNavTwoRow';
 import { useNavRolloutOn } from './hooks/useNavRolloutOn';
@@ -929,6 +930,19 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const navigate = useNavigate();
   const location = useLocation();
   const { previewRole, setPreviewRole, user: ctxUser, retiree, previewRetiree, setPreviewRetiree, previewLeave, setPreviewLeave } = useContext(AuthContext);
+  const previewAdvanceOn = usePreviewAdvance();
+  const previewPerson = usePreviewPerson();
+  // 下見の「見る方」の候補（在籍のパートの方・従業員番号の順）。パートの下見のときだけ読む
+  const [previewParts, setPreviewParts] = useState<{ id: string; name: string }[]>([]);
+  const partPreview = previewRole === 'パート' && !previewLeave && !previewRetiree;
+  useEffect(() => {
+    if (!partPreview) { if (readPreviewPerson()) setPreviewPerson(null); return; }
+    let alive = true;
+    supabase.from('profiles').select('id, name, employee_no').eq('is_active', true).eq('employment_type', 'パート')
+      .order('employee_no', { ascending: true, nullsFirst: false }).order('name')
+      .then(({ data, error }) => { if (alive && !error) setPreviewParts(((data ?? []) as { id: string; name: string | null }[]).map(p => ({ id: p.id, name: p.name ?? '' }))); });
+    return () => { alive = false; };
+  }, [partPreview]);
   // 退職して申請期間中か。🚨 ここでは「読み込みを止める」ためだけに使う（機能の出し分けは can* に任せる）
   const isRetiree = !!retiree || previewRetiree;
   const realIsAdmin = ctxUser?.app_metadata?.role === 'admin' && !isRetiree;
@@ -1298,7 +1312,23 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         }}>
           👁️ プレビュー中：{previewRetiree ? '退職者（申請期間中）' : previewLeave ? '休職者（一般の役職）' : previewRole} として表示
           {(previewRetiree || previewLeave) && <span style={{ fontWeight: 'normal' }}>※ 見た目だけの下見です</span>}
-          <button onClick={() => { setPreviewRole(null); setPreviewRetiree(false); setPreviewLeave(false); }}
+          {/* パートの下見のときだけ：まだ公開していない勤務変更の事前申請を「公開したらこう見える」で見る（画面の中だけ・2026-11-06） */}
+          {partPreview && (
+            <select value={previewPerson?.id ?? ''} aria-label="見る方"
+              onChange={e => { const p = previewParts.find(x => x.id === e.target.value); setPreviewPerson(p ?? null); }}
+              style={{ fontSize: 11, padding: '2px 4px', borderRadius: 4, border: '1px solid #333', background: '#fff', color: '#333', maxWidth: 150 }}>
+              <option value="">見る方：自分のデータ</option>
+              {previewParts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
+          {previewPerson && partPreview && <span style={{ fontWeight: 'normal' }}>※ 勤務変更のページだけ・見るだけ（送信できません）</span>}
+          {partPreview && (
+            <button onClick={() => setPreviewAdvance(!previewAdvanceOn)}
+              style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: '1px solid #333', background: previewAdvanceOn ? '#333' : '#fff', color: previewAdvanceOn ? '#fff' : '#333', cursor: 'pointer' }}>
+              事前申請：公開後の見え方 {previewAdvanceOn ? 'オン' : 'オフ'}
+            </button>
+          )}
+          <button onClick={() => { setPreviewRole(null); setPreviewRetiree(false); setPreviewLeave(false); setPreviewAdvance(false); setPreviewPerson(null); }}
             style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
             × 終了
           </button>
@@ -2858,12 +2888,16 @@ const BoardPageWrapper: React.FC = () => {
 // シフト実績申請ページ（/shift-report）
 const ShiftReportPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const previewPerson = usePreviewPerson();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   return (
     <>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <ShiftReportPage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />
+        {/* 下見（役職プレビュー「パート」で見る方を選んだとき）は、その方の画面として読む（見るだけ・書き込みは watchedFetch が止める・2026-11-06） */}
+        {previewPerson && roleTitle === 'パート'
+          ? <ShiftReportPage key={previewPerson.id} user={{ ...user, id: previewPerson.id }} profileName={previewPerson.name} roleTitle={roleTitle} isAdmin={false} />
+          : <ShiftReportPage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />}
       </Suspense>
     </>
   );

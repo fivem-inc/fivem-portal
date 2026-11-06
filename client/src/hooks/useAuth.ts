@@ -10,6 +10,7 @@ import { recordLogout } from '../lib/loginHistory';
 import { withTimeout } from '../lib/netFailure';
 import { clearOfflineCopies } from '../lib/offlineCopy';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
+import { usePreviewAdvance } from '../lib/previewPublish';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
 import { PROFILE_PREFETCH_COLUMNS, takePrefetchedProfile } from '../lib/profilePrefetch';
@@ -328,6 +329,8 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
 
 export const useAuth = (): UseAuthReturn => {
   const { user, previewRole, retiree, previewRetiree, onLeave, previewLeave } = useContext(AuthContext);
+  // 役職プレビュー（パート）で「公開後の見え方」を下見しているか（lib/previewPublish・2026-11-06）
+  const previewAdvanceOn = usePreviewAdvance();
 
   // ── 退職して申請期間中の人（3段目・2026-09-20）──────────────────────
   // 🚨 絞り込みはこのフックの1か所だけ。画面側には1行も書かない
@@ -510,7 +513,10 @@ export const useAuth = (): UseAuthReturn => {
   const canShiftReportTodo = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_todo ?? false);
   // 勤務変更の履歴に「カレンダーの予定」と［カード｜表］（2026-11-05）。既定は OFF
   const canShiftReportCalendar = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_calendar ?? false);
-  const canShiftReportAdvance = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report_advance ?? false);
+  // 🚨 下見：管理者が役職プレビュー「パート」で［公開後の見え方］をオンにしたときだけ true（画面の中だけ・本当の権限は変えない）
+  const canShiftReportAdvance = realIsAdmin && !previewRole ? true
+    : (realIsAdmin && previewRole === 'パート' && !previewLeave && previewAdvanceOn) ? true
+    : (effectivePerms.shift_report_advance ?? false);
   // 「📋 手続き」（2026-10-19・権限管理の行）。🚨 中身の読み書き（DB の RLS）は「マネージャー以上」のままなので、
   //    ON にできるのはマネージャー以上の役職だけ（リーダーなどを ON にしても中身が空のページになるため）。退職者には出さない
   const canProcedures = !retireeMode && isManagerPlus && (realIsAdmin && !previewRole ? true : (effectivePerms.procedures ?? false));
