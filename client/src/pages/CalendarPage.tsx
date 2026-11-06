@@ -1685,7 +1685,7 @@ const AbsenceInputSheet: React.FC<{
             : <div style={{ fontSize: 12, color: '#666', marginBottom: 4, fontWeight: 600 }}>{NOTES_LABEL}<span style={{ fontSize: 11, fontWeight: 'normal', color: '#888', marginLeft: 8 }}>{NOTES_SUB}</span></div>}
           <input type="text" value={notes} onChange={e => setNotes(e.target.value)} onFocus={() => setPhraseTarget('notes')}
             placeholder={needBreakNote ? '例：13:30ごろ、授業の合間に40分' : '例：午後のみの勤務です'}
-            style={{ width: '100%', padding: '10px', borderRadius: 8, border: phraseTarget === 'notes' ? '1px solid #1976d2' : '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }} />
+            style={{ width: '100%', padding: '10px', borderRadius: 8, border: phraseTarget === 'notes' ? '1px solid #1976d2' : '1px solid #ccc', fontSize: 14, boxSizing: 'border-box', background: '#fff', color: '#212529' }} />
           {looksLikeOthers(notes) && (
             <div style={{ fontSize: 12, color: '#8a5a00', background: '#fff8e1', borderRadius: 6, padding: '5px 8px', marginTop: 6 }}>{NOTES_WARN}</div>
           )}
