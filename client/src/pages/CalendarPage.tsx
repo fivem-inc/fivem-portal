@@ -30,7 +30,7 @@ import ShiftAdjustTab from '../components/ShiftAdjustTab';
 import { TOGGLE_BLUE, tintBtn } from '../lib/buttonStyles';
 import ApplicationRequestSheet from '../components/ApplicationRequestSheet';
 import { ENC_PURPOSE_MARK, ENC_REASON_MARK } from '../lib/encouragementDay';
-import { NOTES_LABEL, MEMO_LABEL, MEMO_HINT, NOTES_WARN, MEMO_TEMPLATES, MEMO_ONLY_TEMPLATE, looksLikeOthers, fetchMemos, saveMemos, fetchRecentPhrases } from '../lib/attendanceMemo';
+import { NOTES_LABEL, NOTES_SUB, MEMO_LABEL, MEMO_SUB, MEMO_HINT, NOTES_WARN, MEMO_TEMPLATES, MEMO_ONLY_TEMPLATE, looksLikeOthers, fetchMemos, saveMemos, fetchRecentPhrases } from '../lib/attendanceMemo';
 import { PLACE_OPTION_FILTER, placeGroupsFromRows, allPlaces, placesInText, hasMoveWords, timesInText, type PlaceGroup } from '../lib/workPlaces';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
@@ -46,7 +46,7 @@ interface AbsenceDraft {
   date: string; userIds: string[]; userId?: string; isAbsent: boolean; targetDates: string[]; absentDates?: string[];
   isLate: boolean; isLateStart: boolean; isEarlyLeave: boolean; isEarlyEnd: boolean;
   lateTime: string; earlyTime: string; notes: string;
-  /** 🔒 上長だけのメモ（attendance_exception_memos・2026-11-05） */
+  /** 🔒 上長のメモ（attendance_exception_memos・2026-11-05） */
   memo?: string;
   locations: Record<string, string>;
   locationCustoms?: Record<string, string>;
@@ -221,7 +221,7 @@ interface AbsenceEvent {
   work_segments: WorkSegment[]; // 勤務時間帯。単一勤務・全欠勤・過去データは空配列
   original_location: string | null; // 勤務地変更の「変更前の校」
   planned_break_minutes?: number | null; // 勤務の中で取る休憩（分）・2026-10-08
-  memo?: string | null; // 🔒 上長だけのメモ（読めるのは attendance_input の方と管理者だけ・ほかの方は空）
+  memo?: string | null; // 🔒 上長のメモ（読めるのは attendance_input の方と管理者だけ・ほかの方は空）
 }
 
 // 残業・時間管理（/overtime）から受理された分。
@@ -1133,7 +1133,7 @@ const AbsenceInputSheet: React.FC<{
       setError(isConflict ? err.message : '保存に失敗しました: ' + err.message);
       return;
     }
-    // 🔒 上長だけのメモ（別の表）。🚨 失敗しても予定は登録済み＝最後に必ず知らせる（黙って閉じない）
+    // 🔒 上長のメモ（別の表）。🚨 失敗しても予定は登録済み＝最後に必ず知らせる（黙って閉じない）
     const memoRes = await saveMemos((inserted ?? []).map((r: { id: string }) => r.id), memo);
     const memoFailed = memoRes.error;
     if (memoFailed) console.error('[attendance memo] 保存失敗:', memoFailed);
@@ -1167,7 +1167,7 @@ const AbsenceInputSheet: React.FC<{
       savingRef.current = false;
       confirmingRef.current = false;
       setConfirming(false);
-      setError('登録は完了しましたが、Googleカレンダーへの反映に失敗しました。カレンダーを確認してください。' + (memoFailed ? '（上長だけのメモも保存できませんでした）' : ''));
+      setError('登録は完了しましたが、Googleカレンダーへの反映に失敗しました。カレンダーを確認してください。' + (memoFailed ? '（上長のメモも保存できませんでした）' : ''));
       onSaved(); // 一覧だけは最新にする
       return;
     }
@@ -1196,7 +1196,7 @@ const AbsenceInputSheet: React.FC<{
     if (notifyErr) { console.error('[attendance-notify] 通知失敗:', notifyErr); onNotifyFailed?.(); }
     if (memoFailed) {
       setSaving(false); savingRef.current = false; confirmingRef.current = false; setConfirming(false);
-      setError('予定は登録しましたが、上長だけのメモを保存できませんでした。カレンダーの予定を取り消して、もう一度入れてください。（' + memoFailed + '）');
+      setError('予定は登録しましたが、上長のメモを保存できませんでした。カレンダーの予定を取り消して、もう一度入れてください。（' + memoFailed + '）');
       onSaved();
       return;
     }
@@ -1678,11 +1678,11 @@ const AbsenceInputSheet: React.FC<{
           </label>
         )}
 
-        {/* 備考：ご本人への連絡（notes）と 🔒 上長だけのメモ（別の表）・2026-11-05 */}
+        {/* 備考：ご本人への連絡（notes）と 🔒 上長のメモ（別の表）・2026-11-05 */}
         <div style={{ marginBottom: 16 }}>
           {needBreakNote
-            ? <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 4, fontWeight: 'bold' }}>{NOTES_LABEL}（必須）　休憩をいつ取るか書いてください</div>
-            : <div style={{ fontSize: 12, color: '#666', marginBottom: 4, fontWeight: 600 }}>{NOTES_LABEL}</div>}
+            ? <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 4, fontWeight: 'bold' }}>{NOTES_LABEL}（必須）　休憩をいつ取るか書いてください<div style={{ fontSize: 11, fontWeight: 'normal', color: '#888' }}>{NOTES_SUB}</div></div>
+            : <div style={{ fontSize: 12, color: '#666', marginBottom: 4, fontWeight: 600 }}>{NOTES_LABEL}<span style={{ fontSize: 11, fontWeight: 'normal', color: '#888', marginLeft: 8 }}>{NOTES_SUB}</span></div>}
           <input type="text" value={notes} onChange={e => setNotes(e.target.value)} onFocus={() => setPhraseTarget('notes')}
             placeholder={needBreakNote ? '例：13:30ごろ、授業の合間に40分' : '例：午後のみの勤務です'}
             style={{ width: '100%', padding: '10px', borderRadius: 8, border: phraseTarget === 'notes' ? '1px solid #1976d2' : '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }} />
@@ -1690,7 +1690,7 @@ const AbsenceInputSheet: React.FC<{
             <div style={{ fontSize: 12, color: '#8a5a00', background: '#fff8e1', borderRadius: 6, padding: '5px 8px', marginTop: 6 }}>{NOTES_WARN}</div>
           )}
           <div style={{ marginTop: 10, background: '#f1f3f5', border: '1px solid #dee2e6', borderRadius: 8, padding: 9 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#495057', marginBottom: 4 }}>{MEMO_LABEL}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#495057', marginBottom: 4 }}>{MEMO_LABEL}<span style={{ fontSize: 11, fontWeight: 'normal', color: '#6c757d', marginLeft: 8 }}>{MEMO_SUB}</span></div>
             <input type="text" value={memo} maxLength={500} onChange={e => setMemo(e.target.value)} onFocus={() => setPhraseTarget('memo')}
               placeholder="例：◯◯先生の休みの代わり"
               style={{ width: '100%', padding: '10px', borderRadius: 8, border: phraseTarget === 'memo' ? '1px solid #1976d2' : '1px solid #ccc', fontSize: 14, boxSizing: 'border-box', background: '#fff', color: '#212529' }} />
@@ -1699,7 +1699,7 @@ const AbsenceInputSheet: React.FC<{
           {/* 定型文・最近ご自分が使った文（押すと「最後に押した欄」に入る） */}
           <div style={{ marginTop: 10 }}>
             <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
-              よく使う理由（押すと「{phraseTarget === 'memo' ? '上長だけのメモ' : 'スタッフへの連絡'}」に入ります）
+              よく使う理由（押すと「{phraseTarget === 'memo' ? '上長のメモ' : 'ご本人への連絡'}」に入ります）
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {MEMO_TEMPLATES.map(t => (
@@ -1797,8 +1797,8 @@ const AbsenceInputSheet: React.FC<{
                       </div>
                     );
                   })}
-                  {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>スタッフへの連絡：{notes}</div>}
-                  {memo.trim() && <div style={{ fontSize: 13, color: '#495057', marginTop: 4 }}>🔒 上長だけのメモ：{memo.trim()}</div>}
+                  {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>ご本人への連絡：{notes}</div>}
+                  {memo.trim() && <div style={{ fontSize: 13, color: '#495057', marginTop: 4 }}>🔒 上長のメモ：{memo.trim()}</div>}
                 </div>
                 {totalCount > 1 && (
                   <div style={{ fontSize: 12.5, color: '#555', marginBottom: 12 }}>合計 {totalCount}件を登録します</div>
@@ -2317,7 +2317,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     const profileMap: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p.name; });
 
-    // 🔒 上長だけのメモ（読めない方には0件で返る）
+    // 🔒 上長のメモ（読めない方には0件で返る）
     const { map: memoMap } = await fetchMemos(rows.map((a: { id: string }) => a.id));
     setAbsences(rows.map((a: { id: string; user_id: string; date: string; type: AttendanceType; actual_time: string | null; notes: string | null; location: string | null; original_location: string | null; work_segments: unknown }) => ({
       ...a, name: profileMap[a.user_id] || '不明', work_segments: parseSegments(a.work_segments), memo: memoMap[a.id] ?? null,
@@ -3045,8 +3045,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
               {deleteTarget.work_segments.length > 0 && (
                 <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>勤務：{formatSegments(deleteTarget.work_segments)}</div>
               )}
-              {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>スタッフへの連絡：{deleteTarget.notes}</div>}
-              {deleteTarget.memo && <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>🔒 上長だけのメモ：{deleteTarget.memo}</div>}
+              {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>ご本人への連絡：{deleteTarget.notes}</div>}
+              {deleteTarget.memo && <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>🔒 上長のメモ：{deleteTarget.memo}</div>}
             </div>
             <div style={{ fontSize: 13, color: '#666', marginBottom: 16, lineHeight: 1.7 }}>
               取消すとGoogleカレンダーからも消え、リーダー・マネージャーに取消の通知が届きます。<br />

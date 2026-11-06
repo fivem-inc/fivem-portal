@@ -1371,7 +1371,7 @@ const LeaveRequestsTab: React.FC = () => {
                           const s = v == null ? '' : String(v);
                           return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
                         };
-                        const headers = ['日付', '対象者', '種別', '時間', '校', '勤務時間帯', 'スタッフへの連絡', '上長だけのメモ', '追加者', '追加日'];
+                        const headers = ['日付', '対象者', '種別', '時間', '校', '勤務時間帯', 'ご本人への連絡', '上長のメモ', '追加者', '追加日'];
                         const rows = [...filteredAbsRecs]
                           .sort((a, b) => a.date.localeCompare(b.date))
                           .map(r => [
@@ -1885,8 +1885,8 @@ const LeaveRequestsTab: React.FC = () => {
                         <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>勤務：{formatSegments(deleteTarget.work_segments)}</div>
                       )}
                       <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>追加者：{deleteTarget.creatorName}</div>
-                      {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>スタッフへの連絡：{deleteTarget.notes}</div>}
-                      {deleteTarget.memo && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>🔒 上長だけのメモ：{deleteTarget.memo}</div>}
+                      {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>ご本人への連絡：{deleteTarget.notes}</div>}
+                      {deleteTarget.memo && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>🔒 上長のメモ：{deleteTarget.memo}</div>}
                     </div>
                     <div style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>このレコードを削除します。元に戻せません。</div>
                     <div style={{ display: 'flex', gap: 10 }}>

@@ -6,10 +6,13 @@
 import { supabase } from './supabaseClient';
 
 /** 欄の名前（ユーザー確定 案1）。画面の文はここ1か所 */
-export const NOTES_LABEL = 'スタッフへの連絡（ご本人に表示されます）';
-export const MEMO_LABEL = '🔒 上長だけのメモ（スタッフには表示されません）';
-export const MEMO_HINT = '迷ったら「上長だけのメモ」に書いてください';
-export const NOTES_WARN = '⚠️ この欄はご本人に表示されます。ほかの方の事情は「上長だけのメモ」へ';
+// 2026-11-06 ユーザー確定：見出しと「どこに出るか」の1行（ご本人の画面は「上長からの連絡：」のまま＝言葉がつながる）
+export const NOTES_LABEL = 'ご本人への連絡';
+export const NOTES_SUB = '本人の勤務変更の一覧に表示';
+export const MEMO_LABEL = '🔒 上長のメモ';
+export const MEMO_SUB = '上長が見る勤怠カレンダーにだけ表示';
+export const MEMO_HINT = 'どちらも通知は届きません。迷ったら「上長のメモ」へ';
+export const NOTES_WARN = '⚠️ この欄はご本人に表示されます。ほかの方の事情は「上長のメモ」へ';
 
 /** よく使う理由（これまでの備考で多かったもの・人の名前が入らないもの）。押すと「最後に押した欄」に入る */
 export const MEMO_TEMPLATES = [
