@@ -826,10 +826,16 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
 
   const fetchPending = useCallback(async () => {
     if (!userId || !canShiftReport) { setPendingCount(0); return; }
-    if (!isAdmin && !isApprover) { setPendingCount(0); return; }
+    // 受理済みの事前申請で日が過ぎ、まだ報告していないもの（ご本人・代わりに出した方・2026-11-06）。毎朝のお知らせ（shift_report_unreported_notify）と同じ判定
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const { data: mine } = await supabase.from('shift_reports').select('id')
+      .or(`applicant_id.eq.${userId},submitted_by.eq.${userId}`)
+      .eq('status', 'request_confirmed').eq('advance', true).lt('work_date', today);
+    const own = mine?.length ?? 0;
+    if (!isAdmin && !isApprover) { setPendingCount(own); return; }
 
     const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted', 'requested']);
-    setPendingCount(data?.length ?? 0);
+    setPendingCount((data?.length ?? 0) + own);
   }, [userId, isApprover, isAdmin, canShiftReport, setPendingCount]);
 
   // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
@@ -1383,6 +1389,8 @@ const classifyNotif = (n: NotifLike) => {
   const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
+  // 勤務変更の事前申請の報告がまだ（2026-11-06・ご本人と代わりに出した方・毎朝付け直す）
+  const isShiftUnreported         = n.source_type === 'shift_report:unreported' || n.source_type === 'shift_report:unreported_proxy';
   // 確認者：受理まちリマインド（毎日出す分と、勤務日より前に1回だけ出す分。飛び先は同じ）
   const isOvertimePendingReview   = n.source_type === 'overtime:pending_review' || n.source_type === 'overtime:pending_review_advance';
   const isClockInquiry         = n.source_type === 'overtime:clock_inquiry';          // 本人：経理からの打刻の確認（要対応）
@@ -1395,7 +1403,7 @@ const classifyNotif = (n: NotifLike) => {
   const isCorrectionNew = isCorrection && (n.event_key ?? '').startsWith('correction:new'); // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOvertimeProxyFyi || isOtProposalReceived || isOtProposalResponded || isAppRequestDismissed || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOvertimeProxyFyi || isOtProposalReceived || isOtProposalResponded || isAppRequestDismissed || isOvertimeUnreported || isShiftUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -1581,6 +1589,7 @@ const classifyNotif = (n: NotifLike) => {
     // 実績未報告リマインド → 履歴の、いちばん古い未報告の申請まで動いて光る（hl=unreported・2026-10-19）。
     // 🚨 プッシュ（push-dispatch の EVENT_MAP）・ホームの帯も同じ URL にそろえる
     if (isOvertimeUnreported) return { path: '/overtime?tab=history&hl=unreported', closeOnTap: true };
+    if (isShiftUnreported) return { path: '/shift-report?tab=history', closeOnTap: true };
     // 受理まちリマインド（確認者へ）→ 確認待ちの一覧（受理する場所）へ。
     // 毎日つくり直されるリマインドなので、タップで閉じてよい（対応が済めば翌日から出なくなる）
     if (isOvertimePendingReview) return { path: '/overtime?view=confirm', closeOnTap: true };

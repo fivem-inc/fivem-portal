@@ -128,6 +128,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // ⚠️ タブ指定を省くと既定タブ（報告の入力）に着地して「何を見ればいいか分からない」になる
   "shift_report:new_request": { app: "勤務変更報告", word: "未承認", text: "勤務変更報告が届いています", url: "/shift-report?view=confirm" },
   "shift_report:returned":    { app: "勤務変更報告", word: "差戻", text: "勤務変更報告が差し戻されました", url: "/shift-report?tab=history", bell: true },
+  // 事前申請の報告がまだ（毎朝 9:00・DB の shift_report_unreported_notify・2026-11-06）。代わりに出した方へはベルだけ（event_key なし）
+  "shift_report:unreported": { app: "勤務変更報告", word: "新着", text: "勤務変更の報告がまだです", url: "/shift-report?tab=history" },
   // 🚨 2026-09-09 追加。ベルには出ていたのに EVENT_MAP に無く、スマホに届いていなかった
   //    （実データで4件確認）。何を直されたかはベルの本文にしかないので bell を付ける。
   "shift:admin_edited":       { app: "勤務変更報告", word: "新着", text: "管理者が勤務変更報告を修正しました", url: "/shift-report?tab=history", bell: true },
