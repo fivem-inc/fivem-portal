@@ -46,7 +46,7 @@ interface ShiftReport {
   break_minutes: number | null;
   labor_minutes: number | null;
   reviewer_id: string | null;
-  status: 'pending' | 'confirmed' | 'resubmitted' | 'cancelled' | 'returned';
+  status: 'pending' | 'confirmed' | 'resubmitted' | 'cancelled' | 'returned' | 'requested' | 'request_confirmed';
   confirmed_by: string | null;
   confirmed_at: string | null;
   created_at: string;
@@ -231,14 +231,15 @@ const ShiftReportsTab: React.FC = () => {
   };
 
   const handleConfirm = (r: ShiftReport) => {
-    setConfirmDialog({ message: `「${r.applicantName}」の報告を受理しますか？`, onConfirm: async () => {
+    const adv = r.status === 'requested';
+    setConfirmDialog({ message: adv ? `「${r.applicantName}」の事前申請を受理しますか？（その日の勤務のあとに、ご本人が実績を報告します）` : `「${r.applicantName}」の報告を受理しますか？`, onConfirm: async () => {
     setConfirming(r.id);
     setActionError('');
     const { data: { user } } = await supabase.auth.getUser();
     // 🚨 受理そのものが失敗しても、そのまま「受理しました」と本人へ通知が飛んでいた。
     //    .update() は 0件でもエラーにならないので、error と件数の両方を見る（取消・削除と同じ形）。
     const { data: updated, error: confirmErr } = await supabase.from('shift_reports')
-      .update({ status: 'confirmed', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
+      .update(adv ? { status: 'request_confirmed' } : { status: 'confirmed', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
       .eq('id', r.id).select('id');
     if (confirmErr) {
       setConfirming(null);
@@ -253,11 +254,11 @@ const ShiftReportsTab: React.FC = () => {
     }
     // ここから先は受理がDBで確定済み。記録・通知が失敗しても受理は取り消さない
     // （ただし静かに消さず、記録の失敗はコンソールに残す）
-    await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: '管理者が受理しました', snapshot: r })
+    await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: adv ? '管理者が事前申請を受理しました' : '管理者が受理しました', snapshot: r })
       .then(({ error }) => { if (error) console.error('[shift_report] 受理の履歴を残せませんでした:', error.message); },
             (e) => console.error('[shift_report] 受理の履歴を残せませんでした:', e));
     await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '勤務変更報告が受理されました',
+      user_id: r.applicant_id, message: adv ? '勤務変更の事前申請が受理されました' : '勤務変更報告が受理されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
     }).then(...logFail('ベル通知の作成'));
@@ -341,6 +342,14 @@ const ShiftReportsTab: React.FC = () => {
   const doCancel = async () => {
     if (!cancelTarget) return;
     setCanceling(true);
+    if (cancelTarget.status === 'requested' || cancelTarget.status === 'request_confirmed') {
+      // 事前申請は消す（2026-11-06 案A：その日にまた報告できるように・削除の記録に残る）
+      const { error: advErr } = await supabase.rpc('shift_report_cancel_advance', { p_id: cancelTarget.id });
+      setCanceling(false);
+      if (advErr) { setActionError(`取消に失敗しました：${advErr.message}`); return; }
+      setCancelTarget(null); setSuccessMsg('事前申請を取り消しました'); fetchReports();
+      return;
+    }
     const { data: updated, error } = await supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', cancelTarget.id).select('id');
     setCanceling(false);
     if (error) { setActionError(`取消に失敗しました：${error.message}`); return; }
@@ -352,10 +361,10 @@ const ShiftReportsTab: React.FC = () => {
 
   // フィルタ
   const periods = [...new Set(reports.map(r => r.pay_period_start))].sort((a, b) => b.localeCompare(a));
-  const activeCount = reports.filter(r => ['pending', 'resubmitted'].includes(r.status)).length;
+  const activeCount = reports.filter(r => ['pending', 'resubmitted', 'requested'].includes(r.status)).length;
 
   const filtered = reports.filter(r => {
-    if (statusFilter === 'active'    && !['pending', 'resubmitted'].includes(r.status)) return false;
+    if (statusFilter === 'active'    && !['pending', 'resubmitted', 'requested'].includes(r.status)) return false;
     if (statusFilter === 'confirmed' && r.status !== 'confirmed') return false;
     if (statusFilter === 'cancelled' && r.status !== 'cancelled') return false;
     if (personFilter !== 'all'       && r.applicant_id !== personFilter) return false;
@@ -611,8 +620,10 @@ const ShiftReportsTab: React.FC = () => {
             <tbody>
               {sorted.map((r, i) => {
                 const rTypes  = getTypes(r);
-                const stBg    = STATUS_BG[r.status] ?? '#6c757d';
-                const isPend  = ['pending', 'resubmitted'].includes(r.status);
+                // 受理済みの事前申請で日が過ぎても報告が無い＝未報告（2026-11-06）
+                const unreported = r.status === 'request_confirmed' && r.work_date < new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+                const stBg    = unreported ? '#dc3545' : (STATUS_BG[r.status] ?? '#6c757d');
+                const isPend  = ['pending', 'resubmitted', 'requested'].includes(r.status);
                 const isReSub = r.status === 'resubmitted';
                 const isRet   = r.status === 'returned';
                 const hasHist = expandedHistory.has(r.id);
@@ -722,7 +733,7 @@ const ShiftReportsTab: React.FC = () => {
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center' }}>
                         <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 8, background: stBg, color: 'white', lineHeight: 1.4 }}>
                           <div style={{ fontSize: 9, opacity: 0.9 }}>{r.reviewerName}</div>
-                          <div style={{ fontWeight: 'bold', fontSize: 11, whiteSpace: 'nowrap' }}>{STATUS_INFO[r.status]?.label ?? r.status}</div>
+                          <div style={{ fontWeight: 'bold', fontSize: 11, whiteSpace: 'nowrap' }}>{unreported ? '未報告（事前受理）' : (STATUS_INFO[r.status]?.label ?? r.status)}</div>
                         </div>
                         {/* 誰がいつ受理したか（2026-10-17・残業・休暇の一覧と同じ形） */}
                         <ApprovedByLines color={sub} lines={r.status === 'confirmed' && r.confirmed_by
@@ -739,7 +750,7 @@ const ShiftReportsTab: React.FC = () => {
                           {isPend && (
                             <button disabled={confirming === r.id} onClick={() => handleConfirm(r)}
                               style={{ ...btnBase, background: confirming === r.id ? '#6c757d' : BTN_BLUE, color: '#fff', border: '2px solid ' + (confirming === r.id ? '#545b62' : '#0a58ca') }}>
-                              {confirming === r.id ? '...' : '受理'}
+                              {confirming === r.id ? '...' : r.status === 'requested' ? '事前受理' : '受理'}
                             </button>
                           )}
                           {r.status !== 'cancelled' && (

@@ -1297,6 +1297,22 @@ const BoardPage: React.FC = () => {
     if (!isLatest()) return;
     if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); if (await tryInboxCopy(msgErr)) return; setInboxFailed(true); setInboxLoaded(true); return; }
 
+    // 🚨 読了・完了（confirmations）は一覧を出す「前」に読む（2026-11-06 ユーザー指摘）。
+    //    前は一覧を先に出してから読んでいたので、その間は読了済みのお知らせまで「未対応」に数えられ、
+    //    開いた瞬間だけ受信トレイの右端に赤い数字（5・6）が出ていた
+    const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+    let confRes: { data: any[] | null; error: { code?: string; message: string } | null } = { data: [], error: null };
+    if (confirmMsgIds.length > 0) {
+      confRes = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      if (!isLatest()) return;
+    }
+    const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
+    (confRes.data || []).forEach((c: any) => {
+      if (!confMap[c.message_id]) confMap[c.message_id] = [];
+      confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
+    });
+    if (!confRes.error) setConfirmations(prev => ({ ...prev, ...confMap }));
+
     // status='scheduled'（未送信）は受信トレイに出さない。cronがstatus='sent'に切り替えるまで非表示
     // ※クライアント時計とscheduled_atの比較ではなく、DBが確定させたstatusで判定する（送信時刻の表示崩れ・表示タイミングのズレを防ぐ）
     setInboxMessages((msgData || [])
@@ -1325,21 +1341,13 @@ const BoardPage: React.FC = () => {
       console.error('返信の数の読み込みに失敗:', replyErr.code, replyErr.message);
     }
 
-    // confirmations を読む（deadline_type / requires_confirmation があるもの）
-    const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     // 端末の控え（電波 段6）：自分の既読・自分の読了／回答・送り主の名前だけ添える
     const inboxList = (msgData || []).filter((m: any) => m.status !== 'scheduled') as BoardMessage[];
     const readForCopy = readErr ? [] : (readData || []).map((r: any) => r.message_id as string);
     let confForCopy: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
     if (confirmMsgIds.length > 0) {
-      const { data: confData, error: confErr } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
-      if (confErr) { console.error('受信トレイの読了・完了の読み込みに失敗:', confErr.code, confErr.message); return; } // 空で上書きしない
-      const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
-      (confData || []).forEach((c: any) => {
-        if (!confMap[c.message_id]) confMap[c.message_id] = [];
-        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
-      });
-      setConfirmations(prev => ({ ...prev, ...confMap }));
+      // 読了・完了は上（一覧を出す前）で読み済み
+      if (confRes.error) { console.error('受信トレイの読了・完了の読み込みに失敗:', confRes.error.code, confRes.error.message); return; } // 空で上書きしない
       confForCopy = confMap;
       // 「◯人/◯人」の分子（2026-10-29）。宛先の人はほかの人の回答の行を読めないので、数だけを DB から
       const cc = await loadConfirmCounts(confirmMsgIds);

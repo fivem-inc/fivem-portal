@@ -1770,7 +1770,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       if (n.source_type === 'shift_report:pending_approval') {
         const r = shiftMap.get(n.reference_id);
         if (!r) return false;
-        const stillPending = r.reviewer_id === userId && (r.status === 'pending' || r.status === 'resubmitted');
+        const stillPending = r.reviewer_id === userId && (r.status === 'pending' || r.status === 'resubmitted' || r.status === 'requested');
         return !stillPending;
       }
       if (n.source_type === 'shift_report:pending_resubmit') {

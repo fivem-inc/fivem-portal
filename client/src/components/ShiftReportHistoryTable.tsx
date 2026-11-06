@@ -24,6 +24,7 @@ const MARK_STYLE: Record<Mark, { label: string; color: string; bg: string; darkC
 const todayJst = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 const markOf = (status: string, date: string): Mark =>
   status === 'request_confirmed' ? (date < todayJst() ? '未' : '受')
+  : status === 'requested' && date < todayJst() ? '未'
   : status === 'confirmed' ? '済' : status === 'returned' ? '戻' : status === 'cancelled' ? '消' : '待';
 const isAdvanceOpen = (status: string) => status === 'requested' || status === 'request_confirmed';
 
@@ -104,7 +105,7 @@ function ShiftReportHistoryTable<R extends ShiftDiffRow & { status: string; plan
                   <td className="sr-c" style={td}>
                     {empty && <span style={{ color: subText }}>{dayNote?.(d.date) || '—'}</span>}
                     {r && d.plans.map((p, j) => <div key={j} className="sr-c" style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis' }}><SrPill label="上長が入力" isDark={isDark} />{planText(p)}</div>)}
-                    {r && !isAdvanceOpen(r.status) && plannedText?.(r) && <div className="sr-c" style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis' }}><SrPill label="申請" isDark={isDark} />{plannedText(r)}</div>}
+                    {r && !isAdvanceOpen(r.status) && plannedText?.(r) && plannedText(r) !== reportText(r) && <div className="sr-c" style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis' }}><SrPill label="申請" isDark={isDark} />{plannedText(r)}</div>}
                     {r && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}><SrPill label={isAdvanceOpen(r.status) ? '申請' : '報告'} isDark={isDark} />{reportText(r)}</div>}
                     {r && markOf(r.status, d.date) === '未' && <div style={{ fontSize: 11, color: isDark ? '#f5b5b5' : '#a32d2d' }}>報告してください</div>}
                     {r && r.status === 'cancelled' && d.plans.length > 0 && <div style={small}>報告は取り消し済み（出し直しは管理者へ）</div>}

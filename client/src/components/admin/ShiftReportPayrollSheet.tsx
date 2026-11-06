@@ -116,7 +116,7 @@ const ShiftReportPayrollSheet: React.FC<{
         const reason = [typeText, r.reason?.trim()].filter(Boolean).join('：');
         const absent = types.includes('absence');
         const diff = shiftReportDiff(r).diff;
-        const sign = r.status === 'requested' ? '（事前申請）' : r.status === 'request_confirmed' ? '（報告待ち）' : pend ? '（確認待ち）'
+        const sign = r.status === 'requested' ? '（事前申請）' : r.status === 'request_confirmed' ? (r.work_date < todayJstStr() ? '（未報告）' : '（報告待ち）') : pend ? '（確認待ち）'
           : r.confirmed_by ? (r.confirmed_by === r.applicant_id ? '自己受理' : (data.names[r.confirmed_by] || '不明')) : '';
         return {
           key: r.id,
