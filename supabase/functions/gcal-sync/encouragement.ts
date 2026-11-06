@@ -256,7 +256,7 @@ export async function syncEncouragementAll(ctx: EncCtx): Promise<EncCount & { da
 export async function cleanupOrphans(ctx: EncCtx): Promise<number> {
   const today = jstToday()
   const { data: rows } = await ctx.supabase.from('gcal_events')
-    .select('id, source_type, source_id, event_id, calendar_id, date').gte('date', today).in('source_type', ['leave', 'overtime'])
+    .select('id, source_type, source_id, event_id, calendar_id, date').gte('date', today).in('source_type', ['leave', 'overtime', 'shift_report'])
   const all = (rows ?? []) as { id: string; source_type: string; source_id: string; event_id: string; calendar_id: string | null; date: string }[]
   const cnt: EncCount = { created: 0, updated: 0, deleted: 0 }
   const chunk = <T,>(a: T[], n: number) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n))
@@ -282,5 +282,14 @@ export async function cleanupOrphans(ctx: EncCtx): Promise<number> {
     for (const x of (data ?? []) as { id: string }[]) ot.add(x.id)
   }
   for (const r of otRows) if (!ot.has(r.source_id)) await delRow(ctx, r, '取り残し（残業）', cnt)
+
+  // 勤務変更の事前申請（2026-11-06）：今カレンダーに出すべき申請（calendar_shift_advance_events）に無いものを消す
+  const srRows = all.filter(r => r.source_type === 'shift_report')
+  if (srRows.length > 0) {
+    const { data, error } = await ctx.supabase.rpc('calendar_shift_advance_events', { p_from: today, p_to: '9999-12-31', p_id: null })
+    if (error) throw new Error('勤務変更の事前申請を読めませんでした: ' + error.message)
+    const live = new Set(((data ?? []) as { id: string; work_date: string }[]).map(x => x.id + '|' + x.work_date))
+    for (const r of srRows) if (!live.has(r.source_id + '|' + r.date)) await delRow(ctx, r, '取り残し（勤務変更）', cnt)
+  }
   return cnt.deleted
 }

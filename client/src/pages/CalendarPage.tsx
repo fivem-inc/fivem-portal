@@ -243,6 +243,8 @@ interface OvertimeEvent {
   // まだ上長が受理していない（申請中）。受理されると false になる。
   // 🚨 受理されないと実績報告できず放置される問題への対応で、申請の段階から載せるようにした（2026-08-25）
   isPending: boolean;
+  /** 勤務変更の事前申請（パートの方・受理済み）から来た行（2026-11-06）。札は「事前申請」。直す・取り消すは勤務変更のページで */
+  fromShift?: boolean;
 }
 
 /** 残業の表示ラベル（種別は全部・優先順。gcal-sync のタイトルと同じ考え方・2026-10-24 に2つまでをやめた）
@@ -250,7 +252,8 @@ interface OvertimeEvent {
 const otEventLabel = (ev: OvertimeEvent): string =>
   ev.types.map(t => typeLabelFor(t, ev)).join('＋') + (ev.originOf ? '(振替元)' : '');
 
-/** 残業の時刻表示。何時に来るか／何時に帰るかのうち、その種別で大事な方を出す */
+/** 残業の時刻表示。何時に来るか／何時に帰るかのうち、その種別で大事な方を出す
+ *  🚨 Google カレンダーの名前（supabase/functions/gcal-sync の otTimeLabel）と同じ決まり。片方だけ直さない */
 const otEventTime = (ev: OvertimeEvent): string => {
   const primary = ev.types[0];
   if (!primary || ev.start_min == null || ev.end_min == null) return '';
@@ -1930,7 +1933,7 @@ const PcCalendar: React.FC<{
                         const time = otEventTime(ot);
                         const oc = otCalendarStyle(ot.types[0]);
                         return (
-                          <div key={`${ot.id}-${ot.date}`} title={`${ot.name}｜${otEventLabel(ot)}${time ? `｜${time}` : ''}${ot.location ? `［${ot.location}］` : ''}`}
+                          <div key={`${ot.id}-${ot.date}`} title={`${ot.name}｜${otEventLabel(ot)}${time ? `｜${time}` : ''}${ot.location ? `［${ot.location}］` : ''}${ot.fromShift ? '（勤務変更の事前申請）' : ''}`}
                             style={{ fontSize: 11, borderRadius: 4, padding: '2px 4px', marginBottom: 2, background: oc.bg, color: oc.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {ot.name}{time && <span style={{ fontSize: 9, opacity: 0.85, marginLeft: 2 }}>{time}</span>}
                           </div>
@@ -2337,8 +2340,15 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     const endDate = new Date(year, month + 1, 0);
     const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
 
-    const { data, error } = await supabase.rpc('calendar_overtime_events', { p_from: startStr, p_to: endStr });
-    if (error || !data || data.length === 0) { setOvertimes([]); return; }
+    // 勤務変更の事前申請（受理済み）も同じ形で並べる（2026-11-06）。何を出すかは DB の calendar_shift_advance_events 1か所（Google カレンダーと同じ）
+    const [{ data, error }, { data: srData, error: srErr }] = await Promise.all([
+      supabase.rpc('calendar_overtime_events', { p_from: startStr, p_to: endStr }),
+      supabase.rpc('calendar_shift_advance_events', { p_from: startStr, p_to: endStr }),
+    ]);
+    if (srErr) console.error('[calendar] 勤務変更の事前申請を読めませんでした:', srErr.message);
+    type SrRow = { id: string; applicant_id: string; name: string; work_date: string; application_types: string[] | null; location: string | null; start_min: number | null; end_min: number | null };
+    const srRows = (srErr ? [] : (srData ?? [])) as SrRow[];
+    if ((error || !data || data.length === 0) && srRows.length === 0) { setOvertimes([]); return; }
 
     type Row = {
       id: string; applicant_id: string; name: string; work_date: string;
@@ -2352,11 +2362,19 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
       early_situation?: string | null;
     };
 
-    const allUserIds = [...new Set((data as Row[]).map(r => r.applicant_id))];
+    const otRows = (error ? [] : (data ?? [])) as Row[];
+    const allUserIds = [...new Set([...otRows.map(r => r.applicant_id), ...srRows.map(r => r.applicant_id)])];
     const targetIds = new Set(await getTargetUserIds(allUserIds));
 
     const rows: OvertimeEvent[] = [];
-    for (const r of data as Row[]) {
+    for (const r of srRows) {
+      if (!targetIds.has(r.applicant_id)) continue;
+      const types = calendarTypesInOrder(r.application_types);
+      if (types.length === 0) continue;
+      rows.push({ id: r.id, user_id: r.applicant_id, name: r.name, date: r.work_date, types, location: r.location,
+        start_min: r.start_min, end_min: r.end_min, isPending: false, originOf: null, fromShift: true });
+    }
+    for (const r of otRows) {
       if (!targetIds.has(r.applicant_id)) continue;
       if (!willShowOnCalendar(r.application_types, r.is_post_hoc, r.show_on_calendar)) continue;
       const types = calendarTypesInOrder(r.application_types);
@@ -3013,9 +3031,12 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                         {ot.location ?? '—'}
                       </span>
                       {/* 申請中はグレー・受理済みは緑。凡例が既に多いので色を増やさず、文字と濃さで区別する */}
-                      <span style={{ fontSize: 11, textAlign: 'right', color: ot.isPending ? subColor : '#1e8449', fontWeight: 'bold' }}>
-                        {ot.isPending ? '申請中' : '受理'}
-                      </span>
+                      {/* 勤務変更の事前申請（パートの方・受理済み）は札「事前申請」（上長が入れた予定・残業申請と見分ける・2026-11-06） */}
+                      {ot.fromShift
+                        ? <span style={{ fontSize: 10, textAlign: 'right', justifySelf: 'end', color: '#1e8449', fontWeight: 'bold', border: '1px solid #1e8449', borderRadius: 4, padding: '0 4px', whiteSpace: 'nowrap' }}>事前申請</span>
+                        : <span style={{ fontSize: 11, textAlign: 'right', color: ot.isPending ? subColor : '#1e8449', fontWeight: 'bold' }}>
+                            {ot.isPending ? '申請中' : '受理'}
+                          </span>}
                     </div>
                   </div>
                 );

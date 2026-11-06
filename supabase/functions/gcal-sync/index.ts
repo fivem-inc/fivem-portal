@@ -114,6 +114,19 @@ const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boo
 // 終日種別は事後報告でもカレンダーに出す（「誰が休んだか」は事後でも周知価値があるため）
 const OVERTIME_FULL_DAY = ['chosei_off', 'furikae_off', 'absence']
 
+/** 予定の名前に入れる時刻（種類で「〜18:00」「13:00〜」「13:00〜17:00」を選ぶ）。残業と勤務変更の事前申請で共用（2026-11-06）
+ *  🚨 画面の勤怠カレンダー（client/src/pages/CalendarPage.tsx の otEventTime）と同じ決まり */
+function otTimeLabel(syncTypes: string[], firstStart: number | null, lastEnd: number | null): string {
+  const primary = syncTypes[0]
+  if (firstStart == null || lastEnd == null) return ''
+  if (syncTypes.length >= 2 || primary === 'holiday_work') return `${otMinToTime(firstStart)}〜${otMinToTime(lastEnd)}`
+  // 終わりの時刻が大事なもの（残業・早退）は「〜18:00」
+  if (primary === 'overtime' || primary === 'early_end_adj' || primary === 'early_leave') return `〜${otMinToTime(lastEnd)}`
+  // 始まりの時刻が大事なもの（早出・遅出・遅刻）は「13:00〜」
+  if (primary === 'early_start' || primary === 'late_start_adj' || primary === 'tardiness') return `${otMinToTime(firstStart)}〜`
+  return ''
+}
+
 /** 分 → "HH:MM"（1440以上は翌日表記） */
 function otMinToTime(min: number): string {
   const m = ((min % 1440) + 1440) % 1440
@@ -422,14 +435,7 @@ serve(async (req) => {
       //    画面の見本（client/src/lib/overtimeTypes.ts の buildGcalSummary）と同じにする
       const labels = syncTypes.map(labelOf).join('＋')
       const primary = syncTypes[0]
-      let timeStr = ''
-      if (firstStart != null && lastEnd != null) {
-        if (syncTypes.length >= 2 || primary === 'holiday_work') timeStr = `${otMinToTime(firstStart)}〜${otMinToTime(lastEnd)}`
-        // 終わりの時刻が大事なもの（残業・早退）は「〜18:00」
-        else if (primary === 'overtime' || primary === 'early_end_adj' || primary === 'early_leave') timeStr = `〜${otMinToTime(lastEnd)}`
-        // 始まりの時刻が大事なもの（早出・遅出・遅刻）は「13:00〜」
-        else if (primary === 'early_start' || primary === 'late_start_adj' || primary === 'tardiness') timeStr = `${otMinToTime(firstStart)}〜`
-      }
+      const timeStr = otTimeLabel(syncTypes, firstStart, lastEnd)
       // 🚨 未受理は先頭に【申請中】を付ける。受理されると消える（受理時に再同期されるため）。
       //    先頭に置くのは、Googleカレンダーの月表示は幅が狭く後半が「…」で切れるため。
       //    末尾や種別の後ろに付けると、肝心の「申請中」が見えない
@@ -478,6 +484,38 @@ serve(async (req) => {
       }
 
       return new Response(JSON.stringify({ success: true, synced: true, summary }),
+        { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
+    }
+
+    // action: 'sync'（source_type='shift_report'）— 勤務変更の事前申請（パートの方）。2026-11-06
+    //   出すか・中身は DB の calendar_shift_advance_events 1か所で決める（勤怠カレンダーと同じ）＝受理済みの事前申請だけ。
+    //   受理まち・取消・［変更はありませんでした］（行ごと消える）は消す。何度呼んでも同じ
+    //   名前の書き方は残業と同じ（名前｜種類｜時刻［校］）・説明に「勤務変更の事前申請」
+    if (action === 'sync' && source_type === 'shift_report') {
+      const { data: evRows, error: evErr } = await supabase.rpc('calendar_shift_advance_events', { p_from: null, p_to: null, p_id: source_id })
+      if (evErr) throw new Error('勤務変更の事前申請を読めませんでした: ' + evErr.message)
+      const ev = ((evRows ?? []) as { applicant_id: string; name: string; work_date: string; application_types: string[] | null; location: string | null; start_min: number | null; end_min: number | null }[])[0]
+      const srTypes: string[] = (ev?.application_types ?? [])
+        .filter((t: string) => OVERTIME_TYPES[t]?.sync)
+        .sort((a: string, b: string) => OVERTIME_TYPES[a].priority - OVERTIME_TYPES[b].priority)
+      const { data: srExisting } = await supabase.from('gcal_events')
+        .select('id, event_id, date, calendar_id').eq('source_type', 'shift_report').eq('source_id', source_id)
+      for (const row of srExisting ?? []) {
+        await deleteEvent(token, row.calendar_id || calendarId, row.event_id)
+        await supabase.from('gcal_events').delete().eq('id', row.id)
+      }
+      if (!ev || srTypes.length === 0) {
+        return new Response(JSON.stringify({ success: true, synced: false }),
+          { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
+      }
+      const srName = String(ev.name ?? '').replace(/　/g, ' ')
+      const srTime = otTimeLabel(srTypes, ev.start_min, ev.end_min)
+      let srSummary = `${srName}｜${srTypes.map(t => OVERTIME_TYPES[t].label).join('＋')}`
+      if (srTime && srTypes[0] !== 'location_change') srSummary += `｜${srTime}`
+      if (ev.location) srSummary += `［${ev.location}］`
+      const srEventId = await createEvent(token, calendarId, srSummary, ev.work_date, OVERTIME_TYPES[srTypes[0]].colorId, '勤務変更の事前申請（受理済み）')
+      await supabase.from('gcal_events').insert({ source_type: 'shift_report', source_id, calendar_id: calendarId, event_id: srEventId, date: ev.work_date })
+      return new Response(JSON.stringify({ success: true, synced: true, summary: srSummary }),
         { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
     }
 
