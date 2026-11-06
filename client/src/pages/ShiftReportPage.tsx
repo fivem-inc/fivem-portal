@@ -103,6 +103,9 @@ interface ShiftReport {
 }
 interface Reviewer { id: string; name: string; role_title: string; }
 /** 正社員の上長に出す案内（2026-10-17 ユーザー確定 案1）。選択の下の枠と、送る前のチェックで同じ文 */
+/** 事前申請の申請先はリーダー・マネージャー以上（roles.is_leader_plus・フロア責任者は外す）。DB の enforce_shift_report_status と同じ（2026-11-06） */
+const isLeaderPlusReviewer = (r: Reviewer) => !!embeddedRole(r as unknown as EmbeddedRoleRow<{ is_leader_plus?: boolean }>)?.is_leader_plus;
+const ADVANCE_REVIEWER_MSG = '事前申請の申請先は、リーダー・マネージャーから選んでください';
 const SELF_FULLTIME_MSG = '正社員の方の残業・早退・遅刻・欠勤は「🕐 残業申請」から申請してください。';
 
 interface Staff    { id: string; name: string; role_title: string; employment_type: string; }
@@ -620,6 +623,12 @@ const ShiftReportForm: React.FC<{
     || (editTarget.status === 'returned' && !!editTarget.advance && !editTarget.request_confirmed_at));
   const advanceDay = date > todayStr() && (editTarget ? editAdvance : canShiftReportAdvance);
   const isAdvance = advanceDay && !hasAbsence && !types.includes('missed_clock');
+  // 事前申請になったとき、選んでいた申請先がフロア責任者なら外す（一覧に無い値が残らないように・2026-11-06）
+  useEffect(() => {
+    if (!isAdvance || editTarget || !reviewerId) return;
+    const rv = reviewers.find(r => r.id === reviewerId);
+    if (rv && !isLeaderPlusReviewer(rv)) setReviewerId('');
+  }, [isAdvance, editTarget, reviewerId, reviewers]);
   const reportFromAdvance = !!editTarget && (editTarget.status === 'requested' || editTarget.status === 'request_confirmed') && date <= todayStr();
   // 「予定と比べて初めて意味が決まる」種別。休日出勤の日でも
   // （イベントを9:00〜17:00で頼まれた等）予定より遅れた・延びたは起こるので、
@@ -725,6 +734,7 @@ const ShiftReportForm: React.FC<{
     if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '勤務の時間が重なっています。順番に入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => !(s.location ?? '').trim())) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
     if (!reviewerId)    return { msg: '申請先を選択してください', field: 'reviewer' };
+    if (isAdvance) { const rv = reviewers.find(r => r.id === reviewerId); if (rv && !isLeaderPlusReviewer(rv)) return { msg: ADVANCE_REVIEWER_MSG, field: 'reviewer' }; }
     if (editTarget && !reportFromAdvance && !changeSummary.trim()) return { msg: '修正内容を入力してください', field: 'changeSummary' };
     return { msg: '' };
   };
@@ -1281,13 +1291,13 @@ const ShiftReportForm: React.FC<{
               <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); setReviewerAway(false); }} style={ef('reviewer')}>
                 <option value="">選択してください</option>
                 {/* 自分が承認者の場合は最上部に表示 */}
-                {reviewers.find(r => r.id === user.id) && (
+                {reviewers.find(r => r.id === user.id && (!isAdvance || isLeaderPlusReviewer(r))) && (
                   <option value={user.id}>
                     ✓ {reviewers.find(r => r.id === user.id)!.name}（自分）※{isAdvance ? '申請' : '報告'}と同時に受理されます
                   </option>
                 )}
                 {/* 確認先の候補から経営（社長・経理）を除く。役職名ではなく属性 is_org_wide で（2026-09-09） */}
-                {[...reviewers.filter(r => r.id !== user.id && !embeddedRole(r as unknown as EmbeddedRoleRow<{ is_org_wide?: boolean }>)?.is_org_wide)]
+                {[...reviewers.filter(r => r.id !== user.id && (!isAdvance || isLeaderPlusReviewer(r)) && !embeddedRole(r as unknown as EmbeddedRoleRow<{ is_org_wide?: boolean }>)?.is_org_wide)]
                   .sort((a, b) => {
                     // リーダー → マネージャー → その他（フロア責任者）の順
                     const ord = (r: Reviewer) => {
@@ -1299,6 +1309,9 @@ const ShiftReportForm: React.FC<{
                   })
                   .map(r => <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>)}
               </select>
+              )}
+              {isAdvance && !lockReviewer && (
+                <div style={{ fontSize: 11.5, color: isDark ? '#adb5bd' : '#666', marginTop: 4 }}>事前申請の申請先は、リーダー・マネージャーから選びます</div>
               )}
               {reviewerAway && !reviewerId && (
                 <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 6 }}>
@@ -1602,7 +1615,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     fetchAllReports();
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map(r => r.value)); });
-    supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(is_approver, is_org_wide, acts_as)').eq('roles.is_approver', true).eq('is_active', true).order('role_title').order('name')
+    supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(is_approver, is_org_wide, acts_as, is_leader_plus)').eq('roles.is_approver', true).eq('is_active', true).order('role_title').order('name')
       .then(({ data }) => { if (data) void fetchUnavailableIds().then(away => setReviewers(withoutUnavailable(data as Reviewer[], away))); });   // 休職中は外す（2026-10-20）
     supabase.from('leader_assignments').select('id, course, school, leader, manager').order('display_order', { ascending: true })
       .then(({ data }) => { if (data) setLeaderAssignments(data as LeaderAssignment[]); setLoadingAssignments(false); });

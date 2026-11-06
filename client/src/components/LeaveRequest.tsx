@@ -2074,34 +2074,33 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             // 有給にまとめる種別（バースデーは有給休暇行に合算）
             const YUKYU_MERGE = ['有給休暇', 'バースデー休暇（有給）', '有給'];
             const KEICHO = ['慶弔休暇'];
-            // 年度 → { yukyu: {有給休暇, その他各種}, keicho: {慶弔休暇} }
+            // 年度 → { yukyu: {有給休暇}, keicho: {慶弔休暇} }
+            // 🚨 2026-11-06：有休・慶弔以外（調整休・時間外調整休・振替休日・有休奨励日の回答の「定休日」「出勤」など）は数えない。
+            //   前は「その他（病欠など）」として【有休】に入れ、有休 合計に足していた（有休の日数が多く出ていた・経理の指摘）。
+            //   時間外調整休・振替休日は今は残業申請から出すので、ここでは一部しか数えられない＝出さない（ユーザー確定 案3）
             const fyMap: Record<number, { yukyu: Record<string, FYData>; keicho: Record<string, FYData> }> = {};
             history.forEach(req => {
               if (req.status === 'rejected' || req.status === 'cancelled') return;
               // 特別休暇は旧データのため集計除外
               if (req.leave_type === '特別休暇' || req.leave_type_other === '特別休暇') return;
+              const isYukyu = YUKYU_MERGE.includes(req.leave_type);
+              if (!isYukyu && !KEICHO.includes(req.leave_type)) return;
               const fy = getFY(req.start_date || req.created_at);
               if (!fyMap[fy]) fyMap[fy] = { yukyu: {}, keicho: {} };
               let days = 1;
               try { if (req.leave_dates) days = JSON.parse(req.leave_dates).length || 1; } catch {}
               const isApproved = req.status === 'approved';
-              if (YUKYU_MERGE.includes(req.leave_type)) {
+              if (isYukyu) {
                 // バースデーも有給休暇行に合算
                 const key = '有給休暇';
                 if (!fyMap[fy].yukyu[key]) fyMap[fy].yukyu[key] = { pending: 0, approved: 0 };
                 if (isApproved) fyMap[fy].yukyu[key].approved += days;
                 else fyMap[fy].yukyu[key].pending += days;
-              } else if (KEICHO.includes(req.leave_type)) {
+              } else {
                 const key = '慶弔休暇';
                 if (!fyMap[fy].keicho[key]) fyMap[fy].keicho[key] = { pending: 0, approved: 0 };
                 if (isApproved) fyMap[fy].keicho[key].approved += days;
                 else fyMap[fy].keicho[key].pending += days;
-              } else {
-                // その他（病欠など）
-                const key = 'その他（病欠など）';
-                if (!fyMap[fy].yukyu[key]) fyMap[fy].yukyu[key] = { pending: 0, approved: 0 };
-                if (isApproved) fyMap[fy].yukyu[key].approved += days;
-                else fyMap[fy].yukyu[key].pending += days;
               }
             });
             const fyList = Object.entries(fyMap).sort(([a], [b]) => Number(b) - Number(a));
@@ -2146,9 +2145,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     <div style={{ padding: '10px 12px', background: bg }}>
                       <div style={{ fontSize: 11, fontWeight: 'bold', color: '#28a745', marginBottom: 4 }}>【有休】</div>
                       {colHeader}
-                      {Object.entries(yukyu)
-                        .sort(([a], [b]) => { if (a === '有給休暇') return -1; if (b === '有給休暇') return 1; if (a.startsWith('その他')) return 1; if (b.startsWith('その他')) return -1; return 0; })
-                        .map(([typeName, data]) => <Row key={typeName} label={typeName} data={data} />)}
+                      <Row label="有給休暇" data={yukyu['有給休暇'] ?? { pending: 0, approved: 0 }} />
                       <div style={{ display: 'flex', fontSize: 12, borderTop: `1px solid ${borderColor}`, paddingTop: 4, marginTop: 2, marginBottom: Object.keys(keicho).length > 0 ? 10 : 0 }}>
                         <div style={{ flex: 3, color: text, fontWeight: 'bold', fontSize: 11 }}>有休 合計</div>
                         <div style={{ flex: 1, textAlign: 'center', color: yukyuTotal.pending > 0 ? '#e67e22' : subText, fontWeight: 'bold' }}>{yukyuTotal.pending > 0 ? `${yukyuTotal.pending}日` : '—'}</div>
