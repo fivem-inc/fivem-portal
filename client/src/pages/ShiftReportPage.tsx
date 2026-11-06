@@ -939,7 +939,8 @@ const ShiftReportForm: React.FC<{
                     <option key={s.id} value={s.id}>{s.name}（パート）</option>
                   ))}
                 </select>
-                {!allowSelf && !editTarget && (
+                {/* スタッフを選ぶ前だけ出す（パートの方を選んだあとも出ていて紛らわしかった・2026-11-06 ユーザー確定） */}
+                {!allowSelf && !editTarget && !applicantId && (
                   <div style={{ marginTop: 8, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '9px 12px', color: '#1e40af', fontSize: 12, lineHeight: 1.7 }}>
                     {SELF_FULLTIME_MSG}
                     <div style={{ marginTop: 6 }}>
