@@ -30,6 +30,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
+import { advanceAcceptedBellOn } from '../lib/notificationDispatch';
 import { primaryBtn, backBtn, tintBtn, cardChangeBtn, cardCancelBtn, TOGGLE_BLUE, confirmPageBtn, confirmPageCount } from '../lib/buttonStyles';
 import ShiftReportTodo from '../components/ShiftReportTodo';
 import { classifyEntry, todoItemOf, type TodoItem } from '../lib/shiftReportTodo';
@@ -1726,7 +1727,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       const accRes = await supabase.from('shift_reports').update({ status: 'request_confirmed' }).eq('id', report.id).select('id');
       const accFail = describeUpdate(accRes, '受理', 'missing');
       if (accFail) { setConfirmingId(null); setActionError(accFail); return; }
-      await supabase.from('notifications').insert({
+      // 通知設定「事前申請が受理されたとき（ご本人へ）」がオフなら作らない（lib/notificationDispatch・2026-11-07）
+      if (await advanceAcceptedBellOn()) await supabase.from('notifications').insert({
         user_id: report.applicant_id,
         message: '勤務変更の事前申請が受理されました',
         sub_message: `${(report.application_types?.length ? report.application_types : [report.application_type]).map(t => TYPE_INFO[t].label).join('＋')}　${Number(report.work_date.slice(5, 7))}/${Number(report.work_date.slice(8, 10))}（${dow(report.work_date)}）　その日の勤務のあとに、履歴の「申請どおりでしたか？」から報告してください`,

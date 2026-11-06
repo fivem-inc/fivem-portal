@@ -263,3 +263,10 @@ export async function dispatchBoardEmail(
     if (error) console.error('[dispatchBoardEmail] 送信失敗', { userId, error });
   }));
 }
+
+/** 勤務変更の事前申請が受理されたとき、ご本人へベルを作るか（通知設定 shift_report:request_confirmed の site）。
+ *  受理の2か所（勤務変更のページの確認ページ・管理画面の勤務変更のタブ）がこれだけを見る。
+ *  🚨 行が無い・読めないときは作る側（今までの動き）。止めるのは管理者がオフにしたときだけ */
+export async function advanceAcceptedBellOn(): Promise<boolean> {
+  try { return await shouldSendWithDefault('shift_report:request_confirmed', 'site', true); } catch { return true; }
+}

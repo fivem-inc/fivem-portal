@@ -128,6 +128,7 @@ const EVENT_GROUPS = [
     headerBg: '#FFEBEE', headerBorder: '#C62828', headerText: '#B71C1C',
     events: [
       { key: 'shift_report:new_request', label: '報告時（プッシュのみ）' },
+      { key: 'shift_report:request_confirmed', label: '事前申請が受理されたとき（ご本人へ）' },
       { key: 'shift_report:returned',    label: '差し戻し時' },
       { key: 'shift_report:confirmed',   label: '受理時' },
     ],
@@ -275,6 +276,7 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
 const FIXED_RECIPIENT_NOTE_BY_EVENT: Record<string, string> = {
   'overtime:new_request':       '宛先：申請した本人が選んだ「確認をお願いする人」（自動で決まります）',
   'overtime:request_confirmed': '宛先：申請した本人（固定）',
+  'shift_report:request_confirmed': '宛先：申請した本人（固定・ベルのみ）',
   'overtime:confirmed':         '宛先：報告した本人（固定）',
   'overtime:returned':          '宛先：申請した本人（固定）',
   'overtime:cancelled':         '宛先：その申請の「確認をお願いする人」（自動で決まります）',
@@ -341,6 +343,9 @@ const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:con
 // 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
 // サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは
 // 制御できないため、チェックボックスの代わりに説明文を表示する（Slackチャンネル選択は対象外）
+// ベル通知の文面をコードで組み立てるもの（編集欄を出すと「直せるのに反映されない」設定になるので、注記だけにする）
+const fixedSiteText = (key: string): boolean => key.startsWith('overtime') || key === 'shift_report:request_confirmed';
+
 const AUTO_RECIPIENT_EMAIL_SITE_EVENTS = [
   'purchase_request:submitted_manager',
   'purchase_request:submitted_board',
@@ -1576,12 +1581,12 @@ const NotificationsTab: React.FC = () => {
 
                               {/* 残業のベル通知は本文がシステム固定（差分時間や差し戻し理由を組み立てるため）。
                                   編集欄を出すと「直せるのに反映されない」設定になるので、注記だけにする */}
-                              {channel === 'site' && event.key.startsWith('overtime') && (
+                              {channel === 'site' && fixedSiteText(event.key) && (
                                 <div style={{ fontSize: 11, color: subText, padding: '6px 0' }}>
                                   ※ ベル通知の文面はシステムで自動生成されます（ここではON/OFFのみ設定できます）
                                 </div>
                               )}
-                              {channel !== 'slack' && !(channel === 'site' && event.key.startsWith('overtime')) && (
+                              {channel !== 'slack' && !(channel === 'site' && fixedSiteText(event.key)) && (
                                 <>
                                   {channel === 'email' && (
                                     <>

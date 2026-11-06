@@ -10,6 +10,7 @@ import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs, shiftLegalBreak, legalBreakReviewNote } from '../../lib/shiftCalc';
 import { logFail } from '../../lib/logFail';
+import { advanceAcceptedBellOn } from '../../lib/notificationDispatch';
 import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import CorrectionNotice from '../CorrectionNotice';
 import { ApprovedByLines } from './ApprovedByLines';
@@ -257,13 +258,15 @@ const ShiftReportsTab: React.FC = () => {
     await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: adv ? '管理者が事前申請を受理しました' : '管理者が受理しました', snapshot: r })
       .then(({ error }) => { if (error) console.error('[shift_report] 受理の履歴を残せませんでした:', error.message); },
             (e) => console.error('[shift_report] 受理の履歴を残せませんでした:', e));
-    await supabase.from('notifications').insert({
+    // 事前申請の受理のベルは通知設定「事前申請が受理されたとき（ご本人へ）」に従う（2026-11-07）
+    if (!adv || await advanceAcceptedBellOn()) await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: adv ? '勤務変更の事前申請が受理されました' : '勤務変更報告が受理されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
     }).then(...logFail('ベル通知の作成'));
     // 通知：同グループの該当役職者へ一斉通知（管理画面「勤務変更申請」設定に従う）
-    supabase.functions.invoke('shift-report-confirmed-notify', {
+    // 🚨 事前申請の受理（まだ予定）では送らない。確定（その日のあとの報告の受理）のときだけ（2026-11-07 ユーザー確定）
+    if (!adv) supabase.functions.invoke('shift-report-confirmed-notify', {
       body: {
         user_id: r.applicant_id,
         user_name: r.applicantName ?? '',
