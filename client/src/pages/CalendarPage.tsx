@@ -9,7 +9,8 @@ import { scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight'
 import { describeUpdate } from '../lib/statusUpdate';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { actedAtLabel } from '../lib/actedAt';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, savePrefillDraft, isUserDraft } from '../lib/draftStorage';
+import DraftRestoredLine from '../components/DraftRestoredLine';
 import {
   absenceLabel, absenceColor, absenceEmoji, formatSegments, joinSegmentLocations, parseSegments, hhmm,
   type AttendanceType, type WorkSegment,
@@ -1247,6 +1248,8 @@ const AbsenceInputSheet: React.FC<{
             クリア
           </button>
         </div>
+        <DraftRestoredLine draftKey={DRAFT_KEYS.attendance}
+          restored={isUserDraft(absDraft) && ((absDraft?.userIds?.length ?? 0) > 0 || !!absDraft?.userId || !!absDraft?.notes)} />
 
         {/* 対象者 */}
         <div style={{ marginBottom: 16 }}>
@@ -2446,9 +2449,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         if (error) { console.error('[attendance] 出張先などの一覧を読めませんでした（校だけ選べます）:', error); return; }
         setPlaceGroups(placeGroupsFromRows(data ?? []));
       });
-    // 更新・別アプリ移動でシートが閉じても、入力途中の下書きがあればシートを開き直す
-    const absDraft = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
-    if (absDraft?.date) setAbsenceSheet(absDraft.date);
+    // 🚨 入力途中の下書きがあっても、シートを自動では開かない（2026-11-07 ユーザー指示：ほかの画面へ移ったら閉じる・開き直したら前の入力は残る）。
+    //    下書きは、同じ日付を押してシートを開いたときに戻る（AbsenceInputSheet の absDraft）
   }, [canAttendanceInput, isAdmin, user?.id, loadProfiles]);
 
   // 休暇・欠勤の行に出すシフト調整の印（日ごと）。
@@ -2656,7 +2658,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     fetchAbsences();
     if (reuse) {
       // 入力シートは開いた日付の下書きを復元する作りなので、下書きに書いてから開く
-      saveDraft(DRAFT_KEYS.attendance, absenceToDraft(target, workplaces, allPlaces(placeGroups.length > 0 ? placeGroups : [{ label: "校", items: workplaces }])));
+      savePrefillDraft(DRAFT_KEYS.attendance, absenceToDraft(target, workplaces, allPlaces(placeGroups.length > 0 ? placeGroups : [{ label: "校", items: workplaces }])));
       setAbsenceSheet(target.date);
     } else {
       setAbsenceDeleted(true);

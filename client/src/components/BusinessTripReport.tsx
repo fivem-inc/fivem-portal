@@ -10,7 +10,8 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft } from '../lib/draftStorage';
+import DraftRestoredLine from './DraftRestoredLine';
 import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTime, tripMapUrl } from '../lib/tripReportDisplay';
 import SearchableSelect from './common/SearchableSelect';
 import HelpLinkButton from './HelpLinkButton';
@@ -792,6 +793,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
             クリア
           </button>
         </div>
+        <DraftRestoredLine draftKey={DRAFT_KEYS.trip}
+          restored={isUserDraft(td) && (!!td?.notes || !!td?.location || !!td?.locationCustom || (td?.nextDates?.length ?? 0) > 0 || !!td?.slackComment)} />
 
         {/* 到着報告の注意事項 */}
         {reportType === '到着' && (

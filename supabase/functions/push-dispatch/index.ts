@@ -210,6 +210,7 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   //    新規申請の入力画面に着地する。ベル側（App.tsx）は tab=history で正しかった。
   // 2026-10-19：hl=unreported で、いちばん古い未報告の申請まで動いて光る（ベル・ホームの帯と同じ URL）
   "overtime:unreported":         { app: "残業", word: "新着", text: "残業の実績報告がまだです", url: "/overtime?tab=history&hl=unreported" },
+  "overtime:calendar_unapplied": { app: "残業", word: "新着", text: "残業申請がまだの日があります", url: "/overtime" },
   // 残業の受理まちリマインド（確認者へ日次）。
   // 「未承認」は実機テスト済みの安全語。着地は確認者ビュー（申請の中身がそこに全部あるので bell は付けない）
   "overtime:pending_review":     { app: "残業", word: "未承認", text: "受理まちの残業申請があります", url: "/overtime?view=confirm" },

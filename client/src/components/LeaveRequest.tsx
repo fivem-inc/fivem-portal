@@ -86,7 +86,8 @@ import { useLeavePendingCount } from '../hooks/useLeavePendingCount';
 import { todayJstStr, leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft } from '../lib/draftStorage';
+import DraftRestoredLine from './DraftRestoredLine';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { normalizeTime } from '../lib/timeInput';
 import TimeInput from './TimeInput';
@@ -1332,6 +1333,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               </button>
             </div>
           )}
+          {!reapplySourceId && (
+            <DraftRestoredLine draftKey={DRAFT_KEYS.leave}
+              restored={isUserDraft(ld) && ((ld?.selectedDates?.length ?? 0) > 0 || !!ld?.purpose || !!ld?.notes)} />
+          )}
 
           {/* 申請者 */}
           <div style={{ marginBottom: 16 }}>
@@ -1788,6 +1793,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 クリア
               </button>
             </div>
+            <DraftRestoredLine draftKey={DRAFT_KEYS.leaveAdjustment}
+              restored={isUserDraft(ad) && (!!ad?.adjLateStart || !!ad?.adjEarlyEnd || !!ad?.adjReason || !!ad?.adjDate)} />
 
             {/* info-box */}
             {/* 🚨 説明枠は、このファイル上部の「注意事項」と同じ配色に揃える。

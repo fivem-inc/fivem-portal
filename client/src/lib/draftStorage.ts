@@ -30,6 +30,19 @@ export const DRAFT_KEYS = {
   boardChat: 'fivem_draft_board_chat',   // 連絡板グループ/DM/リプライ（キー配下にIDで細分化）
 } as const;
 
+// 下書きが消えた合図（components/DraftRestoredLine が「前回の入力の続き」の1行を消すのに使う・2026-11-07）
+export const DRAFT_CLEARED_EVENT = 'fivem-draft-cleared';
+
+// ほかの画面が中身を入れてからフォームを開くとき（表から申請・申請の依頼・写して作る など）はこちらで保存する。
+// 🚨 印（__prefill）が付くので「前回の入力の続き」の1行を出さない。フォームの自動保存（saveDraft）で印は消える
+export function savePrefillDraft(key: string, data: object): void {
+  saveDraft(key, { ...data, __prefill: true });
+}
+// 開いた時点の下書きが「人が入力した前回の分」か（prefill の印が無い）
+export function isUserDraft(d: unknown): boolean {
+  return !!d && typeof d === 'object' && !(d as { __prefill?: boolean }).__prefill;
+}
+
 export function loadDraft<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);
@@ -53,6 +66,7 @@ export function clearDraft(key: string): void {
   } catch {
     /* ignore */
   }
+  try { window.dispatchEvent(new CustomEvent(DRAFT_CLEARED_EVENT, { detail: key })); } catch { /* ignore */ }
 }
 
 // 連絡板のチャット系（チャンネル/相手/元メッセージごとに書きかけを分ける）用。

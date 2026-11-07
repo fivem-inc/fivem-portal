@@ -24,7 +24,8 @@ import PendingSubmitLine from './PendingSubmitLine';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft, DRAFT_CLEARED_EVENT } from '../lib/draftStorage';
+import DraftRestoredLine from './DraftRestoredLine';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
 import HelpLinkButton from './HelpLinkButton';
@@ -824,11 +825,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             <div style={{ background: isDarkMode ? '#2c3e50' : '#fff', border: '2px solid #0d6efd', borderRadius: 8, padding: 16, marginBottom: 8, boxShadow: isDarkMode ? 'none' : '0 2px 8px rgba(0,0,0,0.06)' }}>
               {/* 入力内容クリア（この入力枠の内容だけを空にする。追加済みリストは消えない） */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); setTemplateQueue([]); }}
+                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); setTemplateQueue([]); window.dispatchEvent(new CustomEvent(DRAFT_CLEARED_EVENT, { detail: DRAFT_KEYS.expense })); }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDarkMode ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDarkMode ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
                   クリア
                 </button>
               </div>
+              <DraftRestoredLine draftKey={DRAFT_KEYS.expense}
+                restored={isUserDraft(savedExpenseDraft) && ((savedExpenseDraft?.list?.length ?? 0) > 0 || !!savedExpenseDraft?.draft?.from_station || !!savedExpenseDraft?.draft?.to_station || !!savedExpenseDraft?.draft?.amount)} />
               {/* 区分 */}
               <div style={{ marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}>

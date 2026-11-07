@@ -13,7 +13,8 @@ import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft } from '../lib/draftStorage';
+import DraftRestoredLine from '../components/DraftRestoredLine';
 import { calcSegsBreak, shiftLegalBreak, legalBreakReviewNote, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
 import { describeUpdate } from '../lib/statusUpdate';
 import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHighlight';
@@ -920,6 +921,10 @@ const ShiftReportForm: React.FC<{
                   クリア
                 </button>
               </div>
+            )}
+            {!editTarget && (
+              <DraftRestoredLine draftKey={DRAFT_KEYS.shiftReport}
+                restored={isUserDraft(sd) && (!!sd?.reason || (sd?.types?.length ?? 0) > 0 || (sd?.actSegs ?? []).some(x => x.start || x.end))} />
             )}
             {/* 代行バナー */}
             {canProxy && applicantId !== user.id && (

@@ -22,7 +22,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useOvertimeUnifyCutoff, cutoffLabel } from '../lib/overtimeUnify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
-import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, savePrefillDraft, isUserDraft } from '../lib/draftStorage';
+import DraftRestoredLine from '../components/DraftRestoredLine';
 import {
   calcTotalBreak, calcPatternFields, checkLegalBreak, planBreakCheck,
   timeToMin, minToTime, formatSignedMin, formatMin,
@@ -2059,6 +2060,10 @@ const OvertimeForm: React.FC<{
           </button>
         </div>
       ))}
+      {!editTarget && (
+        <DraftRestoredLine draftKey={DRAFT_KEYS.overtime}
+          restored={isUserDraft(draft) && (!!draft?.reason || (draft?.segments ?? []).some(x => x.start || x.end))} />
+      )}
 
       {/* メモの［申請］で、書きかけを置き換えてよいかを聞く（黙って消さない） */}
       {memoReplace && (
@@ -3771,7 +3776,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         } : {}),
       } : {}),
     };
-    saveDraft(DRAFT_KEYS.overtime, draftCopy);
+    savePrefillDraft(DRAFT_KEYS.overtime, draftCopy);
     setCancelTargetId(null);
     setActingId(null);
     setEditTarget(null);
@@ -4067,7 +4072,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     if (hasDraft && !force) { setTripReplaceFor(day.work_date); return; }
     setTripReplaceFor(null);
     if (!same) {
-      saveDraft(DRAFT_KEYS.overtime, {
+      savePrefillDraft(DRAFT_KEYS.overtime, {
         mode: 'posthoc', date: day.work_date,
         segments: [{ start: '', end: '' }],
         breakManual: false, breakManualMin: '',
@@ -4092,7 +4097,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     const hasDraft = !!cur && !same && (!!cur.date || (cur.segments ?? []).some(x => x.start || x.end) || !!cur.reason);
     if (hasDraft && !force) { setReplaceAsk(o); setEditTarget(null); setTab('form'); return; }
     setReplaceAsk(null);
-    saveDraft(DRAFT_KEYS.overtime, {
+    savePrefillDraft(DRAFT_KEYS.overtime, {
       // 🚨 過ぎた日（もう休んだ有休）は事後報告（事前申請のままだと日付が消える）
       mode: o.date < todayJstStr() ? 'posthoc' : 'advance', date: o.date,
       segments: [{ start: '', end: '' }], breakManual: false, breakManualMin: '',
@@ -4171,7 +4176,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     //    勤務地はその日のシフトの校（［計画から申請］と同じ）。振替休日の「振替元の日」は本人が入れる
     const fullDayFromReq = isFullDayOtContent(r.ot_content) ? r.ot_content : null;
     const fdNs = fullDayFromReq && first ? resolveNormalShift(patterns, first, pageCalendarKinds[first] ?? null) : null;
-    saveDraft(DRAFT_KEYS.overtime, {
+    savePrefillDraft(DRAFT_KEYS.overtime, {
       mode: 'advance', date: first,
       segments: !fullDayFromReq && reqSegs.length > 0 ? reqSegs.map(s => ({ start: s.start, end: s.end })) : [{ start: '', end: '' }],
       breakManual: false, breakManualMin: '',
@@ -4204,7 +4209,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     const hasDraft = !!cur && Array.isArray(cur.selectedDates) && (cur.selectedDates as string[]).length > 0;
     if (hasDraft && replaceDraftFor !== r.id) { setReplaceDraftFor(r.id); return; }
     setReplaceDraftFor(null);
-    saveDraft(DRAFT_KEYS.leave, {
+    savePrefillDraft(DRAFT_KEYS.leave, {
       leaveType: '有給休暇', leaveTypeOther: '',
       selectedDates: (r.target_dates ?? []),
       dateLocations: {}, purpose: r.memo ?? '', notes: '',
@@ -4244,7 +4249,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     }
     // 🚨 書きかけの下書きの確認は、押した場所の近くで出す（調整案の中）。
     //    ここに来た時点で本人が「置き換える」を選んでいる。
-    saveDraft(DRAFT_KEYS.overtime, {
+    savePrefillDraft(DRAFT_KEYS.overtime, {
       mode: 'advance', date: plan.work_date, segments: segs,
       breakManual: plan.break_minutes != null,
       breakManualMin: plan.break_minutes != null ? String(plan.break_minutes) : '',
@@ -4315,7 +4320,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     if (hasDraft && !force) { setDayReplaceFor(d); return; }
     setDayReplaceFor(null);
     if (!same) {
-      saveDraft(DRAFT_KEYS.overtime, {
+      savePrefillDraft(DRAFT_KEYS.overtime, {
         mode: d >= todayJstStr() ? 'advance' : 'posthoc', date: d,
         segments: [{ start: '', end: '' }],
         breakManual: false, breakManualMin: '',
@@ -4402,7 +4407,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               normOverride: false, normStart: '', normEnd: '',
               clockInquiryHint: hint,
             };
-            saveDraft(DRAFT_KEYS.overtime, d);
+            savePrefillDraft(DRAFT_KEYS.overtime, d);
             setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('inquiry'); return n; });
             setEditTarget(null);
             setTab('form');
