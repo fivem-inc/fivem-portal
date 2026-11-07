@@ -18,7 +18,7 @@ import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import ShiftAdjustChoice from '../ShiftAdjustChoice';
 import PartialShiftToggle from '../PartialShiftToggle';
 import { usePartialSlotMap } from '../../hooks/usePartialSlotMap';
-import { isPartialShiftCase, partialCover, partialCoverLabel, PARTIAL_SHIFT_NOTE } from '../../lib/partialShiftAdjust';
+import { isPartialShiftCase, partialCover, partialCoverLabel } from '../../lib/partialShiftAdjust';
 import DeleteReasonDialog from '../DeleteReasonDialog';
 import { deleteApplications } from '../../lib/deleteApplication';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar, typeLabelFor } from '../../lib/overtimeTypes';
@@ -327,7 +327,9 @@ const OvertimeAdminTab: React.FC = () => {
   const [otProxyTarget, setOtProxyTarget] = useState<OvertimeRecord | null>(null);
   const [otProxyShift, setOtProxyShift] = useState<'needed' | 'not_needed' | null>(null);
   // 遅出・早退・勤務地変更の事前申請を代わりに受理するときの「シフト調整：必要」（2026-10-20・初めは調整不要）
-  const [otProxyPartialNeeded, setOtProxyPartialNeeded] = useState(false);
+  // 🚨 2026-11-07 から最初はどちらも選ばれていない（null）。選ばずに受理しようとしたら止める
+  const [otProxyPartialNeeded, setOtProxyPartialNeeded] = useState<boolean | null>(null);
+  const [otProxyTried, setOtProxyTried] = useState(false);
   const [otProxyErr, setOtProxyErr] = useState('');
   const [otApprovedMap, setOtApprovedMap] = useState<Record<string, ApprovedLine[]>>({});
   const [otReviewerMap, setOtReviewerMap] = useState<Record<string, { id: string; name: string } | null>>({});
@@ -536,14 +538,14 @@ const OvertimeAdminTab: React.FC = () => {
     const fc = otFcMap[r.id];
     // 🚨 シフト調整を選ぶのは終日の事前の受理だけ（振替休日の振替元の実績の確定では選ばない・2026-10-26）
     const fullDay = !fc && isFullDayReport(r.application_types) && otStatusMap[r.id] === 'requested';
-    if (fullDay && !otProxyShift) { setOtProxyErr('シフト調整が必要かどうかを選んでください'); return; }
-    setOtActing(true); setOtProxyErr('');
     const partialCase = fc ? otFcShiftCase(r) : otStatusMap[r.id] === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr();
+    if ((fullDay && !otProxyShift) || (partialCase && otProxyPartialNeeded === null)) { setOtProxyTried(true); return; }
+    setOtActing(true); setOtProxyErr('');
     const { data, error } = await supabase.functions.invoke('overtime-approve', {
       body: { report_id: r.id, action: 'approve', on_behalf: true, shift_not_needed: fullDay ? otProxyShift === 'not_needed' : undefined,
         ...(fc ? { plan_seen: true } : {}),
         // 🚨 「必要」を選んだときだけ送る（2026-10-20）
-        ...(partialCase && otProxyPartialNeeded ? { shift_needed: true } : {}) },
+        ...(partialCase && otProxyPartialNeeded === true ? { shift_needed: true } : {}) },
     });
     let res = data as { success?: boolean; error?: string; gcal_ok?: boolean } | null;
     // 🚨 4xx/5xx のとき data は空で、理由は error.context に入る。読まないと「通信エラー」としか出ない
@@ -552,7 +554,7 @@ const OvertimeAdminTab: React.FC = () => {
     }
     setOtActing(false);
     if (error || !res?.success) { setOtProxyErr('受理できませんでした：' + (res?.error ?? error?.message ?? '通信エラー')); return; }
-    setOtProxyTarget(null); setOtProxyShift(null); setOtProxyPartialNeeded(false);
+    setOtProxyTarget(null); setOtProxyShift(null); setOtProxyPartialNeeded(null); setOtProxyTried(false);
     setOtMsg('代わりに受理しました（本人と申請先にお知らせしました）');
     if (res.gcal_ok === false) setOtErr('受理は完了しましたが、Googleカレンダーへの反映に失敗しました。');
     fetchOtReports();
@@ -1546,7 +1548,7 @@ const OvertimeAdminTab: React.FC = () => {
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
                               {/* 経理が代わりに受理（受理まちの行だけ・2026-10-14）。振替休日の変更の依頼は受理済みの行に付くので、依頼中なら出す（2026-10-29） */}
                               {(st === 'requested' || st === 'reported' || !!otFcMap[r.id]) && (
-                                <button onClick={() => { setOtProxyTarget(r); setOtProxyShift('needed'); setOtProxyErr(''); /* 初めは「必要」（受理の画面・休暇と同じ・2026-10-14） */ }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: BTN_BLUE, color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>代わりに受理</button>
+                                <button onClick={() => { setOtProxyTarget(r); setOtProxyShift(null); setOtProxyPartialNeeded(null); setOtProxyTried(false); setOtProxyErr(''); /* 2026-11-07 から、どちらも選ばれていない状態から */ }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: BTN_BLUE, color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>代わりに受理</button>
                               )}
                               {/* 終日行（調整休・欠勤）は修正モーダル非対応（segments前提の再計算で差分が壊れるため。種別変更UIは公開準備時に対応） */}
                               {!rowFullDay && (
@@ -1635,12 +1637,6 @@ const OvertimeAdminTab: React.FC = () => {
             const someoneElse = !!rv && rv.id !== r.applicant_id;
             const fc = otFcMap[r.id];
             const fev = fc ? otFcEv(r) : null;
-            const toggle = (v: 'needed' | 'not_needed', l: string) => (
-              <button key={v} type="button" onClick={() => { setOtProxyShift(v); setOtProxyErr(''); }}
-                style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13,
-                  background: otProxyShift === v ? TOGGLE_BLUE : (isDarkMode ? '#495057' : '#e9ecef'),
-                  color: otProxyShift === v ? '#fff' : text, fontWeight: otProxyShift === v ? 'bold' : 'normal' }}>{l}</button>
-            );
             return (
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
                 <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 400 }}>
@@ -1668,26 +1664,22 @@ const OvertimeAdminTab: React.FC = () => {
                       : <>受理すると、{r.applicantName}さんには「受理されました」{someoneElse ? <>、{rv!.name}さんには「経理が代わりに受理しました」</> : ''}とベルでお知らせします。</>}
                   </div>
                   {fullDay && st === 'requested' && !fc && (
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 12.5, color: text, marginBottom: 6 }}>シフト調整</div>
-                      <div style={{ display: 'flex', gap: 6 }}>{toggle('needed', '必要')}{toggle('not_needed', '調整不要')}</div>
-                    </div>
+                    <ShiftAdjustChoice notNeeded={otProxyShift === null ? null : otProxyShift === 'not_needed'}
+                      onChange={nn => { setOtProxyShift(nn ? 'not_needed' : 'needed'); setOtProxyErr(''); }} isDark={isDarkMode} missing={otProxyTried} margin="0 0 12px" />
                   )}
                   {/* 遅出・早退・勤務地変更の事前申請：いつもの校の代わりが要るか（2026-10-20・初めは調整不要） */}
                   {!fc && st === 'requested' && isPartialShiftCase(r.application_types) && !otCalMap[r.id]?.postHoc && !r.from_trip_date && r.work_date >= todayJstStr() && (
-                    <ShiftAdjustChoice notNeeded={!otProxyPartialNeeded} onChange={nn => setOtProxyPartialNeeded(!nn)} isDark={isDarkMode}
+                    <ShiftAdjustChoice notNeeded={otProxyPartialNeeded === null ? null : !otProxyPartialNeeded} onChange={nn => setOtProxyPartialNeeded(!nn)} isDark={isDarkMode} missing={otProxyTried}
                       detail={[partialCoverLabel(partialCover(r.application_types ?? [], r.normal_shift,
-                        r.segments.filter(g => g.phase === 'planned').map(g => ({ startMin: g.start_min, endMin: g.end_min })), r.location ?? '')), 'いない時間'].filter(Boolean).join(' ')}
-                      note={PARTIAL_SHIFT_NOTE} />
+                        r.segments.filter(g => g.phase === 'planned').map(g => ({ startMin: g.start_min, endMin: g.end_min })), r.location ?? '')), 'いない時間'].filter(Boolean).join(' ')} />
                   )}
                   {fc && otFcShiftCase(r) && (
-                    <ShiftAdjustChoice notNeeded={!otProxyPartialNeeded} onChange={nn => setOtProxyPartialNeeded(!nn)} isDark={isDarkMode}
-                      detail={[fev ? partialCoverLabel(partialCover(fev.types, r.normal_shift, fev.segments, fev.location)) : '', 'いない時間'].filter(Boolean).join(' ')}
-                      note={PARTIAL_SHIFT_NOTE} />
+                    <ShiftAdjustChoice notNeeded={otProxyPartialNeeded === null ? null : !otProxyPartialNeeded} onChange={nn => setOtProxyPartialNeeded(!nn)} isDark={isDarkMode} missing={otProxyTried}
+                      detail={[fev ? partialCoverLabel(partialCover(fev.types, r.normal_shift, fev.segments, fev.location)) : '', 'いない時間'].filter(Boolean).join(' ')} />
                   )}
                   {otProxyErr && <div style={{ fontSize: 12.5, color: '#dc3545', marginBottom: 10 }}>{otProxyErr}</div>}
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => { setOtProxyTarget(null); setOtProxyShift(null); setOtProxyPartialNeeded(false); setOtProxyErr(''); }} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>やめる</button>
+                    <button onClick={() => { setOtProxyTarget(null); setOtProxyShift(null); setOtProxyPartialNeeded(null); setOtProxyTried(false); setOtProxyErr(''); }} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>やめる</button>
                     <button onClick={doOtProxyApprove} disabled={otActing} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: BTN_BLUE, color: '#fff', fontWeight: 'bold', cursor: otActing ? 'default' : 'pointer', fontSize: 14, opacity: otActing ? 0.6 : 1 }}>{otActing ? '処理中...' : (someoneElse ? '代わりに受理する' : '受理する')}</button>
                   </div>
                 </div>

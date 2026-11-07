@@ -11,7 +11,7 @@ import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft } from '../lib/draftStorage';
-import DraftRestoredLine from './DraftRestoredLine';
+import DraftRestoredLine, { withDraftHint } from './DraftRestoredLine';
 import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTime, tripMapUrl } from '../lib/tripReportDisplay';
 import SearchableSelect from './common/SearchableSelect';
 import HelpLinkButton from './HelpLinkButton';
@@ -387,9 +387,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   };
 
   const handleSubmitConfirm = () => {
-    if (!effectiveLocation.trim()) { setFormError('場所を入力してください'); setErrFields(new Set(['location'])); scrollToFirstError(['location']); return; }
-    if (category === 'その他' && !categoryOther.trim()) { setFormError('区分（その他）の内容を入力してください'); setErrFields(new Set(['categoryOther'])); scrollToFirstError(['categoryOther']); return; }
-    if (!gps && !gpsUnavailable) { setFormError('📍 現在地を取得してください。取得できない場合は「取得できませんでした」にチェックしてください。'); setErrFields(new Set(['gps'])); scrollToFirstError(['gps']); return; }
+    if (!effectiveLocation.trim()) { setFormError(withDraftHint(DRAFT_KEYS.trip, '場所を入力してください')); setErrFields(new Set(['location'])); scrollToFirstError(['location']); return; }
+    if (category === 'その他' && !categoryOther.trim()) { setFormError(withDraftHint(DRAFT_KEYS.trip, '区分（その他）の内容を入力してください')); setErrFields(new Set(['categoryOther'])); scrollToFirstError(['categoryOther']); return; }
+    if (!gps && !gpsUnavailable) { setFormError(withDraftHint(DRAFT_KEYS.trip, '📍 現在地を取得してください。取得できない場合は「取得できませんでした」にチェックしてください。')); setErrFields(new Set(['gps'])); scrollToFirstError(['gps']); return; }
     setShowConfirm(true);
   };
 

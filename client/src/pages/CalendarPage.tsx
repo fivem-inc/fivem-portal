@@ -10,7 +10,7 @@ import { describeUpdate } from '../lib/statusUpdate';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { actedAtLabel } from '../lib/actedAt';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, savePrefillDraft, isUserDraft } from '../lib/draftStorage';
-import DraftRestoredLine from '../components/DraftRestoredLine';
+import DraftRestoredLine, { withDraftHint } from '../components/DraftRestoredLine';
 import {
   absenceLabel, absenceColor, absenceEmoji, formatSegments, joinSegmentLocations, parseSegments, hhmm,
   type AttendanceType, type WorkSegment,
@@ -653,6 +653,8 @@ const AbsenceInputSheet: React.FC<{
   const savingRef = React.useRef(false);
   const confirmingRef = React.useRef(false);
   const [error, setError] = useState('');
+  // 送る前の確かめで止めたとき（前回の入力の続きなら［クリア］の案内を足す・2026-11-07）
+  const setCheckError = (m: string) => setError(withDraftHint(DRAFT_KEYS.attendance, m));
   // 入力エラーの欄を薄赤にする（lib/formHighlight.ts の共通色）
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
@@ -962,24 +964,24 @@ const AbsenceInputSheet: React.FC<{
   const handleConfirm = async () => {
     if (confirmingRef.current) return;
     setError('');
-    if (userIds.size === 0) { setError('対象者を選択してください'); setErrFields(new Set(['userId'])); scrollToFirstError(['userId']); return; }
-    if (!isAbsent && !isHolidayWork && !isLocationChange && !isTimeChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
+    if (userIds.size === 0) { setCheckError('対象者を選択してください'); setErrFields(new Set(['userId'])); scrollToFirstError(['userId']); return; }
+    if (!isAbsent && !isHolidayWork && !isLocationChange && !isTimeChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setCheckError('種別を選択してください'); return; }
     // 🚨 type="time" をやめた分、ここで時刻の形は自分で確かめる（空でないかだけでは足りない）。
     //    TimeInput は中途半端な値を親に渡さないが、下書きの復元・過去データで壊れた値が入りうる。
-    if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
-    if ((isLate || isLateStart) && normalizeTime(lateTime) === null) { setError('出勤時間を正しく入力してください（例 9:30）'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
-    if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
-    if ((isEarlyLeave || isEarlyEnd) && normalizeTime(earlyTime) === null) { setError('退勤時間を正しく入力してください（例 17:30）'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
-    if (isLocationChange && !effectiveOriginalLocation()) { setError('変更前の校を選択してください'); setErrFields(new Set(['originalLocation'])); scrollToFirstError(['originalLocation']); return; }
+    if ((isLate || isLateStart) && !lateTime) { setCheckError('出勤時間を入力してください'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
+    if ((isLate || isLateStart) && normalizeTime(lateTime) === null) { setCheckError('出勤時間を正しく入力してください（例 9:30）'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
+    if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setCheckError('退勤時間を入力してください'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
+    if ((isEarlyLeave || isEarlyEnd) && normalizeTime(earlyTime) === null) { setCheckError('退勤時間を正しく入力してください（例 17:30）'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
+    if (isLocationChange && !effectiveOriginalLocation()) { setCheckError('変更前の校を選択してください'); setErrFields(new Set(['originalLocation'])); scrollToFirstError(['originalLocation']); return; }
 
     if (useSegments) {
       const segs = effectiveSegments();
-      if (segs.length === 0) { setError('勤務時間を1つ以上入力してください'); return; }
+      if (segs.length === 0) { setCheckError('勤務時間を1つ以上入力してください'); return; }
       // 🚨 「その他」に場所を2つ以上書いたまま登録させない（何時にどこにいるかが人によって書いたり書かなかったりになるため・2026-10-08）
       for (let i = 0; i < segments.length; i++) {
         if (segments[i].location !== OTHER_LOCATION) continue;
         if (placesInText(segmentCustoms[i] ?? '', placeGroups).length >= 2) {
-          setError('「その他」に場所が2つ書かれています。［分けて入れる］を押して、移る時刻を入れてください');
+          setCheckError('「その他」に場所が2つ書かれています。［分けて入れる］を押して、移る時刻を入れてください');
           return;
         }
       }
@@ -989,39 +991,39 @@ const AbsenceInputSheet: React.FC<{
         const no = `時間帯${chainNo}`;
         if (segMoves[i]) {
           // 移る先：場所と着く時刻
-          if (!s.location) { setError(`${no}の移る先を選択してください`); return; }
-          if (!s.start) { setError(`${no}の「${s.location}に着く時刻」を入力してください`); return; }
-          if (normalizeTime(s.start) === null) { setError(`${no}の「${s.location}に着く時刻」を正しく入力してください（例 15:30）`); return; }
-          if (segs[i - 1].start && s.start <= segs[i - 1].start) { setError(`${no}の「${s.location}に着く時刻」は、${segs[i - 1].location || '前の場所'}での開始より後にしてください`); return; }
+          if (!s.location) { setCheckError(`${no}の移る先を選択してください`); return; }
+          if (!s.start) { setCheckError(`${no}の「${s.location}に着く時刻」を入力してください`); return; }
+          if (normalizeTime(s.start) === null) { setCheckError(`${no}の「${s.location}に着く時刻」を正しく入力してください（例 15:30）`); return; }
+          if (segs[i - 1].start && s.start <= segs[i - 1].start) { setCheckError(`${no}の「${s.location}に着く時刻」は、${segs[i - 1].location || '前の場所'}での開始より後にしてください`); return; }
           if (!segMoves[i + 1]) {
             // まとまりの最後：終わりの時刻はここが持つ
-            if (!s.end || normalizeTime(s.end) === null) { setError(`${no}の勤務時間（終わり）を入力してください`); return; }
-            if (s.start >= s.end) { setError(`${no}の「${s.location}に着く時刻」は、終わりの時刻より前にしてください`); return; }
+            if (!s.end || normalizeTime(s.end) === null) { setCheckError(`${no}の勤務時間（終わり）を入力してください`); return; }
+            if (s.start >= s.end) { setCheckError(`${no}の「${s.location}に着く時刻」は、終わりの時刻より前にしてください`); return; }
           }
           continue;
         }
         if (segMoves[i + 1]) {
           // 移る前の場所：終わり＝移る先に着く時刻（移る先のほうで確かめる）
-          if (!s.start || normalizeTime(s.start) === null) { setError(`${no}の勤務時間（始まり）を入力してください`); return; }
-          if (!s.location) { setError(`${no}の最初の場所を選択してください`); return; }
+          if (!s.start || normalizeTime(s.start) === null) { setCheckError(`${no}の勤務時間（始まり）を入力してください`); return; }
+          if (!s.location) { setCheckError(`${no}の最初の場所を選択してください`); return; }
           continue;
         }
-        if (!s.start || !s.end) { setError(`${no}の勤務時間を入力してください`); return; }
-        if (normalizeTime(s.start) === null || normalizeTime(s.end) === null) { setError(`${no}の勤務時間を正しく入力してください（例 9:30）`); return; }
-        if (s.start >= s.end) { setError(`${no}は終了時刻を開始時刻より後にしてください`); return; }
-        if (!s.location) { setError(`${no}の校を選択してください`); return; }
+        if (!s.start || !s.end) { setCheckError(`${no}の勤務時間を入力してください`); return; }
+        if (normalizeTime(s.start) === null || normalizeTime(s.end) === null) { setCheckError(`${no}の勤務時間を正しく入力してください（例 9:30）`); return; }
+        if (s.start >= s.end) { setCheckError(`${no}は終了時刻を開始時刻より後にしてください`); return; }
+        if (!s.location) { setCheckError(`${no}の校を選択してください`); return; }
       }
       // 時間帯どうしが重なっていないか（重なると「どこにいるのか分からない」記録になる）
       const sorted = [...segs].sort((a, b) => a.start.localeCompare(b.start));
       for (let i = 1; i < sorted.length; i++) {
-        if (sorted[i].start < sorted[i - 1].end) { setError('勤務時間が重なっています。時間帯を確認してください'); return; }
+        if (sorted[i].start < sorted[i - 1].end) { setCheckError('勤務時間が重なっています。時間帯を確認してください'); return; }
       }
       // 予定の休憩が法律の最低に足りないときは登録しない（休憩の足りない予定を組まないため・2026-10-08）
-      if (planLegal && !planLegal.ok) { setError(planLegal.message); return; }
-      if (needBreakNote && !notes.trim()) { setError('備考に、休憩をいつ取るかを書いてください'); return; }
+      if (planLegal && !planLegal.ok) { setCheckError(planLegal.message); return; }
+      if (needBreakNote && !notes.trim()) { setCheckError('備考に、休憩をいつ取るかを書いてください'); return; }
     } else {
       // 対象日すべてで校が選ばれているか
-      if ([...targetDates].some(d => !effectiveLocation(d))) { setError('すべての日付で校を選択してください'); return; }
+      if ([...targetDates].some(d => !effectiveLocation(d))) { setCheckError('すべての日付で校を選択してください'); return; }
     }
 
     // すでに登録がある日を先に調べておく（確認画面で赤く出し、その日を外して登録できるようにする）。

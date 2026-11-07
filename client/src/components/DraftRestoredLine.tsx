@@ -8,6 +8,14 @@ import React, { useEffect, useState } from 'react';
 import { DRAFT_CLEARED_EVENT } from '../lib/draftStorage';
 
 export const DRAFT_RESTORED_TEXT = '📋 前回の入力の続きを表示しています。';
+// 送る前の確かめで止めたとき、黄色の1行が出ている画面だけエラーの文に足す（2026-11-07 ユーザー確定 案A）。
+// きっかけ：「実際の時刻を入力してください」だけでは、前回の入力が残っているせいだと気づけなかった（マネージャーの方の報告）
+export const DRAFT_HINT_TEXT = '前回の入力が残っている場合は、右上の［クリア］を押してから入力し直してください。';
+// いま黄色の1行を出している下書きの鍵（画面の中だけ）
+const shownKeys = new Set<string>();
+// 送る前の確かめで止めたときのエラーの文に使う。通信の失敗などには使わない（［クリア］では直らないため）
+export const withDraftHint = (draftKey: string, msg: string): string =>
+  msg && shownKeys.has(draftKey) ? `${msg}。${DRAFT_HINT_TEXT}` : msg;
 
 const DraftRestoredLine: React.FC<{ draftKey: string; restored: boolean; style?: React.CSSProperties }> = ({ draftKey, restored, style }) => {
   const [show, setShow] = useState(restored);
@@ -16,6 +24,11 @@ const DraftRestoredLine: React.FC<{ draftKey: string; restored: boolean; style?:
     window.addEventListener(DRAFT_CLEARED_EVENT, h);
     return () => window.removeEventListener(DRAFT_CLEARED_EVENT, h);
   }, [draftKey]);
+  useEffect(() => {
+    if (!show) return;
+    shownKeys.add(draftKey);
+    return () => { shownKeys.delete(draftKey); };
+  }, [show, draftKey]);
   if (!show) return null;
   // 地の色を決めているので、ダークモードでも同じ見た目（字も濃い色に決める）
   return (

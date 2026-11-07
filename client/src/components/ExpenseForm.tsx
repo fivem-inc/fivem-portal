@@ -25,7 +25,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft, DRAFT_CLEARED_EVENT } from '../lib/draftStorage';
-import DraftRestoredLine from './DraftRestoredLine';
+import DraftRestoredLine, { withDraftHint } from './DraftRestoredLine';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
 import HelpLinkButton from './HelpLinkButton';
@@ -487,7 +487,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const validateDraft = useCallback(() => {
     const ng = checkExpense(draftExpense, expenses);
     if (!ng) return true;
-    setFormError(ng.msg);
+    setFormError(withDraftHint(DRAFT_KEYS.expense, ng.msg));
     if (ng.fields.length > 0) setHighlightFields(new Set(ng.fields));
     return false;
   }, [draftExpense, expenses]);
@@ -521,28 +521,28 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       e.transportation?.trim()
     );
 
-    if (expensesToSubmit.length === 0) { setFormError('申請する項目がありません。'); return; }
+    if (expensesToSubmit.length === 0) { setFormError(withDraftHint(DRAFT_KEYS.expense, '申請する項目がありません。')); return; }
 
     const hasRegular = expensesToSubmit.some(e => e.type === 'regular');
     const hasOther = expensesToSubmit.some(e => e.type !== 'regular');
-    if (hasRegular && hasOther) { setFormError('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。別々に申請してください。'); return; }
+    if (hasRegular && hasOther) { setFormError(withDraftHint(DRAFT_KEYS.expense, '定期券の申請と他の申請（単発・出張）は混ぜて申請できません。別々に申請してください。')); return; }
 
     for (const expense of expensesToSubmit) {
-      if (!expense.from_station.trim()) { setFormError('出発駅を入力してください。'); return; }
-      if (!expense.to_station.trim()) { setFormError('帰着駅を入力してください。'); return; }
+      if (!expense.from_station.trim()) { setFormError(withDraftHint(DRAFT_KEYS.expense, '出発駅を入力してください。')); return; }
+      if (!expense.to_station.trim()) { setFormError(withDraftHint(DRAFT_KEYS.expense, '帰着駅を入力してください。')); return; }
       const parsedAmount = parseInt(expense.amount.replace(/,/g, ''), 10);
-      if (!expense.amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
+      if (!expense.amount.trim() || isNaN(parsedAmount)) { setFormError(withDraftHint(DRAFT_KEYS.expense, '金額を正しく入力してください。')); return; }
       if ((expense.type === 'one_time' || expense.type === 'business_trip' || expense.type === 'other') && !expense.start_date?.trim()) {
-        setFormError('利用日を入力してください。'); return;
+        setFormError(withDraftHint(DRAFT_KEYS.expense, '利用日を入力してください。')); return;
       }
       if (expense.type === 'regular' && (!expense.start_date?.trim() || !expense.end_date?.trim())) {
-        setFormError('定期の場合、開始日と終了日を入力してください。'); return;
+        setFormError(withDraftHint(DRAFT_KEYS.expense, '定期の場合、開始日と終了日を入力してください。')); return;
       }
       const transportParts = (expense.transportation || '').split('・').filter(Boolean);
       const effectiveTransport = transportParts.map(p => p === 'その他' ? (expense.transportation_other || '') : p).filter(Boolean).join('・');
-      if (!effectiveTransport?.trim()) { setFormError('交通機関を入力してください。'); return; }
+      if (!effectiveTransport?.trim()) { setFormError(withDraftHint(DRAFT_KEYS.expense, '交通機関を入力してください。')); return; }
       const effectiveWorkplace = expense.workplace === 'その他' ? expense.workplace_other : expense.workplace;
-      if (!effectiveWorkplace?.trim()) { setFormError('行き先を入力してください。'); return; }
+      if (!effectiveWorkplace?.trim()) { setFormError(withDraftHint(DRAFT_KEYS.expense, '行き先を入力してください。')); return; }
     }
 
     // 送信前に transportation/workplace の "その他" テキストをマージ

@@ -370,7 +370,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   type RowResult = { status: 'sending' | 'waiting' | 'sent' | 'failed' | 'check'; message: string };
   const [confirm, setConfirm] = useState<{ date: string; label: string }[] | null>(null);
   // 自分で受理する終日の休みの「シフト調整：調整不要」（確認の画面で1つ選ぶ・初めは「必要」・2026-10-14）
-  const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState(false);
+  // 🚨 2026-11-07 から最初はどちらも選ばれていない（null）。選ばずに送ろうとしたら止める
+  const [selfShiftNotNeeded, setSelfShiftNotNeeded] = useState<boolean | null>(null);
+  const [selfShiftMissing, setSelfShiftMissing] = useState(false);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   // 振替元の日を選んだときに自動で入れた時刻（行の日ごと）。休みの日に選び直したとき、自動で入れた時刻だけ消すため
@@ -425,7 +427,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       targets,
       date => rows.find(x => x.date === date),
       { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar,
-        selfFullDayShiftNotNeeded: !!canChooseShiftAdjust && selfShiftNotNeeded, buttonLabel: '送信する' },
+        selfFullDayShiftNotNeeded: !!canChooseShiftAdjust && selfShiftNotNeeded === true, buttonLabel: '送信する' },
       supabaseBulkWriter,
       (date, status, message) => setRes(date, { status, message }),
       (done, total) => setProgress({ done, total }),
@@ -1173,7 +1175,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
               <button type="button" disabled={sendable.length === 0 || errors.length > 0}
                 onClick={() => {
                   setResultCard(null);
-                  setSelfShiftNotNeeded(false);
+                  setSelfShiftNotNeeded(null); setSelfShiftMissing(false);
                   setConfirm(sendable.map(r => ({ date: r.date, label: r.calc.sendLabel })));
                 }}
                 style={{ ...btn, ...btnOn, fontWeight: 'bold', ...(sendable.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}>
@@ -1245,7 +1247,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 ))}
                 {canChooseShiftAdjust && (() => {
                   const n = items.filter(r => r.calc.isSelfReview && !!r.calc.fullDayType).length;
-                  return n > 0 ? <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} countLabel={`自己受理の終日 ${n}件`} /> : null;
+                  return n > 0 ? <ShiftAdjustChoice notNeeded={selfShiftNotNeeded} onChange={setSelfShiftNotNeeded} isDark={isDark} missing={selfShiftMissing} countLabel={`自己受理の終日 ${n}件`} /> : null;
                 })()}
                 <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>
                   {/* 2026-09-25 ユーザー確定：説明は短く1文だけ（ベル・申請先・残業なしの扱いは書かない） */}
@@ -1253,7 +1255,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
                   <button type="button" style={btn} onClick={() => setConfirm(null)}>戻って直す</button>
-                  <button type="button" style={{ ...btn, ...btnOn, fontWeight: 'bold' }} onClick={() => { void doSend(); }}>{items.length}件を送信する</button>
+                  <button type="button" style={{ ...btn, ...btnOn, fontWeight: 'bold' }} onClick={() => {
+                    // シフト調整を出しているのに選んでいなければ止める（2026-11-07）
+                    if (canChooseShiftAdjust && items.some(r => r.calc.isSelfReview && !!r.calc.fullDayType) && selfShiftNotNeeded === null) { setSelfShiftMissing(true); return; }
+                    void doSend();
+                  }}>{items.length}件を送信する</button>
                 </div>
               </div>
             );

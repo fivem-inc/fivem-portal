@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchUnavailableIds, withoutUnavailable } from '../lib/staffLeave';
+import ShiftAdjustChoice from './ShiftAdjustChoice';
 import { LEAVE_TYPE_CHOICES, leaveTypeFields, currentLeaveTypeLabel } from '../lib/leaveTypeChoice';
 import { supabase } from '../lib/supabaseClient';
 import { useRoles } from '../hooks/useRoles';
@@ -119,14 +120,18 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // マネージャー受理のときの「シフト調整：必要／調整不要」（2026-09-28 ユーザー確定 案A）。
   // 🚨 既定は「必要」（触らずに受理すれば今までどおり「シフト 未」）。
   // 🚨 確認の枠の onConfirm は開いた時点の関数なので、選んだ値は ref で読む（state だと古い値のまま）
-  const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
-  const shiftNotNeededRef = useRef(false);
-  const chooseShiftNotNeeded = (v: boolean) => { shiftNotNeededRef.current = v; setShiftNotNeeded(v); };
+  // 🚨 2026-11-07 から最初はどちらも選ばれていない（null）。選ばずに受理しようとしたら止める（ユーザー確定 案A）
+  const [shiftNotNeeded, setShiftNotNeeded] = useState<boolean | null>(null);
+  const shiftNotNeededRef = useRef<boolean | null>(null);
+  const [shiftMissing, setShiftMissing] = useState(false);
+  const chooseShiftNotNeeded = (v: boolean | null) => { shiftNotNeededRef.current = v; setShiftNotNeeded(v); if (v !== null) setShiftMissing(false); };
+  /** 選択を出しているのに、まだ選んでいない（受理を止める） */
+  const shiftChoiceMissing = (req: LeaveReq) => canChooseShift(req) && shiftNotNeededRef.current === null;
   /** 選択を出すか：権限があり、まだ「調整不要」でない（有休奨励日だけの休暇は DB が自動で調整不要にしている） */
   const canChooseShift = (req: LeaveReq) => (isAdmin || !!canShiftAdjust) && req.shift_adjust_status !== 'not_needed';
   /** 受理の update に一緒に入れる列。🚨 受理と同じ1回の保存で書く（別々に保存すると受理だけ通ることがある） */
   const shiftFieldsFor = (req: LeaveReq, nowIso: string) =>
-    canChooseShift(req) && shiftNotNeededRef.current
+    canChooseShift(req) && shiftNotNeededRef.current === true
       ? { shift_adjust_status: 'not_needed', shift_adjusted_by: user.id, shift_adjusted_at: nowIso }
       : {};
 
@@ -148,19 +153,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       return <p style={{ margin: '0 0 16px', fontSize: 12.5, color: subText }}>シフト調整：調整不要</p>;
     }
     if (!canChooseShift(req)) return null;
-    const tgl = (on: boolean): React.CSSProperties => ({
-      padding: '6px 14px', borderRadius: 16, fontSize: 13, fontWeight: 'bold', border: 'none', cursor: 'pointer',
-      background: on ? '#1976d2' : '#e3f2fd', color: on ? '#fff' : '#1565c0',
-    });
-    return (
-      <div style={{ margin: '0 0 16px' }}>
-        <div style={{ fontSize: 12.5, color: subText, marginBottom: 6 }}>シフト調整</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" style={tgl(!shiftNotNeeded)} onClick={() => chooseShiftNotNeeded(false)}>必要</button>
-          <button type="button" style={tgl(shiftNotNeeded)} onClick={() => chooseShiftNotNeeded(true)}>調整不要</button>
-        </div>
-      </div>
-    );
+    return <ShiftAdjustChoice notNeeded={shiftNotNeeded} onChange={chooseShiftNotNeeded} isDark={isDark} missing={shiftMissing} margin="0 0 16px" />;
   };
 
   // マネージャー一覧取得
@@ -258,7 +251,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const handleApproveClick = (req: LeaveReq) => {
     if (req.status === 'pending') {
       // 一人目受理 → マネージャー選択モーダルを出す
-      chooseShiftNotNeeded(false);   // シフト調整の選択は毎回「必要」から（2026-09-28）
+      chooseShiftNotNeeded(null); setShiftMissing(false);   // シフト調整の選択は毎回どちらも選ばれていない状態から（2026-11-07）
       setSelectingManagerFor(req);
       setApproveMode('self'); // 申請先がマネージャー本人なら「自分が受理して経理へ」を既定に
       if (managers.length > 0) setSelectedManagerId(managers[0].id);
@@ -336,7 +329,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     // 🚨 シフト調整の選択はマネージャー受理（step2_pending から進む）ときだけ。
     //    この確認の枠は経理・社長の受理や差し戻しの取り消しでも使うため（2026-09-28）
     const isManagerStep = req.status === 'step2_pending';
-    chooseShiftNotNeeded(false);
+    chooseShiftNotNeeded(null); setShiftMissing(false);
     setConfirmDialog({ message: `${label}しますか？`, shiftFor: isManagerStep ? req : undefined, onConfirm: async () => {
       // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新。ズレていたら中断して最新化。
       // 🚨 2人目の受理日時は step2_pending から進むときだけ入れる。
@@ -384,6 +377,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const handleApproveAsSelf = async () => {
     if (!selectingManagerFor) return;
     const req = selectingManagerFor;
+    if (shiftChoiceMissing(req)) { setShiftMissing(true); return; }   // 2026-11-07
     const isChosei = req.leave_type === '調整休';
     const next = isChosei ? 'approved' : 'manager_approved';
     // 二人目受理者として本人を記録（CSV・履歴で誰が受理したか追えるように）
@@ -554,7 +548,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
             {confirmDialog.shiftFor && shiftChoiceBlock(confirmDialog.shiftFor)}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDark ? '#adb5bd' : '#666', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
-              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+              <button onClick={() => {
+                // シフト調整を出しているのに選んでいなければ止める（2026-11-07）
+                if (confirmDialog.shiftFor && shiftChoiceMissing(confirmDialog.shiftFor)) { setShiftMissing(true); return; }
+                const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb();
+              }} style={{ padding: '8px 18px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
             </div>
           </div>
         </div>

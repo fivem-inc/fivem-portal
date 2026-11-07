@@ -14,7 +14,7 @@ import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft } from '../lib/draftStorage';
-import DraftRestoredLine from '../components/DraftRestoredLine';
+import DraftRestoredLine, { withDraftHint } from '../components/DraftRestoredLine';
 import { calcSegsBreak, shiftLegalBreak, legalBreakReviewNote, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
 import { describeUpdate } from '../lib/statusUpdate';
 import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHighlight';
@@ -744,7 +744,7 @@ const ShiftReportForm: React.FC<{
   const handleConfirmOpen = () => {
     const { msg, field } = validate();
     if (msg) {
-      setError(msg);
+      setError(withDraftHint(DRAFT_KEYS.shiftReport, msg));
       setErrFields(field ? new Set([field]) : new Set());
       if (field) scrollToFirstError([field]);
       return;

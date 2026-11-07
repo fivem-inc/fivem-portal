@@ -87,7 +87,7 @@ import { todayJstStr, leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc'
 import type { CalendarKind } from '../lib/breakCalc';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft, isUserDraft } from '../lib/draftStorage';
-import DraftRestoredLine from './DraftRestoredLine';
+import DraftRestoredLine, { withDraftHint } from './DraftRestoredLine';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { normalizeTime } from '../lib/timeInput';
 import TimeInput from './TimeInput';
@@ -509,6 +509,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [adjSubmitting, setAdjSubmitting] = useState(false);
   const [adjBanner, setAdjBanner] = useState(false);
   const [adjError, setAdjError] = useState('');
+  // 送る前の確かめで止めたとき（前回の入力の続きなら［クリア］の案内を足す・2026-11-07）
+  const setAdjCheckError = (m: string) => setAdjError(withDraftHint(DRAFT_KEYS.leaveAdjustment, m));
   const [adjLocation, setAdjLocation] = useState(ad?.adjLocation ?? ''); // 時間調整の校（必須）
   const [adjCalYear, setAdjCalYear] = useState(() => new Date().getFullYear());
   const [adjCalMonth, setAdjCalMonth] = useState(() => new Date().getMonth());
@@ -1688,22 +1690,22 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
         const handleAdjSubmit = async () => {
           setAdjError('');
-          if (!adjLateStart && !adjEarlyEnd) { setAdjError('種別を選択してください'); return; }
-          if (!adjDate) { setAdjError('日付を選択してください'); return; }
-          if (adjDate < todayStr) { setAdjError('当日より前の日付は登録できません'); return; }
-          if (unifyCutoff && adjDate >= unifyCutoff) { setAdjError(`${cutoffLabel(unifyCutoff)}以降の時間調整は「残業申請」で申請してください`); return; }
+          if (!adjLateStart && !adjEarlyEnd) { setAdjCheckError('種別を選択してください'); return; }
+          if (!adjDate) { setAdjCheckError('日付を選択してください'); return; }
+          if (adjDate < todayStr) { setAdjCheckError('当日より前の日付は登録できません'); return; }
+          if (unifyCutoff && adjDate >= unifyCutoff) { setAdjCheckError(`${cutoffLabel(unifyCutoff)}以降の時間調整は「残業申請」で申請してください`); return; }
           if (adjLateStart && adjEarlyEnd) {
             const [lh, lm] = adjLateTime.split(':').map(Number);
             const [eh, em] = adjEarlyTime.split(':').map(Number);
-            if (lh * 60 + lm >= eh * 60 + em) { setAdjError('遅出時刻は早退時刻より前にしてください'); return; }
+            if (lh * 60 + lm >= eh * 60 + em) { setAdjCheckError('遅出時刻は早退時刻より前にしてください'); return; }
           }
-          if (adjLateStart && !adjLateTime) { setAdjError('調整遅出の出勤時刻を選択してください'); return; }
-          if (adjEarlyEnd && !adjEarlyTime) { setAdjError('調整早退の退勤時刻を選択してください'); return; }
+          if (adjLateStart && !adjLateTime) { setAdjCheckError('調整遅出の出勤時刻を選択してください'); return; }
+          if (adjEarlyEnd && !adjEarlyTime) { setAdjCheckError('調整早退の退勤時刻を選択してください'); return; }
           // 🚨 type="time" をやめた分、時刻の形は自分で確かめる（空でないかだけでは足りない）
-          if (adjLateStart && normalizeTime(adjLateTime) === null) { setAdjError('調整遅出の出勤時刻を正しく入力してください（例 9:30）'); return; }
-          if (adjEarlyEnd && normalizeTime(adjEarlyTime) === null) { setAdjError('調整早退の退勤時刻を正しく入力してください（例 17:30）'); return; }
-          if (!adjLocation) { setAdjError('校を選択してください'); return; }
-          if (!adjReason.trim()) { setAdjError('理由を入力してください'); return; }
+          if (adjLateStart && normalizeTime(adjLateTime) === null) { setAdjCheckError('調整遅出の出勤時刻を正しく入力してください（例 9:30）'); return; }
+          if (adjEarlyEnd && normalizeTime(adjEarlyTime) === null) { setAdjCheckError('調整早退の退勤時刻を正しく入力してください（例 17:30）'); return; }
+          if (!adjLocation) { setAdjCheckError('校を選択してください'); return; }
+          if (!adjReason.trim()) { setAdjCheckError('理由を入力してください'); return; }
           setAdjSubmitting(true);
           try {
             const approverName = adjApproverMode === 'select'
