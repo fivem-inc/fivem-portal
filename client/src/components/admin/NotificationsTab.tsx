@@ -171,7 +171,7 @@ const EVENT_GROUPS = [
       { key: 'reminder:scheduled',     label: '定期リマインド' },
       { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
       { key: 'overtime:unreported',    label: '残業 実績未報告リマインド（本人）' },
-      { key: 'shift_report:unreported', label: '勤務変更 事前申請の報告まちリマインド（本人・毎朝9時）' },
+      { key: 'shift_report:unreported', label: '勤務変更の報告まちリマインド（事前申請・勤怠カレンダーの予定／本人・毎朝9時）' },
       { key: 'application_request:due', label: '申請依頼 期限リマインド（本人・前日と翌日の朝）' },
       { key: 'overtime:pending_review', label: '残業 受理まちリマインド（申請先の担当者・毎日）' },
       { key: 'overtime:pending_review_advance', label: '残業 受理まちリマインド（勤務日の前に1回だけ）' },

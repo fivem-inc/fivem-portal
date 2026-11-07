@@ -827,12 +827,10 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
 
   const fetchPending = useCallback(async () => {
     if (!userId || !canShiftReport) { setPendingCount(0); return; }
-    // 受理済みの事前申請で日が過ぎ、まだ報告していないもの（ご本人・代わりに出した方・2026-11-06）。毎朝のお知らせ（shift_report_unreported_notify）と同じ判定
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    const { data: mine } = await supabase.from('shift_reports').select('id')
-      .or(`applicant_id.eq.${userId},submitted_by.eq.${userId}`)
-      .eq('status', 'request_confirmed').eq('advance', true).lt('work_date', today);
-    const own = mine?.length ?? 0;
+    // 報告がまだの日（受理済みの事前申請で日が過ぎたもの・勤怠カレンダーの予定でまだ勤務変更が無いもの・代わりに出した事前申請）。
+    // 🚨 数え方は DB の shift_report_unreported_rows 1か所（毎朝のお知らせ shift_report_unreported_notify と同じ・2026-11-07）
+    const { data: mineN } = await supabase.rpc('my_shift_report_unreported_count');
+    const own = typeof mineN === 'number' ? mineN : 0;
     if (!isAdmin && !isApprover) { setPendingCount(own); return; }
 
     const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted', 'requested']);
